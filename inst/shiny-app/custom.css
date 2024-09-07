@@ -1,0 +1,48 @@
+/* Dark green theme for the navbarPage */
+.navbar-default {
+  background-color: #006400;
+  border-color: #004d00;
+}
+
+.navbar-default .navbar-brand {
+  color: #ffffff;
+}
+
+.navbar-default .navbar-brand:hover,
+.navbar-default .navbar-brand:focus {
+  color: #cccccc;
+}
+
+.navbar-default .navbar-nav > li > a {
+  color: #ffffff !important;
+  background-color: #006400 !important;
+}
+
+.navbar-default .navbar-nav > li > a:hover,
+.navbar-default .navbar-nav > li > a:focus {
+  background-color: #004d00 !important;
+  color: #ffffff !important;
+}
+
+.navbar-default .navbar-nav > .active > a,
+.navbar-default .navbar-nav > .active > a:hover,
+.navbar-default .navbar-nav > .active > a:focus {
+  background-color: #004d00 !important;
+  color: #ffffff !important;
+}
+
+/* Style the main content area */
+.content-wrapper, .right-side {
+  background-color: #f5f5f5;
+}
+
+/* Style for box headers */
+.box.box-solid.box-primary > .box-header {
+  background: #006400;
+  color: #ffffff;
+}
+
+.box.box-solid.box-primary {
+  border-color: #006400;
+}
+
