@@ -1,7 +1,6 @@
 #' Fit an initial MRF model
 #'
 #' @param dat.list A list containing multi-omics datasets with samples in columns and features in rows. Samples should be matched across datasets.
-#' @param y Used for supervised variable selection. For regression, provide a numerical vector. For classification, provide a factor vector. Set to NULL for unsupervised variable selection.
 #' @param ntree Number of trees for fitting MRF model. Default is 300.
 #' @param scale Whether to z-standardize each feature. Default is TRUE.
 #' @param yprob Probability of response features being selected in each node split. Default is 0.5.
@@ -9,7 +8,7 @@
 #' @param var_prop Proportion of variance explained by PC datasets when finding optimal connections. Default is 0.6.
 #' @param direct Logical; determines whether to keep both directions in the connection list for optimal connections.
 #' @param lambda Penalizes variables selected only once in a tree. Experimental parameter. Default is 1.
-#' @param normalized Logical; determines whether to use normalized variable weights. Default is TRUE.
+#' @param normalized Logical; determines whether to use normalized variable weights. Default is FALSE.
 #' @param use_depth Logical; determines whether to compute the average IMD selected in a tree. Default is FALSE.
 #' @param calc Select which weights to calculate: "X", "Y", or "Both". Use when fewer than two datasets are in the model. Default is "Both".
 #' @param parallel Logical; determines whether to use parallel computation for weight calculation.
@@ -21,9 +20,6 @@
 #' @export
 #' @import randomForestSRC
 #'
-#' @examples
-#' data(tcga_brca)
-#' mod <- mrf3_init(tcga_brca)
 #'
 # ---------------------------------------------------------------------------------
 # Wrapper function for mrf direct variable selection
@@ -38,7 +34,6 @@ mrf3_init <- function(dat.list,
                  var_prop = .6,
                  direct = T,
                  keep_prop = NULL,
-
                  lambda = 1,
                  normalized = F,
                  use_depth = F,
@@ -46,6 +41,7 @@ mrf3_init <- function(dat.list,
                  parallel = T,
                  return_data = F,
                  cores = detectCores() - 2,
+                 seed = 529,
                  ...){
 
   if(length(dat.list) == 1) type = "unsupervised"
@@ -54,7 +50,7 @@ mrf3_init <- function(dat.list,
   # Find connection
   if(is.null(connect_list) & length(dat.list) > 1){
     message("Finding maximum connections..")
-    connection <- findConnection(dat.list = dat.list, var_prop = var_prop, direct = direct, keep_prop = keep_prop)
+    connection <- findConnection(dat.list = dat.list, var_prop = var_prop, direct = direct, keep_prop = keep_prop, seed = seed)
     connect_list <- stringr::str_split(connection, "_")
   }
   if(length(dat.list) == 1){
@@ -70,7 +66,7 @@ mrf3_init <- function(dat.list,
 
   message("Fitting models..")
 
-  mod_list <- fit_multi_rfsrc(new_dat, connect_list = connect_list, ntree = ntree, type = type, yprob = yprob,...)
+  mod_list <- fit_multi_rfsrc(new_dat, connect_list = connect_list, ntree = ntree, type = type, yprob = yprob, seed = seed,...)
   oob_err <- purrr::map(mod_list, ~get_r_sq(.))
   oob_err <- Reduce("+", oob_err)
 
@@ -90,6 +86,7 @@ mrf3_init <- function(dat.list,
                                          yprob = yprob,
                                          use_depth = use_depth,
                                          cores = cores,
+                                         seed = seed, 
                                          ...)
   multi_weights <- multi_weights_mod$weight_list
 

@@ -104,10 +104,29 @@ fullConnect <- function(dat.list, ...){
 # Get embedding of one data
 getEmbed <- function(dat, var_prop = 0.6){
 
-  dat <- scale(dat)
-  s <- prcomp(dat, scale.  = T, center = T)
+  #dat <- scale(dat)
+  s <- prcomp(dat)
   vars <- cumsum((s$sdev^2) / sum(s$sdev^2))
   dim <- which(vars > var_prop)[1]
-  s$x[,1:dim]
+  scale(s$x[,1:dim])
 
+}
+
+get_r_sq <- function(mod){
+  
+  fw <- mod$forest.wt
+  
+  ex <- mean(colMeans((fw %*% as.matrix(mod$xvar) - as.matrix(mod$xvar))^2)/matrixStats::colVars(as.matrix(mod$xvar)))
+  if(is.null(mod$yvar)){
+    return(ex)
+  } else {
+    if(class(mod)[3] == "class+"){
+      ey <- na.omit(mod$err.rate)
+    } else {
+      ey <- mean(colMeans((fw %*% as.matrix(mod$yvar) - as.matrix(mod$yvar))^2)/matrixStats::colVars(as.matrix(mod$yvar)))
+    }
+  }
+  
+  ey+ex
+  
 }
