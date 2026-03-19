@@ -3,9 +3,9 @@ Type: Package
 Title: MRF-Based Multi-Omics Integration and Clustering
 Version: 0.2.0
 Author: Wei Zhang
-Maintainer: Wei Zhang <wzhang1960@gmail.com>
+Maintainer: Wei Zhang <wzhang0739@gmail.com>
 Authors@R: 
-    person("Wei", "Zhang", email = "wzhang1960@gmail.com", role = c("aut", "cre"))
+    person("Wei", "Zhang", email = "wzhang0739@gmail.com", role = c("aut", "cre"))
 Description: Integrates matched multi-omics datasets using multivariate
     random forests with inverse minimal depth (IMD) importance. Provides
     workflows for model fitting, variable selection, clustering, and

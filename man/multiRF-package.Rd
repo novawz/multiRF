@@ -6,10 +6,10 @@
 \alias{multiRF-package}
 \title{multiRF: A package for multiRF methods}
 \description{
-Tools for model-based integration of multi-omics datasets using random forests and Markov random field inspired weighting. The package provides workflows for model fitting, variable importance aggregation, clustering, and visualization.
+Integrates matched multi-omics datasets using multivariate random forests with inverse minimal depth (IMD) importance. Provides workflows for model fitting, variable selection, clustering, and visualization.
 }
 \author{
-\strong{Maintainer}: Wei Zhang \email{wzhang1960@gmail.com}
+\strong{Maintainer}: Wei Zhang \email{wzhang0739@gmail.com}
 
 }
 \keyword{internal}
