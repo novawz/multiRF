@@ -25,7 +25,7 @@ filter_omics <- function(dat.list,
                          top_n_by_type = NULL,
                          top_n_manual = NULL,
                          return_summary = TRUE,
-                         verbose = T,
+                         verbose = TRUE,
                          ...){
 
   if (!is.list(dat.list) || length(dat.list) == 0) {

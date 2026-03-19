@@ -11,7 +11,7 @@
 #' @export mrf3_tsne
 #' 
 
-mrf3_tsne <- function(mod,  dims = 2,  max_iter = 1000, learning_rate = 200, verbose = F, tol = 1e-05, patience = 10) {
+mrf3_tsne <- function(mod,  dims = 2,  max_iter = 1000, learning_rate = 200, verbose = FALSE, tol = 1e-05, patience = 10) {
   
   X <- t(apply(mod$dat, 1, function(row) row / sum(row)))
   X <- X/sum(X)
@@ -25,7 +25,7 @@ mrf3_tsne <- function(mod,  dims = 2,  max_iter = 1000, learning_rate = 200, ver
        tol = tol)
 }
 
-tsne <- function(X, dims = 2,  max_iter = 1000, learning_rate = 200, verbose = F, patience = 10, tol = 1e-05) {
+tsne <- function(X, dims = 2,  max_iter = 1000, learning_rate = 200, verbose = FALSE, patience = 10, tol = 1e-05) {
   n <- nrow(X)
   Y <- matrix(rnorm(n * dims), n, dims)
   cost_history <- rep(NA_real_, max_iter)

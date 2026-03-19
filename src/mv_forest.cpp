@@ -403,31 +403,67 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     prox(i, i) = 1.0;
   }
 
-  // ──── IMD aggregation: accumulate per-variable importance across all trees ────
-  // imd_x[j] = average importance of X variable j across all splits that used it
-  // imd_y[j] = average split contribution of Y variable j across all splits
+  // ──── IMD aggregation ────
+  // Global accumulators
   std::vector<double> imd_x_sum(px, 0.0);
   std::vector<int>    imd_x_cnt(px, 0);
   std::vector<double> imd_y_sum(qy, 0.0);
   std::vector<int>    imd_y_cnt(qy, 0);
 
+  // Per-tree IMD: ntree x (px + qy) stored as R matrix (for method="test")
+  NumericMatrix imd_x_per_tree(px, ntree);
+  NumericMatrix imd_y_per_tree(qy, ntree);
+
+  // Pairwise X-Y co-occurrence matrix (px x qy) for pairwise_imd
+  // pairwise_xy[x_var, y_var] = sum of y_stats at splits using x_var
+  std::vector<double> pairwise_buf(px * qy, 0.0);
+
   for (int t = 0; t < ntree; t++) {
+    // Per-tree accumulators
+    std::vector<double> tx_sum(px, 0.0);
+    std::vector<int>    tx_cnt(px, 0);
+    std::vector<double> ty_sum(qy, 0.0);
+    std::vector<int>    ty_cnt(qy, 0);
+
     for (const auto& node : tree_results[t].nodes) {
-      if (node.split_var < 0) continue;  // leaf
-      // X importance: this split used split_var
-      imd_x_sum[node.split_var] += node.imd_x_score;
-      imd_x_cnt[node.split_var]++;
-      // Y importance: per-column contribution
+      if (node.split_var < 0) continue;
+      int xv = node.split_var;
+      // X importance
+      tx_sum[xv] += node.imd_x_score;
+      tx_cnt[xv]++;
+      imd_x_sum[xv] += node.imd_x_score;
+      imd_x_cnt[xv]++;
+      // Y importance + pairwise
       for (int j = 0; j < (int)node.imd_y_stats.size() && j < qy; j++) {
         if (node.imd_y_stats[j] > 0.0) {
+          ty_sum[j] += node.imd_y_stats[j];
+          ty_cnt[j]++;
           imd_y_sum[j] += node.imd_y_stats[j];
           imd_y_cnt[j]++;
+          // Pairwise: this split used X var xv and Y var j contributed
+          pairwise_buf[xv * qy + j] += node.imd_y_stats[j];
         }
       }
     }
+
+    // Store per-tree averages
+    for (int j = 0; j < px; j++) {
+      imd_x_per_tree(j, t) = (tx_cnt[j] > 0) ? tx_sum[j] / tx_cnt[j] : 0.0;
+    }
+    for (int j = 0; j < qy; j++) {
+      imd_y_per_tree(j, t) = (ty_cnt[j] > 0) ? ty_sum[j] / ty_cnt[j] : 0.0;
+    }
   }
 
-  // Normalize: average over number of times each variable was involved
+  // Normalize pairwise matrix by ntree
+  NumericMatrix pairwise_xy(px, qy);
+  for (int i = 0; i < px; i++) {
+    for (int j = 0; j < qy; j++) {
+      pairwise_xy(i, j) = pairwise_buf[i * qy + j] / ntree;
+    }
+  }
+
+  // Global averages + L2 normalize
   NumericVector imd_x(px);
   NumericVector imd_y(qy);
   for (int j = 0; j < px; j++) {
@@ -436,7 +472,6 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   for (int j = 0; j < qy; j++) {
     imd_y[j] = (imd_y_cnt[j] > 0) ? imd_y_sum[j] / imd_y_cnt[j] : 0.0;
   }
-  // L2 normalize
   double norm_x = 0.0, norm_y = 0.0;
   for (int j = 0; j < px; j++) norm_x += imd_x[j] * imd_x[j];
   for (int j = 0; j < qy; j++) norm_y += imd_y[j] * imd_y[j];
@@ -444,6 +479,15 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   norm_y = std::sqrt(norm_y);
   if (norm_x > 0) for (int j = 0; j < px; j++) imd_x[j] /= norm_x;
   if (norm_y > 0) for (int j = 0; j < qy; j++) imd_y[j] /= norm_y;
+
+  // Free heavy per-node data no longer needed (samples + imd_y_stats)
+  // This can reclaim ~80 MB for 500 trees.
+  for (int t = 0; t < ntree; t++) {
+    for (auto& node : tree_results[t].nodes) {
+      std::vector<int>().swap(node.samples);
+      std::vector<double>().swap(node.imd_y_stats);
+    }
+  }
 
   // Fill membership + inbag matrices, build tree_info R list
   List tree_info_list(ntree);
@@ -490,6 +534,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     Named("inbag") = inbag_mat,
     Named("imd_x") = imd_x,
     Named("imd_y") = imd_y,
+    Named("imd_x_per_tree") = imd_x_per_tree,
+    Named("imd_y_per_tree") = imd_y_per_tree,
+    Named("pairwise_xy") = pairwise_xy,
     Named("ntree") = ntree,
     Named("n") = n,
     Named("px") = px,

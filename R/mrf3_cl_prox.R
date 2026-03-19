@@ -35,8 +35,8 @@
 # -------------------------------------------------------------------------------------------------------------
 
 mrf3_cl_prox <- function(rfit, k = NULL,
-                         enhanced = T,
-                         size_min = 5, use = "X", symm = T,
+                         enhanced = TRUE,
+                         size_min = 5, use = "X", symm = TRUE,
                          leaf_embed_dim = 10,
                          merge_quantile = 0.9,
                          merge_mode = c("soft", "hard"),
@@ -44,8 +44,8 @@ mrf3_cl_prox <- function(rfit, k = NULL,
                          sibling_fun = c("constant", "positive", "shift01", "abs", "identity"),
                          sibling_cap = TRUE,
                          hard_prox_mode = c("soft_enhanced", "binary"),
-                         parallel = T,
-                         sparse = F,
+                         parallel = TRUE,
+                         sparse = FALSE,
                          method_cl = "PAM",
                          cores = NULL,
                          ...){
@@ -80,7 +80,7 @@ mrf3_cl_prox <- function(rfit, k = NULL,
   }
 
   if(length(rfit) == 1){
-    if(is.null(rfit[[1]]$yvar)) symm <- F
+    if(is.null(rfit[[1]]$yvar)) symm <- FALSE
   }
   if(enhanced){
     ## For sub-MRF models that already carry a pre-computed enhanced_prox
@@ -168,9 +168,9 @@ mrf3_cl_prox <- function(rfit, k = NULL,
     message("Start tuning k step..")
 
     if(method_cl == "PAM"){
-      k_fit <- tune_k_clusters(p, return_cluster = T, method = method_cl, prox = TRUE)
+      k_fit <- tune_k_clusters(p, return_cluster = TRUE, method = method_cl, prox = TRUE)
     } else {
-      k_fit <- tune_k_clusters(p, return_cluster = T, method = method_cl)
+      k_fit <- tune_k_clusters(p, return_cluster = TRUE, method = method_cl)
     }
     cl <- k_fit$cl
     k_selected <- as.integer(k_fit$best_k)[1]

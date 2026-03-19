@@ -19,69 +19,136 @@ pairwise_imd <- function(x,
   feature_source <- match.arg(feature_source)
 
   mod <- pairwise_imd_extract_object(x)
-  if (is.null(mod$net) || is.null(mod$connection) || is.null(mod$weights)) {
-    stop("`pairwise_imd()` requires `net`, `connection`, and `weights` in the fitted object.")
-  }
 
-  dat_names <- names(mod$weights)
-  if (is.null(dat_names) || any(dat_names == "")) {
-    stop("`weights` must be a named list.")
-  }
+  ## ---- Fast path: native engine with pre-computed pairwise_xy ----
+  has_precomputed <- inherits(x, "mrf3_fit") && !is.null(x$models) &&
+    any(vapply(x$models, function(m) !is.null(m$pairwise_xy), logical(1)))
 
-  var_use <- pairwise_imd_feature_set(x, mod, feature_source = feature_source)
-  var_names_all <- lapply(mod$weights, names)
+  if (has_precomputed) {
+    message("  Using pre-computed pairwise_xy from native engine.")
+    dat_names <- names(x$weights)
+    var_names_all <- lapply(x$weights, names)
+    var_use <- pairwise_imd_feature_set(x, mod, feature_source = feature_source)
 
-  nt <- mod$ntree
-  if (is.null(nt) || !is.finite(nt) || nt <= 0) {
-    nt <- 1L
-  }
-
-  adj_dat_mat <- matrix(0, nrow = length(dat_names), ncol = length(dat_names),
-                        dimnames = list(dat_names, dat_names))
-  conn_mat <- do.call(rbind, mod$connection)
-  length_count <- table(conn_mat)[dat_names]
-  length_count[is.na(length_count)] <- 0
-  for (i in seq_len(nrow(conn_mat))) {
-    adj_dat_mat[conn_mat[i, 1], conn_mat[i, 2]] <- 1
-    adj_dat_mat[conn_mat[i, 2], conn_mat[i, 1]] <- 1
-  }
-  diag(adj_dat_mat) <- as.numeric(length_count)
-
-  large_names <- unlist(var_names_all, use.names = FALSE)
-  adj_var_mat <- matrix(0, nrow = length(large_names), ncol = length(large_names),
-                        dimnames = list(large_names, large_names))
-
-  plyr::l_ply(
-    seq_along(mod$net),
-    .fun = function(i) {
-      ne <- mod$net[[i]]
-      vn <- var_names_all[mod$connection[[i]]]
-      names(vn) <- c("yvar", "xvar")
-      mat <- pairwise_imd_model(ne, vn)
-      mat <- mat[rownames(mat) %in% rownames(adj_var_mat), colnames(mat) %in% colnames(adj_var_mat), drop = FALSE]
-      adj_var_mat[rownames(mat), colnames(mat)] <<- adj_var_mat[rownames(mat), colnames(mat), drop = FALSE] + mat
+    # Build block-level adjacency
+    conn_mat <- do.call(rbind, x$connection)
+    adj_dat_mat <- matrix(0, nrow = length(dat_names), ncol = length(dat_names),
+                          dimnames = list(dat_names, dat_names))
+    for (i in seq_len(nrow(conn_mat))) {
+      adj_dat_mat[conn_mat[i, 1], conn_mat[i, 2]] <- 1
+      adj_dat_mat[conn_mat[i, 2], conn_mat[i, 1]] <- 1
     }
-  )
+    length_count <- table(conn_mat)[dat_names]
+    length_count[is.na(length_count)] <- 0
+    diag(adj_dat_mat) <- as.numeric(length_count)
 
-  for (i in seq_len(ncol(adj_dat_mat))) {
-    for (j in i:ncol(adj_dat_mat)) {
-      m1 <- colnames(adj_dat_mat)[i]
-      m2 <- colnames(adj_dat_mat)[j]
-      if (adj_dat_mat[i, j] != 0) {
-        adj_var_mat[var_names_all[[m1]], var_names_all[[m2]]] <-
-          adj_var_mat[var_names_all[[m1]], var_names_all[[m2]], drop = FALSE] / adj_dat_mat[i, j]
-        if (i != j) {
-          adj_var_mat[var_names_all[[m2]], var_names_all[[m1]]] <-
-            adj_var_mat[var_names_all[[m2]], var_names_all[[m1]], drop = FALSE] / adj_dat_mat[i, j]
+    # Build variable-level adjacency from pairwise_xy matrices
+    large_names <- unlist(var_names_all, use.names = FALSE)
+    adj_var_mat <- matrix(0, nrow = length(large_names), ncol = length(large_names),
+                          dimnames = list(large_names, large_names))
+
+    for (m_name in names(x$models)) {
+      pw <- x$models[[m_name]]$pairwise_xy
+      if (is.null(pw)) next
+      x_names <- rownames(pw)
+      y_names <- colnames(pw)
+      common_x <- intersect(x_names, large_names)
+      common_y <- intersect(y_names, large_names)
+      if (length(common_x) > 0 && length(common_y) > 0) {
+        adj_var_mat[common_x, common_y] <- adj_var_mat[common_x, common_y] +
+          pw[common_x, common_y, drop = FALSE]
+        adj_var_mat[common_y, common_x] <- adj_var_mat[common_y, common_x] +
+          t(pw[common_x, common_y, drop = FALSE])
+      }
+    }
+
+    # Normalize by connection count
+    for (i in seq_len(ncol(adj_dat_mat))) {
+      for (j in i:ncol(adj_dat_mat)) {
+        m1 <- colnames(adj_dat_mat)[i]
+        m2 <- colnames(adj_dat_mat)[j]
+        if (adj_dat_mat[i, j] != 0) {
+          adj_var_mat[var_names_all[[m1]], var_names_all[[m2]]] <-
+            adj_var_mat[var_names_all[[m1]], var_names_all[[m2]], drop = FALSE] / adj_dat_mat[i, j]
+          if (i != j) {
+            adj_var_mat[var_names_all[[m2]], var_names_all[[m1]]] <-
+              adj_var_mat[var_names_all[[m2]], var_names_all[[m1]], drop = FALSE] / adj_dat_mat[i, j]
+          }
         }
       }
     }
-  }
 
-  keep_vars <- unlist(var_use, use.names = FALSE)
-  keep_vars <- unique(keep_vars[keep_vars %in% rownames(adj_var_mat)])
-  adj_var_mat <- adj_var_mat[keep_vars, keep_vars, drop = FALSE]
-  adj_var_mat <- adj_var_mat / nt
+    keep_vars <- unlist(var_use, use.names = FALSE)
+    keep_vars <- unique(keep_vars[keep_vars %in% rownames(adj_var_mat)])
+    adj_var_mat <- adj_var_mat[keep_vars, keep_vars, drop = FALSE]
+
+  } else {
+
+    ## ---- Slow path: post-hoc tree traversal ----
+    if (is.null(mod$net) || is.null(mod$connection) || is.null(mod$weights)) {
+      stop("`pairwise_imd()` requires `net`, `connection`, and `weights`, ",
+           "or models with pre-computed `pairwise_xy` (native engine).",
+           call. = FALSE)
+    }
+
+    dat_names <- names(mod$weights)
+    if (is.null(dat_names) || any(dat_names == "")) {
+      stop("`weights` must be a named list.")
+    }
+
+    var_use <- pairwise_imd_feature_set(x, mod, feature_source = feature_source)
+    var_names_all <- lapply(mod$weights, names)
+
+    nt <- mod$ntree
+    if (is.null(nt) || !is.finite(nt) || nt <= 0) nt <- 1L
+
+    adj_dat_mat <- matrix(0, nrow = length(dat_names), ncol = length(dat_names),
+                          dimnames = list(dat_names, dat_names))
+    conn_mat <- do.call(rbind, mod$connection)
+    length_count <- table(conn_mat)[dat_names]
+    length_count[is.na(length_count)] <- 0
+    for (i in seq_len(nrow(conn_mat))) {
+      adj_dat_mat[conn_mat[i, 1], conn_mat[i, 2]] <- 1
+      adj_dat_mat[conn_mat[i, 2], conn_mat[i, 1]] <- 1
+    }
+    diag(adj_dat_mat) <- as.numeric(length_count)
+
+    large_names <- unlist(var_names_all, use.names = FALSE)
+    adj_var_mat <- matrix(0, nrow = length(large_names), ncol = length(large_names),
+                          dimnames = list(large_names, large_names))
+
+    plyr::l_ply(
+      seq_along(mod$net),
+      .fun = function(i) {
+        ne <- mod$net[[i]]
+        vn <- var_names_all[mod$connection[[i]]]
+        names(vn) <- c("yvar", "xvar")
+        mat <- pairwise_imd_model(ne, vn)
+        mat <- mat[rownames(mat) %in% rownames(adj_var_mat), colnames(mat) %in% colnames(adj_var_mat), drop = FALSE]
+        adj_var_mat[rownames(mat), colnames(mat)] <<- adj_var_mat[rownames(mat), colnames(mat), drop = FALSE] + mat
+      }
+    )
+
+    for (i in seq_len(ncol(adj_dat_mat))) {
+      for (j in i:ncol(adj_dat_mat)) {
+        m1 <- colnames(adj_dat_mat)[i]
+        m2 <- colnames(adj_dat_mat)[j]
+        if (adj_dat_mat[i, j] != 0) {
+          adj_var_mat[var_names_all[[m1]], var_names_all[[m2]]] <-
+            adj_var_mat[var_names_all[[m1]], var_names_all[[m2]], drop = FALSE] / adj_dat_mat[i, j]
+          if (i != j) {
+            adj_var_mat[var_names_all[[m2]], var_names_all[[m1]]] <-
+              adj_var_mat[var_names_all[[m2]], var_names_all[[m1]], drop = FALSE] / adj_dat_mat[i, j]
+          }
+        }
+      }
+    }
+
+    keep_vars <- unlist(var_use, use.names = FALSE)
+    keep_vars <- unique(keep_vars[keep_vars %in% rownames(adj_var_mat)])
+    adj_var_mat <- adj_var_mat[keep_vars, keep_vars, drop = FALSE]
+    adj_var_mat <- adj_var_mat / nt
+  }
 
   if (isTRUE(normalized) && nrow(adj_var_mat) > 0L) {
     d <- rowSums(adj_var_mat)

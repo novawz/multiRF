@@ -186,12 +186,26 @@ fit_mv_forest <- function(X, Y, ntree = 500L, mtry = 0L, ytry = 0L,
   names(imd_y) <- colnames(Y)
   imd_weights <- list(X = imd_x, Y = imd_y)
 
+  # Per-tree IMD distributions (for method="test" in mrf3_vs)
+  imd_x_pt <- res$imd_x_per_tree  # px x ntree matrix
+  imd_y_pt <- res$imd_y_per_tree  # qy x ntree matrix
+  rownames(imd_x_pt) <- colnames(X)
+  rownames(imd_y_pt) <- colnames(Y)
+  imd_weights_per_tree <- list(X = imd_x_pt, Y = imd_y_pt)
+
+  # Pairwise X-Y co-occurrence matrix (px x qy) for pairwise_imd
+  pairwise_xy <- res$pairwise_xy
+  rownames(pairwise_xy) <- colnames(X)
+  colnames(pairwise_xy) <- colnames(Y)
+
   out <- list(
     forest.wt  = res$forest.wt,
     proximity  = res$proximity,
     membership = mem,
     inbag      = inbag_out,
     imd_weights = imd_weights,
+    imd_weights_per_tree = imd_weights_per_tree,
+    pairwise_xy = pairwise_xy,
     xvar       = X,
     yvar       = Y,
     xvar.names = colnames(X),

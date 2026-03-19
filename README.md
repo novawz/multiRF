@@ -17,8 +17,7 @@ pak::pak(".")
 
 ```r
 library(multiRF)
-data("tcga_brca")
-data("tcga_brca_clinical")
+data("tcga_brca_data")  # loads tcga_brca and tcga_brca_clinical
 
 # tcga_brca is a named list of matched omics matrices
 names(tcga_brca)
@@ -60,6 +59,12 @@ fit_full <- mrf3(
   seed = 529
 )
 ```
+
+## Citation
+
+If you use multiRF in your research, please cite:
+
+> Zhang, W. et al. (2025). multiRF: An integrative framework for multi-omics data using random forests. *GigaScience*, 14, giaf148. [DOI:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
 ## Main Functions
 

@@ -22,24 +22,24 @@
 #' @param select Data block(s) to apply selection to; default `"ALL"`.
 #' @param ... Additional arguments passed to underlying fitting functions.
 #' @export
-mrf3_vs <- function(mod, 
+mrf3_vs <- function(mod,
                     dat.list = NULL,
                     method = "filter",
                     se = 1,
                     c1 = "normal",
                     c2 = "normal",
                     level = 0.05,
-                    tscore = F,
-                    use_distribution = T,
-                    re_weights = F,
-                    re_fit = T,
+                    tscore = FALSE,
+                    use_distribution = TRUE,
+                    re_weights = FALSE,
+                    re_fit = TRUE,
                     ntree = 300,
-                    scale = F,
+                    scale = FALSE,
                     k = 3,
                     tol = 0.01,
                     iter = 1000,
                     eps = 1e-05,
-                    normalized = T,
+                    normalized = TRUE,
                     select = "ALL",
                     ...){
 
@@ -105,12 +105,20 @@ mrf3_vs <- function(mod,
   
   if(method == 'test'|tscore) {
 
-    thres <- test_fn( 
-      wl = mod$weights_ls,
-      connection = connect_list,
-      dat_names = dat_names,
-      sig.thres = level)
-    
+    if (is.null(mod$weights_ls)) {
+      warning(
+        "`method = 'test'` requires per-tree weight distributions (unavailable ",
+        "with native engine pre-computed IMD). Falling back to `method = 'mixture'`.",
+        call. = FALSE
+      )
+      method <- "mixture"
+    } else {
+      thres <- test_fn(
+        wl = mod$weights_ls,
+        connection = connect_list,
+        dat_names = dat_names,
+        sig.thres = level)
+    }
   }
   
   if(method == "mixture") {
@@ -384,9 +392,9 @@ test_fn <- function(wl, connection, dat_names, sig.thres = 0.05) {
                   }
                 )
 
-                p <- purrr::map(pls, "pval")
-                keep_idx <- purrr::map(pls, "keep_idx")
-                ts <- purrr::map(pls, "ts")
+                p <- lapply(pls, `[[`, "pval")
+                keep_idx <- lapply(pls, `[[`, "keep_idx")
+                ts <- lapply(pls, `[[`, "ts")
                 names(p) <- names(keep_idx) <- names(ts) <- conn
 
 
@@ -403,7 +411,12 @@ test_fn <- function(wl, connection, dat_names, sig.thres = 0.05) {
               .fun = function(d) {
                 keep_raw <- purrr::map(keep_idx, d)
                 keep_raw <- keep_raw[vapply(keep_raw, function(x) length(x) > 0L, logical(1))]
-                if (length(keep_raw) == 0L) return(list(keep_idx = rep(0L, length(d)), pval = NULL, ts = NULL))
+                if (length(keep_raw) == 0L) {
+                  # d is a block name; get feature count from first non-empty keep_idx
+                  n_feat <- length(purrr::compact(purrr::map(keep_idx, d))[[1]])
+                  if (n_feat == 0L) n_feat <- 1L
+                  return(list(keep_idx = rep(0L, n_feat), pval = NULL, ts = NULL))
+                }
                 keep <- Reduce(cbind, keep_raw)
                 ts_raw <- purrr::map(ts, d)
                 ts_raw <- ts_raw[vapply(ts_raw, function(x) length(x) > 0L, logical(1))]

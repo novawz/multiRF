@@ -307,7 +307,7 @@ plot_tsne <- function(dat = NULL, mod = NULL, group = NULL, label_group = TRUE, 
   }
 
   if (label_group && length(unique(group)) != 1) {
-    data2 <- df %>% group_by(group) %>% dplyr::select(tSNE1, tSNE2) %>% summarize_all(mean)
+    data2 <- df %>% group_by(group) %>% dplyr::select(tSNE1, tSNE2) %>% dplyr::summarise(dplyr::across(dplyr::everything(), mean))
 
     p1 <- p1 +
       ggrepel::geom_text_repel(data = data2, aes(label = group),
@@ -331,25 +331,81 @@ plot_tsne <- function(dat = NULL, mod = NULL, group = NULL, label_group = TRUE, 
 #' @export
 #' @rdname plot_tsne
 
-# plot sample network
-plot_network <- function(dat, group = NULL, label = FALSE, cutoff = mean(dat),
+# plot sample or feature network
+plot_network <- function(dat, group = NULL, label = FALSE, cutoff = NULL,
                          layout = igraph::layout_with_fr, vertex.size = 5, label.dist =1,
                          edge.width = 0.3, vertex.frame.color = "white", vertex.label.color = "black",
                          vertex.label.cex = 0.5, vertex.label.dist = 0,
                          edge.curved = 0.5,vertex.label.degree =  -pi/2,
                          position = "bottomright", source = "auto", omics = NULL, cluster = NULL, ...){
 
+  # Feature network mode: pairwise_imd_analysis input
+  if (inherits(dat, "pairwise_imd_analysis")) {
+    mat <- if (identical(source, "adj_dat")) dat$adj_dat_mat else dat$adj_var_mat
+    var_use <- dat$var_use
+
+    # Build group mapping: feature name -> omics block
+    if (!is.null(var_use)) {
+      feat_group <- character(nrow(mat))
+      names(feat_group) <- rownames(mat)
+      for (block in names(var_use)) {
+        feat_group[intersect(var_use[[block]], rownames(mat))] <- block
+      }
+      feat_group[feat_group == ""] <- "other"
+      group <- feat_group[rownames(mat)]
+    }
+
+    diag(mat) <- 0
+    if (is.null(cutoff)) cutoff <- quantile(mat[mat > 0], 0.75, na.rm = TRUE)
+    mat[mat < cutoff] <- 0
+
+    network <- igraph::graph_from_adjacency_matrix(mat, mode = "undirected", weighted = TRUE)
+
+    if (!is.null(group)) {
+      group <- as.character(group)
+      n_class <- length(unique(group))
+      get_p <- ggpubr::get_palette("jco", k = n_class)
+      names(get_p) <- sort(unique(group))
+      igraph::V(network)$class <- get_p[group]
+    }
+
+    # Remove isolated vertices
+    network <- igraph::delete_vertices(network, igraph::degree(network) == 0)
+
+    vlab <- if (isTRUE(label)) igraph::V(network)$name else NA
+
+    plot(network,
+         vertex.color = igraph::V(network)$class,
+         vertex.size = vertex.size,
+         vertex.label = vlab,
+         vertex.label.cex = vertex.label.cex,
+         vertex.label.color = vertex.label.color,
+         vertex.label.dist = vertex.label.dist,
+         vertex.frame.color = vertex.frame.color,
+         edge.width = edge.width,
+         edge.curved = edge.curved,
+         layout = layout,
+         ...)
+    if (!is.null(group)) {
+      legend(position, fill = get_p, legend = sort(unique(group)), bty = "n", cex = 0.8)
+    }
+    return(invisible(NULL))
+  }
+
+  # Sample network mode (original behavior)
   dat <- extract_plot_matrix(dat, source = source, omics = omics, cluster = cluster)
   if (nrow(dat) != ncol(dat)) {
     stop("`plot_network()` requires a square adjacency/similarity matrix.")
   }
 
   diag(dat) <- 0
+  if (is.null(cutoff)) cutoff <- mean(dat)
   network <- igraph::graph_from_adjacency_matrix(dat,
-                                                 mode = "undirect",
+                                                 mode = "undirected",
                                                  weighted = TRUE)
 
   if(!is.null(group)){
+    group <- as.character(group)
     n_class <- length(unique(group))
     get_p <- ggpubr::get_palette("jco", k = n_class)
     names(get_p) <- sort(unique(group))
@@ -359,7 +415,7 @@ plot_network <- function(dat, group = NULL, label = FALSE, cutoff = mean(dat),
 
   if(!label){
     label <- NA
-  } else {label <- igraph::V(network)$ids}
+  } else {label <- igraph::V(network)$name}
 
   network <- igraph::delete_edges(network, igraph::E(network)[which(igraph::E(network)$weight < cutoff)])
   network <- igraph::delete_vertices(network, igraph::degree(network) == 0)
@@ -404,8 +460,8 @@ plot_weights <- function(weights, plot.which = "all", top = 20, labels = NULL, w
   }
 
   df <-  purrr::map(imp,
-                    ~data.frame(Weights = sort(., decreasing = T),
-                                Var_names = names(.)[order(., decreasing = T)],
+                    ~data.frame(Weights = sort(., decreasing = TRUE),
+                                Var_names = names(.)[order(., decreasing = TRUE)],
                                 Ranks = c(1:length(.))))
 
   if(!is.null(top)){
@@ -422,7 +478,7 @@ plot_weights <- function(weights, plot.which = "all", top = 20, labels = NULL, w
       .fun = function(g){
         p <- ggplot(
           data = g,
-          aes(x = reorder(Var_names, -order(Ranks, decreasing = F)), y = Weights, fill = Weights)
+          aes(x = reorder(Var_names, -order(Ranks, decreasing = FALSE)), y = Weights, fill = Weights)
         ) +
           geom_bar(stat = 'identity') +
           ggpubr::theme_pubr(base_size = 9) +
@@ -543,6 +599,7 @@ plot_embed <- function(dat, group = NULL, position = "bottom", pch = 20, ...){
 
 
   if(!is.null(group)){
+    group <- as.character(group)
     l <- sort(na.omit(unique(group)))
     get_p <- ggpubr::get_palette("jco", k = length(l))
     names(get_p) <- l
@@ -603,7 +660,7 @@ plot_umap <- function(dat, group = NULL, main = "UMAP", label_group = TRUE,
     data2 <- df %>%
       group_by(group) %>%
       dplyr::select(umap1, umap2) %>%
-      summarize_all(mean)
+      dplyr::summarise(dplyr::across(dplyr::everything(), mean))
 
     p1 <- p1 +
       ggrepel::geom_text_repel(data = data2, aes(label = group),

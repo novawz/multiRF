@@ -155,8 +155,8 @@ get_leaf_ds <- function(mod, tree.membership, net){
   
   # Update mem_id and membership
   net$mem_id_old <- net$mem_id
-  mem_update <- slice_max(.data = prev_leaf, order_by = mem_id, by = from, with_ties = F)
-  mem_old <- slice_min(.data = prev_leaf, order_by = mem_id, by = from, with_ties = F)
+  mem_update <- slice_max(.data = prev_leaf, order_by = mem_id, by = from, with_ties = FALSE)
+  mem_old <- slice_min(.data = prev_leaf, order_by = mem_id, by = from, with_ties = FALSE)
   mem_new <- setNames(mem_update$mem_id, mem_update$from)
   mem_org_id <- mem_old$mem_id
   names(mem_org_id) <- mem_new
@@ -251,7 +251,7 @@ get_Y_imp <- function(net, tree.membership, dat,
 }
 
 # Get importance for leaves in a tree
-get_tree_imp <- function(mod, dat = NULL, robust = F, tree.membership, net, calc = "Both", M = NULL, w = NULL, yprob = 1, weighted = F, seed = -5){
+get_tree_imp <- function(mod, dat = NULL, robust = FALSE, tree.membership, net, calc = "Both", M = NULL, w = NULL, yprob = 1, weighted = FALSE, seed = -5){
 
   if(is.null(dat)){
     dat <- mod$xvar
@@ -720,9 +720,28 @@ get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  u
     })
     names(weight_list) <- block_names
 
+    # Build per-tree weight distributions (for method="test" in mrf3_vs)
+    # Format: list of connections, each = list of ntree elements,
+    #   each = named list(block1 = vec, block2 = vec)
+    all_have_pt <- all(vapply(mod_list, function(m) !is.null(m$imd_weights_per_tree), logical(1)))
+    weight_list_init <- NULL
+    if (all_have_pt) {
+      weight_list_init <- lapply(mod_names, function(m_name) {
+        ipt <- mod_list[[m_name]]$imd_weights_per_tree  # list(X=mat, Y=mat)
+        m_name_sep <- rev(unlist(stringr::str_split(m_name, "_")))
+        nt_local <- ncol(ipt$X)
+        # list of ntree elements, each = list(block1 = vec, block2 = vec)
+        lapply(seq_len(nt_local), function(t) {
+          out <- list(ipt$X[, t], ipt$Y[, t])
+          names(out) <- m_name_sep
+          out
+        })
+      })
+    }
+
     return(list(
       weight_list = weight_list,
-      weight_list_init = NULL,
+      weight_list_init = weight_list_init,
       net = NULL
     ))
   }
@@ -893,8 +912,8 @@ cal_freq <- function(mod, net){
 # }
 
 get_results <- function(mod_list, parallel,
-                        normalized = F, weighted = F, robust = F,
-                        use_depth = F, calc, w = NULL, yprob = 1, cores = NULL, seed = -5){
+                        normalized = FALSE, weighted = FALSE, robust = FALSE,
+                        use_depth = FALSE, calc, w = NULL, yprob = 1, cores = NULL, seed = -5){
 
   mod_names <- names(mod_list)
   plyr::llply(

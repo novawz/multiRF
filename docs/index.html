@@ -4,14 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>multiRF: Multi-Omics Integration with Random Forests</title>
-  <meta name="description" content="R package for MRF-based multi-omics integration, clustering, variable selection, and visualization.">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 
   <header class="site-header">
     <div class="site-header-inner">
-      <div class="site-title">multiRF <span>v0.1.1</span></div>
+      <div class="site-title">multiRF <span>v0.2.0</span></div>
       <ul class="site-nav">
         <li><a href="#installation">Install</a></li>
         <li><a href="#workflow">Workflow</a></li>
@@ -25,13 +24,19 @@
   <div class="page">
 
     <div class="title-block">
-      <h1>MRF-Based Multi-Omics Integration and Clustering</h1>
+      <h1>Multi-Omics Integration with Multivariate Random Forests</h1>
       <p class="subtitle">
-        Tools for model-based integration of multi-omics datasets using random
-        forests and Markov random field inspired weighting. The package provides
-        workflows for model fitting, variable importance aggregation, clustering,
-        and visualization.
+        <code>multiRF</code> integrates matched multi-omics datasets using
+        multivariate random forests with inverse minimal depth (IMD) importance.
+        The package provides workflows for model fitting, variable selection,
+        clustering, and visualization.
       </p>
+      <div class="note">
+        Zhang, W. et al. (2025).
+        <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728">
+        An integrative multi-omics random forest framework for robust biomarker discovery</a>.
+        <em>GigaScience</em>, 14, giaf148.
+      </div>
       <div class="meta-row">
         <div><strong>Author:</strong> Wei Zhang</div>
         <div><strong>License:</strong> MIT</div>
@@ -46,14 +51,12 @@
         <div class="toc-label">Contents</div>
         <ul>
           <li><a href="#installation">1. Installation</a></li>
-          <li><a href="#data">2. Example Data</a></li>
-          <li><a href="#maps">3. Method Maps</a></li>
-          <li><a href="#workflow">4. Clustering</a></li>
-          <li><a href="#vs">5. Variable Selection</a></li>
-          <li><a href="#robust">6. Robust Clustering</a></li>
-          <li><a href="#plots">7. Plotting</a></li>
-          <li><a href="#comparison">8. Comparison</a></li>
-          <li><a href="#api">9. API Reference</a></li>
+          <li><a href="#data">2. Toy Data</a></li>
+          <li><a href="#workflow">3. Clustering</a></li>
+          <li><a href="#vs">4. Variable Selection</a></li>
+          <li><a href="#robust">5. Robust Clustering</a></li>
+          <li><a href="#plots">6. Plots</a></li>
+          <li><a href="#api">7. API Reference</a></li>
         </ul>
       </aside>
 
@@ -62,17 +65,20 @@
         <!-- 1. Installation -->
         <section class="section" id="installation">
           <h2>1. Installation</h2>
-          <p>Install the development version from GitHub:</p>
           <div class="install-cmd"><span class="prompt">&gt; </span>remotes::install_github("noblegasss/multiRF")</div>
-          <p>The package links to C++ via <code>Rcpp</code> for fast t-SNE computation and requires compilation tools (<code>Rtools</code> on Windows, <code>Xcode</code> CLI on macOS).</p>
+          <p>The package includes a native C++ multivariate random forest engine
+          (via <code>Rcpp</code>) with OpenMP parallelization. Compilation tools
+          are required (<code>Rtools</code> on Windows, <code>Xcode</code> CLI on macOS).</p>
         </section>
 
-        <!-- 2. Example Data -->
+        <!-- 2. Toy Data -->
         <section class="section" id="data">
-          <h2>2. Example Data</h2>
-          <p>The package ships a TCGA BRCA dataset with three matched omics blocks (gene expression, methylation, miRNA) and clinical annotations.</p>
+          <h2>2. Toy Data</h2>
+          <p>A subsampled TCGA BRCA dataset is bundled for demonstration. It
+          contains three matched omics blocks (gene expression, methylation,
+          miRNA) and clinical annotations including PAM50 subtypes.</p>
 <pre><code>library(multiRF)
-data("tcga_brca_data")  # loads tcga_brca and tcga_brca_clinical
+data("tcga_brca_data")
 
 names(tcga_brca)
 dim(tcga_brca$gene)
@@ -82,62 +88,12 @@ dim(tcga_brca$mirna)</code></pre>
 #&gt; [1] 674 200
 #&gt; [1] 674 200
 #&gt; [1] 674 100</pre>
-          <div class="note">
-            <strong>Note.</strong> Samples must be aligned across all omics blocks. Each
-            block is a matrix-like object with samples in rows and features in columns.
-          </div>
         </section>
 
-        <!-- 3. Method Maps -->
-        <section class="section" id="maps">
-          <h2>3. Method Maps</h2>
-
-          <h3>Table 1. Clustering backends</h3>
-          <table class="ref-table">
-            <thead><tr><th>Setting</th><th>Scope</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td><code>similarity</code></td><td>Global</td><td>Default fused-similarity workflow; recommended starting point.</td></tr>
-              <tr><td><code>proximity</code></td><td>Global</td><td>Use when RF proximity is the primary object of interest.</td></tr>
-              <tr><td><code>enhanced_proximity</code></td><td>Global</td><td>Aggressive proximity-based branch with refinement.</td></tr>
-              <tr><td><code>PAM</code>, <code>Spectral</code></td><td>Branch</td><td>Shared/specific branch backends via <code>clustering_args</code>.</td></tr>
-              <tr><td><code>Proximity</code>, <code>Enhanced_Proximity</code></td><td>Specific</td><td>Block-specific proximity alternatives.</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Table 2. Variable-selection methods</h3>
-          <table class="ref-table">
-            <thead><tr><th>Method</th><th>Signal Model</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td><code>filter</code></td><td>Heuristic threshold</td><td>Practical baseline for a first pass.</td></tr>
-              <tr><td><code>test</code></td><td>Significance-style</td><td>Hypothesis-testing flavor for weight selection.</td></tr>
-              <tr><td><code>mixture</code></td><td>Signal/noise mixture</td><td>Best when weights separate into background and enriched components.</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Table 3. Plotting functions</h3>
-          <table class="ref-table">
-            <thead><tr><th>Function</th><th>Input</th><th>Typical Question</th></tr></thead>
-            <tbody>
-              <tr><td><code>plot_tsne()</code></td><td>Similarity / reconstruction</td><td>Do clusters separate in a nonlinear embedding?</td></tr>
-              <tr><td><code>plot_umap()</code></td><td>Similarity / reconstruction</td><td>Is there robust manifold structure?</td></tr>
-              <tr><td><code>plot_embed()</code></td><td>Matrix</td><td>Quick overview before deeper plots.</td></tr>
-              <tr><td><code>plot_network()</code></td><td>Similarity graph</td><td>Which sample relations dominate?</td></tr>
-              <tr><td><code>plot_weights()</code></td><td>IMD weights</td><td>Which features drive the result?</td></tr>
-              <tr><td><code>plot_circos()</code></td><td>Adjacency structure</td><td>How are modules connected globally?</td></tr>
-              <tr><td><code>plot_km()</code></td><td>Clusters + clinical</td><td>Do clusters differ in survival?</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <!-- 4. Clustering Workflows -->
+        <!-- 3. Clustering -->
         <section class="section" id="workflow">
-          <h2>4. Clustering Workflows</h2>
+          <h2>3. Clustering Workflow</h2>
 
-          <p>The package provides two main entry points. <code>mrf3()</code> is the compact
-          interface for standard workflows; <code>mrf3_fit()</code> exposes the full staged
-          parameter surface.</p>
-
-          <h3>4.1. Basic workflow with <code>mrf3()</code></h3>
 <pre><code>fit &lt;- mrf3(
   tcga_brca,
   k = 4,
@@ -149,108 +105,49 @@ dim(tcga_brca$mirna)</code></pre>
 
 summary(fit)
 table(get_clusters(fit))
-names(get_weights(fit))
 get_top_vars(fit, n = 10)</code></pre>
-<pre class="r-output">#&gt; mrf3_fit Summary
-#&gt; ----------------
-#&gt;   Blocks      : 3
-#&gt;   Block names : gene, methy, mirna
-#&gt;   Samples     : 192
-#&gt;   Models      : 2
-#&gt;   Connections : 2
-#&gt;
-#&gt;   Top-v: model=50, fused=30
-#&gt;
-#&gt; Branches
-#&gt;   - shared: ran
-#&gt;   - specific: ran
-#&gt;   - imd: ran
-#&gt;   - cluster_imd: skipped
-#&gt;   - variable_selection: skipped
-#&gt;   - robust_clustering: skipped
 
-#&gt;
-#&gt;  1  2  3  4
-#&gt; 52 48 47 45
-
-#&gt; [1] "gene"  "methy" "mirna"
-
-#&gt; $gene
-#&gt;      variable    weight
-#&gt; 1    ERBB2     0.04821
-#&gt; 2    ESR1      0.04356
-#&gt; 3    GATA3     0.03912
-#&gt; ...
-#&gt;
-#&gt; $methy
-#&gt;      variable    weight
-#&gt; 1    cg04110421  0.03287
-#&gt; 2    cg12345678  0.02954
-#&gt; ...
-#&gt;
-#&gt; $mirna
-#&gt;      variable         weight
-#&gt; 1    hsa-miR-21-5p    0.05143
-#&gt; 2    hsa-miR-155-5p   0.04672
-#&gt; ...</pre>
-
-          <h3>4.2. Clustering backends</h3>
-          <p>The global clustering backend is controlled by <code>main_clustering</code>.
-          All three options are compared against PAM50 subtypes in <a href="#comparison">Section 8</a>.</p>
-          <div class="grid-2">
-            <div>
-              <strong>Similarity (default)</strong>
-<pre><code>fit_similarity &lt;- mrf3(
-  tcga_brca, k = 4,
-  main_clustering = "similarity",
-  ntree = 100, seed = 529
-)</code></pre>
-            </div>
-            <div>
-              <strong>Proximity</strong>
+          <h3>Comparing backends</h3>
 <pre><code>fit_proximity &lt;- mrf3(
   tcga_brca, k = 4,
   main_clustering = "proximity",
   ntree = 100, seed = 529
-)</code></pre>
-            </div>
-          </div>
-<pre><code>fit_enhanced &lt;- mrf3(
+)
+
+fit_enhanced &lt;- mrf3(
   tcga_brca, k = 4,
   main_clustering = "enhanced_proximity",
   ntree = 100, seed = 529
 )</code></pre>
 
-          <h3>4.3. Branch-level controls</h3>
-          <p>For finer control, use <code>clustering_args</code> inside <code>mrf3_fit()</code>.</p>
-<pre><code>fit_branch &lt;- mrf3_fit(
-  dat.list = tcga_brca,
-  ntree = 200,
-  run_imd = TRUE,
-  clustering_args = list(
-    shared_method = "Spectral",
-    specific_method = "PAM",
-    specific_prox_method_cl = "PAM"
+          <h3>Compare against PAM50</h3>
+<pre><code>common_ids &lt;- intersect(
+  names(get_clusters(fit)),
+  tcga_brca_clinical$sampleID
+)
+pam50 &lt;- tcga_brca_clinical$BRCA_Subtype_PAM50[
+  match(common_ids, tcga_brca_clinical$sampleID)
+]
+
+cluster_metric_matrix(
+  list(
+    similarity         = get_clusters(fit)[common_ids],
+    proximity          = get_clusters(fit_proximity)[common_ids],
+    enhanced_proximity = get_clusters(fit_enhanced)[common_ids],
+    PAM50              = pam50
   ),
-  seed = 529
+  metric = "ari"
 )</code></pre>
-          <div class="note">
-            <strong>Branch controls.</strong>
-            <code>shared_method</code>: PAM or Spectral for the shared branch.
-            <code>specific_method</code>: adds Proximity and Enhanced_Proximity for per-block clustering.
-            <code>specific_prox_method_cl</code>: secondary clustering engine for proximity-based specific methods.
-          </div>
         </section>
 
-        <!-- 5. Variable Selection -->
+        <!-- 4. Variable Selection -->
         <section class="section" id="vs">
-          <h2>5. Variable Selection</h2>
+          <h2>4. Variable Selection</h2>
 
-          <h3>5.1. Integrated workflow</h3>
-          <p>Variable selection is driven by IMD weights. Enable it in the staged workflow:</p>
 <pre><code>fit_vs &lt;- mrf3_fit(
   dat.list = tcga_brca,
-  k = 4, ntree = 200,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
   run_imd = TRUE,
   run_variable_selection = TRUE,
   variable_selection_args = list(
@@ -262,66 +159,32 @@ get_top_vars(fit, n = 10)</code></pre>
 )
 
 get_selected_vars(fit_vs)
-get_data(fit_vs, which = "selected")
 get_vs_summary(fit_vs)</code></pre>
-<pre class="r-output">#&gt; $gene
-#&gt; [1] "ERBB2"  "ESR1"   "GATA3"  "FOXA1"  "MKI67"  "PGR" ...
-#&gt;
-#&gt; $methy
-#&gt; [1] "cg04110421" "cg12345678" "cg98765432" ...
-#&gt;
-#&gt; $mirna
-#&gt; [1] "hsa-miR-21-5p" "hsa-miR-155-5p" "hsa-miR-200c-3p" ...
 
-#&gt;   block p_total p_selected selected_ratio
-#&gt; 1  gene     375        124          0.331
-#&gt; 2 methy     356         98          0.275
-#&gt; 3 mirna     100         41          0.410</pre>
-
-          <h3>5.2. Standalone comparison</h3>
-          <p>Call <code>mrf3_vs()</code> directly on an existing fit to compare methods:</p>
-          <div class="grid-2">
-            <div>
-              <strong>Filter</strong>
-<pre><code>vs_filter &lt;- mrf3_vs(
-  mod = fit, dat.list = tcga_brca,
-  method = "filter", re_fit = FALSE
-)</code></pre>
-            </div>
-            <div>
-              <strong>Test</strong>
+          <h3>Compare methods</h3>
 <pre><code>vs_test &lt;- mrf3_vs(
-  mod = fit, dat.list = tcga_brca,
-  method = "test", re_fit = FALSE,
-  level = 0.05
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "test", re_fit = FALSE, level = 0.05
+)
+vs_mixture &lt;- mrf3_vs(
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "mixture", re_fit = FALSE, level = 0.05
+)
+
+lapply(
+  list(test = vs_test, mixture = vs_mixture),
+  get_selected_vars
 )</code></pre>
-            </div>
-          </div>
-          <div class="grid-2">
-            <div>
-              <strong>Mixture</strong>
-<pre><code>vs_mix &lt;- mrf3_vs(
-  mod = fit, dat.list = tcga_brca,
-  method = "mixture", re_fit = FALSE,
-  level = 0.05
-)</code></pre>
-            </div>
-            <div>
-              <strong>Inspect results</strong>
-<pre><code>get_selected_vars(vs_filter)
-get_selected_vars(vs_test)
-get_selected_vars(vs_mix)</code></pre>
-            </div>
-          </div>
         </section>
 
-        <!-- 6. Robust Clustering -->
+        <!-- 5. Robust Clustering -->
         <section class="section" id="robust">
-          <h2>6. Robust Clustering</h2>
-          <p>The robust branch first performs variable selection, then reclusters on the reduced representation:</p>
+          <h2>5. Robust Clustering</h2>
+
 <pre><code>fit_robust &lt;- mrf3_fit(
   dat.list = tcga_brca,
-  k = 4, ntree = 200,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
   run_imd = TRUE,
   run_variable_selection = TRUE,
   run_cluster_imd = FALSE,
@@ -332,140 +195,78 @@ get_selected_vars(vs_mix)</code></pre>
 
 table(get_clusters(fit_robust, which = "robust"))
 summary(fit_robust)</code></pre>
-<pre class="r-output">#&gt;
-#&gt;  1  2  3  4
-#&gt; 55 46 50 41
 
-#&gt; mrf3_fit Summary
-#&gt; ----------------
-#&gt;   Blocks      : 3
-#&gt;   Block names : gene, methy, mirna
-#&gt;   Samples     : 192
-#&gt;   ...
-#&gt;
-#&gt; Branches
-#&gt;   - shared: ran
-#&gt;   - specific: ran
-#&gt;   - imd: ran
-#&gt;   - variable_selection: ran (method=mixture, p_selected=124/98/41)
-#&gt;   - robust_clustering: ran (k=4)</pre>
-
+          <h3>Pairwise IMD</h3>
+<pre><code>pw &lt;- pairwise_imd(fit_robust)
+plot_network(pw, label = TRUE, vertex.size = 3, vertex.label.cex = 0.4)</code></pre>
+          <figure class="plot-figure">
+            <img src="assets/img/plot-feature-network-1.png" alt="Feature pairwise IMD network">
+            <figcaption>Feature network from pairwise IMD, colored by omics block.</figcaption>
+          </figure>
         </section>
 
-        <!-- 7. Plotting -->
+        <!-- 6. Plots -->
         <section class="section" id="plots">
-          <h2>7. Plotting Functions</h2>
-          <p>All plot helpers accept an <code>mrf3_fit</code> object. The <code>source</code>
-          argument selects which branch or reconstruction to visualize.</p>
+          <h2>6. Plots</h2>
 
-          <h3>7.1. Embedding plots</h3>
-<pre><code>plot_tsne(mod = fit, group = get_clusters(fit),
-         source = "specific_shared",
-         main = "t-SNE: shared/specific branch")
-
-plot_umap(mod = fit_robust,
-          group = get_clusters(fit_robust, which = "robust"),
-          source = "robust_clustering",
-          main = "UMAP: robust clustering")</code></pre>
+          <h3>t-SNE</h3>
+<pre><code>plot_tsne(
+  mod = fit,
+  group = get_clusters(fit),
+  source = "specific_shared",
+  main = "t-SNE: shared/specific branch"
+)</code></pre>
           <figure class="plot-figure">
-            <img src="assets/img/tsne_clusters.png" alt="t-SNE embedding colored by cluster and PAM50 subtype">
-            <figcaption>Figure 1. t-SNE embedding of the fused similarity matrix. Left: colored by multiRF cluster (k = 4). Right: colored by PAM50 molecular subtype from TCGA annotations.</figcaption>
+            <img src="assets/img/plot-tsne-1.png" alt="t-SNE embedding">
+            <figcaption>t-SNE embedding colored by cluster assignments.</figcaption>
           </figure>
 
-          <h3>7.2. Network</h3>
-<pre><code>plot_network(dat = fit, group = get_clusters(fit),
-             source = "specific_shared", cutoff = 0.3)</code></pre>
+          <h3>Sample network</h3>
+<pre><code>plot_network(
+  dat = fit,
+  group = get_clusters(fit),
+  source = "specific_shared",
+  cutoff = 0.01
+)</code></pre>
+          <figure class="plot-figure">
+            <img src="assets/img/plot-network-1.png" alt="Sample similarity network">
+            <figcaption>Sample similarity network colored by cluster.</figcaption>
+          </figure>
 
-          <h3>7.3. Feature importance</h3>
+          <h3>Feature importance</h3>
 <pre><code>plot_weights(fit_vs, weight_source = "imd", top = 15)</code></pre>
           <figure class="plot-figure">
-            <img src="assets/img/weights_imd.png" alt="Top 15 features by IMD weight per omics block">
-            <figcaption>Figure 3. Top 15 features by IMD weight for each omics block (gene expression, methylation, miRNA).</figcaption>
+            <img src="assets/img/plot-weights-1.png" alt="IMD weights">
+            <figcaption>Top 15 features by IMD weight for each omics block.</figcaption>
           </figure>
 
-          <h3>7.4. Circos</h3>
-<pre><code>plot_circos(mat = fit$reconstruction$W$W_all)</code></pre>
-
-          <h3>7.5. Survival analysis</h3>
+          <h3>Survival</h3>
 <pre><code>clinical_ids &lt;- tcga_brca_clinical$sampleID
 clusters &lt;- get_clusters(fit)
-common_ids &lt;- intersect(names(clusters), clinical_ids)
-clinical_sub &lt;- tcga_brca_clinical[
-  match(common_ids, clinical_ids), , drop = FALSE
-]
+if (is.null(names(clusters))) {
+  names(clusters) &lt;- rownames(tcga_brca[[1]])
+}
+km_ids &lt;- intersect(names(clusters), clinical_ids)
+clinical_sub &lt;- tcga_brca_clinical[match(km_ids, clinical_ids), , drop = FALSE]
+keep &lt;- !is.na(clinical_sub$OS.time) &amp; !is.na(clinical_sub$OS)
 
-plot_km(test_var = clusters[common_ids],
-        time_var = "OS.time", event_var = "OS",
-        pheno_mat = clinical_sub)</code></pre>
+plot_km(
+  test_var = factor(clusters[km_ids][keep]),
+  time_var = "OS.time",
+  event_var = "OS",
+  pheno_mat = clinical_sub[keep, , drop = FALSE]
+)</code></pre>
           <figure class="plot-figure">
-            <img src="assets/img/km_survival.png" alt="Kaplan-Meier survival curves by cluster">
-            <figcaption>Figure 4. Kaplan-Meier overall survival curves stratified by cluster assignment with log-rank test p-value.</figcaption>
+            <img src="assets/img/plot-km-1.png" alt="Kaplan-Meier curves">
+            <figcaption>Kaplan-Meier survival curves stratified by cluster.</figcaption>
           </figure>
         </section>
 
-        <!-- 8. Method Comparison -->
-        <section class="section" id="comparison">
-          <h2>8. Method Comparison Strategy</h2>
-
-          <h3>Compare clusters against PAM50 subtypes</h3>
-          <p>Use the bundled clinical annotations to compare the three clustering
-          backends (fitted in <a href="#workflow">Section 4</a>) against known PAM50 molecular subtypes:</p>
-<pre><code>pam50 &lt;- tcga_brca_clinical$BRCA_Subtype_PAM50
-
-# Pairwise ARI matrix (backends + PAM50)
-cluster_metric_matrix(
-  list(
-    similarity         = get_clusters(fit),
-    proximity          = get_clusters(fit_proximity),
-    enhanced_proximity = get_clusters(fit_enhanced),
-    PAM50              = pam50
-  ),
-  metric = "ari"
-)
-
-# Per-backend metrics vs PAM50
-rbind(
-  similarity         = cluster_metrics(get_clusters(fit), pam50),
-  proximity          = cluster_metrics(get_clusters(fit_proximity), pam50),
-  enhanced_proximity = cluster_metrics(get_clusters(fit_enhanced), pam50)
-)</code></pre>
-
-          <h3>Recommended workflow</h3>
-          <ol>
-            <li>Fit a baseline with <code>mrf3(main_clustering = "similarity")</code>.</li>
-            <li>Refit with alternative backends; compare against PAM50 using <code>cluster_metric_matrix()</code>.</li>
-            <li>Run <code>filter</code>, <code>test</code>, <code>mixture</code> on the same IMD weights.</li>
-            <li>Visualize with <code>plot_weights()</code>, <code>plot_heatmap()</code>, <code>plot_tsne()</code>.</li>
-            <li>Promote shortlisted settings into <code>run_robust_clustering = TRUE</code>.</li>
-          </ol>
-
-          <h3>multiRF-sub</h3>
-          <p>For larger blocks, the sub-MRF ensemble mode should be compared as another workflow variant rather than left out of the benchmark.</p>
-<pre><code>fit_sub &lt;- mrf3_fit(
-  dat.list = tcga_brca,
-  k = 4,
-  ntree = 200,
-  sub_mrf = TRUE,
-  sub_mrf_args = list(
-    n_sub = 10,
-    frac_response = 0.2,
-    frac_predictor = 0.2,
-    ntree_per_sub = 20
-  ),
-  run_imd = TRUE,
-  seed = 529
-)
-
-summary(fit_sub)
-table(get_clusters(fit_sub))
-cluster_metrics(get_clusters(fit_sub)[common_ids], pam50)</code></pre>
-        </section>
-
-        <!-- 9. API Reference -->
+        <!-- 7. API Reference -->
         <section class="section" id="api">
-          <h2>9. API Quick Reference</h2>
+          <h2>7. API Reference</h2>
 
-          <h3>Table 4. Core workflow functions</h3>
+          <h3>Core workflow</h3>
           <table class="ref-table">
             <thead><tr><th>Function</th><th>Purpose</th></tr></thead>
             <tbody>
@@ -473,38 +274,43 @@ cluster_metrics(get_clusters(fit_sub)[common_ids], pam50)</code></pre>
               <tr><td><code>mrf3_fit()</code></td><td>Staged workflow with full parameter surface.</td></tr>
               <tr><td><code>mrf3_vs()</code></td><td>Variable selection on existing fit.</td></tr>
               <tr><td><code>mrf3_stability()</code></td><td>Resampling-based stability assessment.</td></tr>
-              <tr><td><code>mrf3_init()</code></td><td>Initial forest fitting step.</td></tr>
-              <tr><td><code>mrf3_reconstr()</code></td><td>Reconstruction step.</td></tr>
+              <tr><td><code>pairwise_imd()</code></td><td>Variable-level pairwise co-occurrence network.</td></tr>
               <tr><td><code>filter_omics()</code></td><td>Pre-fitting feature filtering.</td></tr>
             </tbody>
           </table>
 
-          <h3>Table 5. Accessor functions</h3>
+          <h3>Accessors</h3>
           <table class="ref-table">
             <thead><tr><th>Function</th><th>Returns</th></tr></thead>
             <tbody>
               <tr><td><code>get_clusters()</code></td><td>Cluster assignments.</td></tr>
               <tr><td><code>get_weights()</code></td><td>Per-block feature importance weights.</td></tr>
               <tr><td><code>get_top_vars()</code></td><td>Top-<em>n</em> variables by IMD weight.</td></tr>
-              <tr><td><code>get_data()</code></td><td>Data list (filtered or selected).</td></tr>
               <tr><td><code>get_selected_vars()</code></td><td>Selected variable names from VS.</td></tr>
-              <tr><td><code>get_connection()</code></td><td>Block pairing structure.</td></tr>
               <tr><td><code>get_vs_summary()</code></td><td>Variable-selection summary table.</td></tr>
-              <tr><td><code>get_models()</code></td><td>Fitted RF models.</td></tr>
-              <tr><td><code>get_shared_frac()</code></td><td>Per-omics shared fraction.</td></tr>
+              <tr><td><code>get_connection()</code></td><td>Block pairing structure.</td></tr>
             </tbody>
           </table>
 
-          <h3>Table 6. Cluster comparison metrics</h3>
+          <h3>Plotting</h3>
+          <table class="ref-table">
+            <thead><tr><th>Function</th><th>Input</th></tr></thead>
+            <tbody>
+              <tr><td><code>plot_tsne()</code></td><td>Similarity or reconstruction</td></tr>
+              <tr><td><code>plot_umap()</code></td><td>Similarity or reconstruction</td></tr>
+              <tr><td><code>plot_network()</code></td><td>Similarity graph or pairwise IMD</td></tr>
+              <tr><td><code>plot_weights()</code></td><td>IMD weights</td></tr>
+              <tr><td><code>plot_km()</code></td><td>Clusters + clinical</td></tr>
+              <tr><td><code>plot_circos()</code></td><td>Adjacency structure</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Metrics</h3>
           <table class="ref-table">
             <thead><tr><th>Function</th><th>Returns</th></tr></thead>
             <tbody>
-              <tr><td><code>cluster_metrics()</code></td><td>ARI, Jaccard, NMI, purity for two label vectors.</td></tr>
-              <tr><td><code>cluster_metric_matrix()</code></td><td>Pairwise metric matrix across solutions.</td></tr>
-              <tr><td><code>cluster_ari()</code></td><td>Adjusted Rand Index.</td></tr>
-              <tr><td><code>cluster_nmi()</code></td><td>Normalized Mutual Information.</td></tr>
-              <tr><td><code>cluster_jaccard()</code></td><td>Jaccard Index.</td></tr>
-              <tr><td><code>cluster_purity()</code></td><td>Cluster Purity.</td></tr>
+              <tr><td><code>cluster_metrics()</code></td><td>ARI, Jaccard, NMI, purity.</td></tr>
+              <tr><td><code>cluster_metric_matrix()</code></td><td>Pairwise metric matrix.</td></tr>
             </tbody>
           </table>
         </section>
@@ -512,10 +318,7 @@ cluster_metrics(get_clusters(fit_sub)[common_ids], pam50)</code></pre>
         <footer class="site-footer">
           <strong>multiRF</strong> &mdash;
           <a href="https://github.com/noblegasss/multiRF">GitHub</a> &middot;
-          MIT License &middot; Wei Zhang<br>
-          Static web companion to the package vignette. Output blocks show representative results;
-          exact values depend on <code>ntree</code>, <code>seed</code>, and random state.
-          Serve via GitHub Pages from the <code>docs/</code> folder.
+          MIT License &middot; Wei Zhang
         </footer>
 
       </main>

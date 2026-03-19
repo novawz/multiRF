@@ -19,20 +19,20 @@ tune_k_clusters <- function(x,...){
 }
 
 #' @rdname tune_k_clusters
-tune_k_clusters.default <- function(x, return_cluster = F, plot_k = F,
-                                    method = "Spectral", tune_method = "silhouette", gap_w = "uniform", prox = F,...){
+tune_k_clusters.default <- function(x, return_cluster = FALSE, plot_k = FALSE,
+                                    method = "Spectral", tune_method = "silhouette", gap_w = "uniform", prox = FALSE,...){
 
   k_tune <- seq(2,12,by = 1)
 
   if(method == "Spectral"){
     cl <- spectral_cl(x, k_tune = k_tune, gap_w = gap_w,  ...)
   }
-  
+
   if(method == "PAM"){
     if(prox){
       x <- 1-x
-      diss <- T
-    } else {diss <- F}
+      diss <- TRUE
+    } else {diss <- FALSE}
     cl <- pam_cl(x, k_tune = k_tune, diss = diss, tune_method = tune_method, ...)
   }
 
@@ -76,7 +76,7 @@ tune_k_clusters.default <- function(x, return_cluster = F, plot_k = F,
 }
 
 #' @rdname tune_k_clusters
-tune_k_clusters.mrf3 <- function(x, return_cluster = F, plot_k = F, method = "Spectral", tune_method = "silhouette", gap_w = "uniform", prox = F, ...){
+tune_k_clusters.mrf3 <- function(x, return_cluster = FALSE, plot_k = FALSE, method = "Spectral", tune_method = "silhouette", gap_w = "uniform", prox = FALSE, ...){
 
   if(class(x)[2] %in% "cl"){
     x <- x$dat
@@ -85,16 +85,16 @@ tune_k_clusters.mrf3 <- function(x, return_cluster = F, plot_k = F, method = "Sp
   }
 
   k_tune <- seq(2,9,by = 1)
-  
+
   if(method == "Spectral"){
     cl <- spectral_cl(x, k_tune = k_tune, gap_w = gap_w, ...)
   }
-  
+
   if(method == "PAM"){
     if(prox){
       x <- 1-x
-      diss <- T
-    } else {diss <- F}
+      diss <- TRUE
+    } else {diss <- FALSE}
     cl <- pam_cl(x, k_tune = k_tune, diss = diss, tune_method = tune_method, ...)
   }
   
@@ -222,7 +222,7 @@ spectral_cl <- function(x, k_tune = seq(2,12,by = 1), gap_w = "uniform", d = NUL
 
 #' @rdname tune_k_clusters
 #' @export
-pam_cl <- function(x, k_tune = seq(2,9,by = 1), diss = T, tune_method = "silhouette", ...){
+pam_cl <- function(x, k_tune = seq(2,9,by = 1), diss = TRUE, tune_method = "silhouette", ...){
   
   sil <- numeric(0)
   if(length(k_tune) > 1){
@@ -240,7 +240,7 @@ pam_cl <- function(x, k_tune = seq(2,9,by = 1), diss = T, tune_method = "silhoue
     sil <- numeric(length(k_eval))
     for (ii in seq_along(k_eval)){
       k <- k_eval[ii]
-      cl <- cluster::pam(x, k = k, diss = T, ...)
+      cl <- cluster::pam(x, k = k, diss = TRUE, ...)
       if(tune_method == "silhouette"){
         sil[ii] <- cl$objective[1] - cl$objective[2]
       }

@@ -10,18 +10,6 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE}
-# Set eval_vignette = TRUE to execute all code chunks (recommended on a
-# compute server).  The default is FALSE so that R CMD check / CRAN builds
-# finish quickly without needing randomForestSRC to run.
-eval_vignette <- identical(Sys.getenv("MULTIRF_EVAL_VIGNETTE"), "true") ||
-  isTRUE(getOption("multiRF.eval_vignette"))
-
-ntree_main <- if (eval_vignette) 50L else 20L
-ntree_full <- if (eval_vignette) 50L else 20L
-run_imd_main <- isTRUE(eval_vignette)
-model_top_v_main <- if (eval_vignette) NULL else 20L
-fused_top_v_main <- if (eval_vignette) NULL else 20L
-
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
@@ -34,23 +22,8 @@ knitr::opts_chunk$set(
 )
 
 library(multiRF)
-
 data("tcga_brca_data")
 ```
-
-> **Note:** Code chunks in this vignette are not evaluated during package
-> build to keep install times short. To render with full output on a compute
-> server, run:
->
-> ```r
-> # Option A: environment variable
-> Sys.setenv(MULTIRF_EVAL_VIGNETTE = "true")
-> rmarkdown::render("vignettes/multiRF.Rmd")
->
-> # Option B: R option
-> options(multiRF.eval_vignette = TRUE)
-> rmarkdown::render("vignettes/multiRF.Rmd")
-> ```
 
 ## Overview
 
@@ -64,12 +37,6 @@ The typical workflow is:
 3. Inspect weights, selected variables, and cluster assignments.
 4. Use plotting helpers for survival and embedding diagnostics.
 
-The package exposes two main entry points:
-
-- `mrf3()` for a compact end-to-end workflow with the most common arguments.
-- `mrf3_fit()` for a stage-based workflow where IMD, variable selection, and
-  robust clustering can be turned on explicitly.
-
 ## Method Maps
 
 ### Clustering choices
@@ -81,8 +48,6 @@ The package exposes two main entry points:
 | `enhanced_proximity` | Global `main_clustering` | Aggressive proximity-based branch. |
 | `PAM` | Shared or specific branch | Medoid-based clustering. |
 | `Spectral` | Shared or specific branch | Similarity geometry-based clustering. |
-| `Proximity` | Specific branch | Block-specific proximity alternative. |
-| `Enhanced_Proximity` | Specific branch | Stronger proximity clustering for specific branches. |
 
 ### Variable-selection choices
 
@@ -106,8 +71,6 @@ The package exposes two main entry points:
 
 ## Example Data
 
-This vignette uses the bundled TCGA BRCA data shipped with the package:
-
 ```{r example-data}
 names(tcga_brca)
 dim(tcga_brca$gene)
@@ -115,36 +78,18 @@ dim(tcga_brca$methy)
 dim(tcga_brca$mirna)
 ```
 
-Each block is a matrix-like data frame with samples in rows and features in
-columns. Sample order should already be aligned across omics blocks before
-fitting.
-
 ## Basic Clustering Workflow
-
-For a standard clustering run, `mrf3()` is the simplest interface. It fits the
-initial forests, learns block connections, reconstructs fused similarity
-information, and returns cluster labels in a single call.
-
-### Fitting the main workflow
-
-The recommended entry point is `mrf3()`. In the default quick-build mode this
-vignette uses a smaller tree count and skips IMD to keep `build_vignettes`
-fast. Set `MULTIRF_EVAL_VIGNETTE=true` to run the full workflow shown here.
 
 ```{r fit-main, cache=TRUE}
 fit <- mrf3(
   tcga_brca,
   k = 4,
-  ntree = ntree_main,
+  ntree = 100,
   filter_mode = "none",
-  run_imd = run_imd_main,
-  model_top_v = model_top_v_main,
-  fused_top_v = fused_top_v_main,
+  run_imd = TRUE,
   seed = 529
 )
 ```
-
-Once fitted, inspect the result:
 
 ```{r inspect-fit}
 summary(fit)
@@ -153,82 +98,51 @@ names(get_weights(fit))
 get_top_vars(fit, n = 10)
 ```
 
-When quick-build mode is active, `run_imd = FALSE`, so the weight accessors
-above will return `NULL`. Full IMD-based outputs are generated only in full
-evaluation mode.
+### Comparing clustering backends
 
-The returned object is an `mrf3_fit`. The most important fields for a basic
-clustering analysis are:
-
-- `fit$clusters`: main cluster assignments.
-- `fit$connection`: learned directional block connections.
-- `fit$model_top_v` and `fit$fused_top_v`: tuned sparsity levels.
-- `fit$reconstruction`: reconstructed similarity and weight objects.
-- `fit$shared` and `fit$specific`: shared/specific branch results.
-
-### Choosing the main clustering backend
-
-The global clustering backend is controlled by `main_clustering`. This setting
-is propagated consistently through the shared, specific, and robust branches.
-
-```{r clustering-backends, cache=TRUE, eval=eval_vignette}
+```{r clustering-backends, cache=TRUE}
 fit_proximity <- mrf3(
-  tcga_brca,
-  k = 4,
+  tcga_brca, k = 4,
   main_clustering = "proximity",
-  ntree = ntree_full,
-  seed = 529
+  ntree = 100, seed = 529
 )
-```
 
-### Comparing clusters to PAM50 subtypes
-
-```{r cluster-vs-pam50, eval=eval_vignette}
-pam50 <- tcga_brca_clinical$BRCA_Subtype_PAM50
-
-cluster_metrics(get_clusters(fit), pam50)
-```
-
-You can also compare different global backends against each other:
-
-```{r compare-backends, eval=eval_vignette}
 fit_enhanced <- mrf3(
-  tcga_brca,
-  k = 4,
+  tcga_brca, k = 4,
   main_clustering = "enhanced_proximity",
-  ntree = ntree_full,
-  seed = 529
+  ntree = 100, seed = 529
 )
+```
+
+### Compare against PAM50
+
+```{r pam50-compare}
+common_ids <- intersect(
+  names(get_clusters(fit)),
+  tcga_brca_clinical$sampleID
+)
+pam50 <- tcga_brca_clinical$BRCA_Subtype_PAM50[
+  match(common_ids, tcga_brca_clinical$sampleID)
+]
 
 cluster_metric_matrix(
   list(
-    similarity = get_clusters(fit),
-    proximity = get_clusters(fit_proximity),
-    enhanced_proximity = get_clusters(fit_enhanced),
-    PAM50 = pam50
+    similarity         = get_clusters(fit)[common_ids],
+    proximity          = get_clusters(fit_proximity)[common_ids],
+    enhanced_proximity = get_clusters(fit_enhanced)[common_ids],
+    PAM50              = pam50
   ),
   metric = "ari"
 )
 ```
 
-```{r compare-backends-vs-pam50, eval=eval_vignette}
-rbind(
-  similarity = cluster_metrics(get_clusters(fit), pam50),
-  proximity = cluster_metrics(get_clusters(fit_proximity), pam50),
-  enhanced_proximity = cluster_metrics(get_clusters(fit_enhanced), pam50)
-)
-```
+## Variable Selection
 
-## Variable Selection Workflow
-
-`mrf3_fit()` exposes optional stages such as IMD calculation and variable
-selection more explicitly.
-
-```{r vs-workflow, cache=TRUE, eval=eval_vignette}
+```{r vs-workflow, cache=TRUE}
 fit_vs <- mrf3_fit(
   dat.list = tcga_brca,
-  k = 4,
-  ntree = ntree_full,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
   run_imd = TRUE,
   run_variable_selection = TRUE,
   variable_selection_args = list(
@@ -240,59 +154,34 @@ fit_vs <- mrf3_fit(
 )
 ```
 
-Inspect the selected variables and summary:
-
-```{r vs-inspect, eval=eval_vignette}
+```{r vs-inspect}
 get_selected_vars(fit_vs)
 get_vs_summary(fit_vs)
 ```
 
-To compare different selection methods, reuse the fitted `fit_vs` object
-which already contains IMD weights:
-
-```{r vs-all-methods, cache=TRUE, eval=eval_vignette}
-vs_filter <- mrf3_vs(
-  mod = fit_vs,
-  dat.list = tcga_brca,
-  method = "filter",
-  re_fit = FALSE,
-  normalized = TRUE
-)
+```{r vs-methods, cache=TRUE}
 vs_test <- mrf3_vs(
-  mod = fit_vs,
-  dat.list = tcga_brca,
-  method = "test",
-  re_fit = FALSE,
-  level = 0.05
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "test", re_fit = FALSE, level = 0.05
 )
 vs_mixture <- mrf3_vs(
-  mod = fit_vs,
-  dat.list = tcga_brca,
-  method = "mixture",
-  re_fit = FALSE,
-  level = 0.05
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "mixture", re_fit = FALSE, level = 0.05
 )
 
 lapply(
-  list(
-    filter = vs_filter,
-    test = vs_test,
-    mixture = vs_mixture
-  ),
+  list(test = vs_test, mixture = vs_mixture),
   get_selected_vars
 )
 ```
 
-## Robust and Sub-MRF Extensions
+## Robust Clustering
 
-Robust clustering can be enabled within the staged workflow. This branch is one
-of the slowest parts of the vignette, so it is only evaluated in full mode.
-
-```{r robust-workflow, cache=TRUE, eval=eval_vignette}
+```{r robust-workflow, cache=TRUE}
 fit_robust <- mrf3_fit(
   dat.list = tcga_brca,
-  k = 4,
-  ntree = ntree_full,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
   run_imd = TRUE,
   run_variable_selection = TRUE,
   run_cluster_imd = FALSE,
@@ -302,42 +191,25 @@ fit_robust <- mrf3_fit(
 )
 ```
 
-```{r robust-inspect, eval=eval_vignette}
+```{r robust-inspect}
 table(get_clusters(fit_robust, which = "robust"))
 summary(fit_robust)
 ```
 
-The sub-MRF mode runs multiple smaller forests and aggregates their behavior:
+### Pairwise IMD
 
-```{r submrf-workflow, cache=TRUE, eval=FALSE}
-fit_sub <- mrf3_fit(
-  dat.list = tcga_brca,
-  k = 5,
-  sub_mrf = TRUE,
-  sub_mrf_args = list(
-    n_sub = 10,
-    frac_response = 0.2,
-    frac_predictor = 0.2,
-    ntree_per_sub = 5,
-    compute_imd = TRUE
-  ),
-  run_imd = TRUE,
-  seed = 529
-)
+```{r pairwise-imd}
+pw <- pairwise_imd(fit_robust)
+str(pw, max.level = 1)
 ```
 
-```{r submrf-inspect, eval=FALSE}
-summary(fit_sub)
-table(get_clusters(fit_sub))
-cluster_metrics(get_clusters(fit_sub)[common_ids], pam50)
+```{r plot-feature-network, fig.width=7, fig.height=7}
+plot_network(pw, label = TRUE, vertex.size = 3, vertex.label.cex = 0.4)
 ```
 
-## Plotting Helpers
+## Plotting
 
-The plotting helpers expose the main fitted structures without forcing you to
-manually reconstruct the underlying matrices.
-
-```{r plot-tsne, fig.width=7, fig.height=5}
+```{r plot-tsne, fig.width=6, fig.height=5}
 plot_tsne(
   mod = fit,
   group = get_clusters(fit),
@@ -346,12 +218,20 @@ plot_tsne(
 )
 ```
 
-```{r plot-weights, fig.width=7, fig.height=5, eval=eval_vignette}
+```{r plot-network, fig.width=6, fig.height=6}
+plot_network(
+  dat = fit,
+  group = get_clusters(fit),
+  source = "specific_shared",
+  cutoff = 0.01
+)
+```
+
+```{r plot-weights, fig.width=8, fig.height=4}
 plot_weights(fit_vs, weight_source = "imd", top = 15)
 ```
 
-```{r plot-km, fig.width=7, fig.height=6}
-# Align clinical rows to fitted cluster labels via sample IDs
+```{r plot-km, fig.width=6, fig.height=6}
 clinical_ids <- tcga_brca_clinical$sampleID
 clusters <- get_clusters(fit)
 if (is.null(names(clusters))) {
@@ -362,22 +242,12 @@ clinical_sub <- tcga_brca_clinical[match(km_ids, clinical_ids), , drop = FALSE]
 keep <- !is.na(clinical_sub$OS.time) & !is.na(clinical_sub$OS)
 
 plot_km(
-  test_var = clusters[km_ids][keep],
+  test_var = factor(clusters[km_ids][keep]),
   time_var = "OS.time",
   event_var = "OS",
   pheno_mat = clinical_sub[keep, , drop = FALSE]
 )
 ```
-
-## Practical Notes
-
-- Start with `main_clustering = "similarity"` unless you specifically need
-  proximity-driven behavior.
-- Use lower `ntree` values only for prototyping or vignette builds.
-- Turn on `run_variable_selection = TRUE` when interpretability is part of the
-  goal, and compare multiple selection methods when signal is weak.
-- Use `cluster_metrics()` and `cluster_metric_matrix()` to benchmark clustering
-  choices against known labels or across methods.
 
 ## Session Info
 

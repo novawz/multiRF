@@ -1,15 +1,15 @@
 Package: multiRF
 Type: Package
 Title: MRF-Based Multi-Omics Integration and Clustering
-Version: 0.1.1
+Version: 0.2.0
 Author: Wei Zhang
 Maintainer: Wei Zhang <wzhang1960@gmail.com>
 Authors@R: 
     person("Wei", "Zhang", email = "wzhang1960@gmail.com", role = c("aut", "cre"))
-Description: Tools for model-based integration of multi-omics datasets using
-    random forests and Markov random field inspired weighting. The package
-    provides workflows for model fitting, variable importance aggregation,
-    clustering, and visualization.
+Description: Integrates matched multi-omics datasets using multivariate
+    random forests with inverse minimal depth (IMD) importance. Provides
+    workflows for model fitting, variable selection, clustering, and
+    visualization.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

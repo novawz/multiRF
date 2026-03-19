@@ -50,7 +50,7 @@
 mrf3_init <- function(dat.list,
                  # Number of trees
                  ntree = 300,
-                 scale = T,
+                 scale = TRUE,
                  yprob = .5,
                  # Find connections
                  connect_list = NULL,
@@ -58,8 +58,8 @@ mrf3_init <- function(dat.list,
                  filter_method = c("mad", "variance"),
                  top_n_by_type = NULL,
                  top_n_manual = NULL,
-                 filter_verbose = T,
-                 return_data = F,
+                 filter_verbose = TRUE,
+                 return_data = FALSE,
                  # Sub-MRF ensemble
                  sub_mrf = FALSE,
                  sub_mrf_args = list(),
