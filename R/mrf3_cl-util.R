@@ -547,7 +547,7 @@ cl_forest <- function(mod,
                       sibling_cap = TRUE,
                       hard_prox_mode = c("soft_enhanced", "binary"),
                       parallel = TRUE,
-                      cores = max(1, parallel::detectCores() - 2),
+                      cores = NULL,
                       sample_embed_list = NULL,
                       ...) {
   merge_mode <- match.arg(merge_mode)
@@ -556,7 +556,7 @@ cl_forest <- function(mod,
   nt <- mod$ntree
 
   if (parallel) {
-    cores <- max(1L, min(as.integer(cores), as.integer(parallel::detectCores())))
+    cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
     if (Sys.info()["sysname"] == "Windows") {
       cluster <- parallel::makeCluster(cores)
       doParallel::registerDoParallel(cluster)

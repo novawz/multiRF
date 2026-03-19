@@ -37,7 +37,6 @@
 #'
 #' @return mrf3 clustering object
 #' @export mrf3_reconstr
-#' @import randomForestSRC
 mrf3_reconstr <- function(recon = NULL,
                           rfit = NULL,
                           k = NULL,

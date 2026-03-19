@@ -101,7 +101,9 @@ compute_oob_fw <- function(mod) {
 #' `forest.wt.oob` is computed from each sub-model's `membership` and
 #' `inbag` matrices: for sample i, only trees where i is out-of-bag
 #' contribute to its weight row.  This provides a regularized version
-#' suitable for connection selection via `find_connection()`.
+#' suitable for connection selection via `find_connection()`. Because this
+#' requires `inbag`, sub-MRF currently uses the `randomForestSRC` fallback
+#' path even when the package default engine is native.
 #'
 fit_sub_mrf <- function(X, Y,
                         n_sub = 15L,
@@ -116,7 +118,7 @@ fit_sub_mrf <- function(X, Y,
                         imd_args = list(),
                         seed = 529L,
                         parallel = FALSE,
-                        cores = 2L,
+                        cores = NULL,
                         verbose = TRUE,
                         ...) {
 
@@ -234,6 +236,8 @@ fit_sub_mrf <- function(X, Y,
   ))
 
   t0 <- proc.time()[3]
+
+  cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
 
   if (parallel && cores > 1L) {
     results <- parallel::mclapply(
@@ -381,6 +385,10 @@ fit_sub_mrf <- function(X, Y,
 #'   Names follow the `"response_predictor"` convention used by
 #'   `fit_multi_rfsrc()`.  Each object contains `forest.wt`, `forest.wt.oob`,
 #'   `proximity`, `xvar`, `yvar`.
+#' @details
+#' Sub-MRF uses the default engine (native C++) for its internal fits.
+#' OOB forest-weight reconstruction uses the `inbag` matrix returned by
+#' the native engine.
 fit_sub_multi_rfsrc <- function(dat.list,
                                 connect_list,
                                 n_sub = 15L,

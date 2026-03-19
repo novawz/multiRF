@@ -42,7 +42,6 @@
 #' direction determination.
 #' @return mrf3 object
 #' @export
-#' @import randomForestSRC
 #'
 #'
 # ---------------------------------------------------------------------------------

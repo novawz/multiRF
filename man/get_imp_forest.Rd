@@ -22,7 +22,8 @@ get_imp_forest(
 )
 }
 \arguments{
-\item{mod}{A fitted randomForestSRC model.}
+\item{mod}{A fitted forest model from the native multiRF engine or the
+optional \code{randomForestSRC} fallback.}
 
 \item{parallel}{Logical; whether to parallelize across trees.}
 

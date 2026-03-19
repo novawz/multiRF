@@ -16,6 +16,12 @@ vignette: >
 eval_vignette <- identical(Sys.getenv("MULTIRF_EVAL_VIGNETTE"), "true") ||
   isTRUE(getOption("multiRF.eval_vignette"))
 
+ntree_main <- if (eval_vignette) 50L else 20L
+ntree_full <- if (eval_vignette) 50L else 20L
+run_imd_main <- isTRUE(eval_vignette)
+model_top_v_main <- if (eval_vignette) NULL else 20L
+fused_top_v_main <- if (eval_vignette) NULL else 20L
+
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
@@ -121,16 +127,19 @@ information, and returns cluster labels in a single call.
 
 ### Fitting the main workflow
 
-The recommended entry point is `mrf3()`. We use `ntree = 50` here for speed
-in vignette builds; in practice 300--500 trees are typical.
+The recommended entry point is `mrf3()`. In the default quick-build mode this
+vignette uses a smaller tree count and skips IMD to keep `build_vignettes`
+fast. Set `MULTIRF_EVAL_VIGNETTE=true` to run the full workflow shown here.
 
 ```{r fit-main, cache=TRUE}
 fit <- mrf3(
   tcga_brca,
   k = 4,
-  ntree = 50,
+  ntree = ntree_main,
   filter_mode = "none",
-  run_imd = TRUE,
+  run_imd = run_imd_main,
+  model_top_v = model_top_v_main,
+  fused_top_v = fused_top_v_main,
   seed = 529
 )
 ```
@@ -143,6 +152,10 @@ table(get_clusters(fit))
 names(get_weights(fit))
 get_top_vars(fit, n = 10)
 ```
+
+When quick-build mode is active, `run_imd = FALSE`, so the weight accessors
+above will return `NULL`. Full IMD-based outputs are generated only in full
+evaluation mode.
 
 The returned object is an `mrf3_fit`. The most important fields for a basic
 clustering analysis are:
@@ -158,65 +171,51 @@ clustering analysis are:
 The global clustering backend is controlled by `main_clustering`. This setting
 is propagated consistently through the shared, specific, and robust branches.
 
-```{r clustering-backends, cache=TRUE}
-fit_similarity <- mrf3(
-  tcga_brca,
-  k = 5,
-  main_clustering = "similarity",
-  ntree = 50,
-  seed = 529
-)
-
+```{r clustering-backends, cache=TRUE, eval=eval_vignette}
 fit_proximity <- mrf3(
   tcga_brca,
-  k = 5,
+  k = 4,
   main_clustering = "proximity",
-  ntree = 50,
+  ntree = ntree_full,
   seed = 529
 )
 ```
 
 ### Comparing clusters to PAM50 subtypes
 
-```{r cluster-vs-pam50}
-common_ids <- intersect(
-  names(get_clusters(fit)),
-  tcga_brca_clinical$sampleID
-)
-pam50 <- tcga_brca_clinical$BRCA_Subtype_PAM50[
-  match(common_ids, tcga_brca_clinical$sampleID)
-]
+```{r cluster-vs-pam50, eval=eval_vignette}
+pam50 <- tcga_brca_clinical$BRCA_Subtype_PAM50
 
-cluster_metrics(get_clusters(fit)[common_ids], pam50)
+cluster_metrics(get_clusters(fit), pam50)
 ```
 
 You can also compare different global backends against each other:
 
-```{r compare-backends}
+```{r compare-backends, eval=eval_vignette}
 fit_enhanced <- mrf3(
   tcga_brca,
-  k = 5,
+  k = 4,
   main_clustering = "enhanced_proximity",
-  ntree = 50,
+  ntree = ntree_full,
   seed = 529
 )
 
 cluster_metric_matrix(
   list(
-    similarity = get_clusters(fit_similarity)[common_ids],
-    proximity = get_clusters(fit_proximity)[common_ids],
-    enhanced_proximity = get_clusters(fit_enhanced)[common_ids],
+    similarity = get_clusters(fit),
+    proximity = get_clusters(fit_proximity),
+    enhanced_proximity = get_clusters(fit_enhanced),
     PAM50 = pam50
   ),
   metric = "ari"
 )
 ```
 
-```{r compare-backends-vs-pam50}
+```{r compare-backends-vs-pam50, eval=eval_vignette}
 rbind(
-  similarity = cluster_metrics(get_clusters(fit_similarity)[common_ids], pam50),
-  proximity = cluster_metrics(get_clusters(fit_proximity)[common_ids], pam50),
-  enhanced_proximity = cluster_metrics(get_clusters(fit_enhanced)[common_ids], pam50)
+  similarity = cluster_metrics(get_clusters(fit), pam50),
+  proximity = cluster_metrics(get_clusters(fit_proximity), pam50),
+  enhanced_proximity = cluster_metrics(get_clusters(fit_enhanced), pam50)
 )
 ```
 
@@ -225,11 +224,11 @@ rbind(
 `mrf3_fit()` exposes optional stages such as IMD calculation and variable
 selection more explicitly.
 
-```{r vs-workflow, cache=TRUE}
+```{r vs-workflow, cache=TRUE, eval=eval_vignette}
 fit_vs <- mrf3_fit(
   dat.list = tcga_brca,
-  k = 5,
-  ntree = 50,
+  k = 4,
+  ntree = ntree_full,
   run_imd = TRUE,
   run_variable_selection = TRUE,
   variable_selection_args = list(
@@ -243,7 +242,7 @@ fit_vs <- mrf3_fit(
 
 Inspect the selected variables and summary:
 
-```{r vs-inspect}
+```{r vs-inspect, eval=eval_vignette}
 get_selected_vars(fit_vs)
 get_vs_summary(fit_vs)
 ```
@@ -251,7 +250,7 @@ get_vs_summary(fit_vs)
 To compare different selection methods, reuse the fitted `fit_vs` object
 which already contains IMD weights:
 
-```{r vs-all-methods, cache=TRUE}
+```{r vs-all-methods, cache=TRUE, eval=eval_vignette}
 vs_filter <- mrf3_vs(
   mod = fit_vs,
   dat.list = tcga_brca,
@@ -286,23 +285,25 @@ lapply(
 
 ## Robust and Sub-MRF Extensions
 
-Robust clustering can be enabled within the staged workflow:
+Robust clustering can be enabled within the staged workflow. This branch is one
+of the slowest parts of the vignette, so it is only evaluated in full mode.
 
-```{r robust-workflow, cache=TRUE}
+```{r robust-workflow, cache=TRUE, eval=eval_vignette}
 fit_robust <- mrf3_fit(
   dat.list = tcga_brca,
-  k = 5,
-  ntree = 50,
+  k = 4,
+  ntree = ntree_full,
   run_imd = TRUE,
   run_variable_selection = TRUE,
+  run_cluster_imd = FALSE,
   run_robust_clustering = TRUE,
   variable_selection_args = list(method = "mixture"),
   seed = 529
 )
 ```
 
-```{r robust-inspect}
-table(fit_robust$robust_clusters)
+```{r robust-inspect, eval=eval_vignette}
+table(get_clusters(fit_robust, which = "robust"))
 summary(fit_robust)
 ```
 
@@ -345,25 +346,26 @@ plot_tsne(
 )
 ```
 
-```{r plot-weights, fig.width=7, fig.height=5}
+```{r plot-weights, fig.width=7, fig.height=5, eval=eval_vignette}
 plot_weights(fit_vs, weight_source = "imd", top = 15)
 ```
 
 ```{r plot-km, fig.width=7, fig.height=6}
-# Use sample names from the data to align with clinical
-sample_ids <- rownames(tcga_brca[[1]])
-clusters <- get_clusters(fit)
-names(clusters) <- sample_ids
-
+# Align clinical rows to fitted cluster labels via sample IDs
 clinical_ids <- tcga_brca_clinical$sampleID
-km_ids <- intersect(sample_ids, clinical_ids)
+clusters <- get_clusters(fit)
+if (is.null(names(clusters))) {
+  names(clusters) <- rownames(tcga_brca[[1]])
+}
+km_ids <- intersect(names(clusters), clinical_ids)
 clinical_sub <- tcga_brca_clinical[match(km_ids, clinical_ids), , drop = FALSE]
+keep <- !is.na(clinical_sub$OS.time) & !is.na(clinical_sub$OS)
 
 plot_km(
-  test_var = clusters[km_ids],
+  test_var = clusters[km_ids][keep],
   time_var = "OS.time",
   event_var = "OS",
-  pheno_mat = clinical_sub
+  pheno_mat = clinical_sub[keep, , drop = FALSE]
 )
 ```
 

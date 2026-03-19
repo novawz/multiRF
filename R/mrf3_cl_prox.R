@@ -29,7 +29,6 @@
 #'
 #' @return mrf3 clustering object
 #' @export
-#' @import randomForestSRC
 #'
 # -------------------------------------------------------------------------------------------------------------
 # Proximity clustering method
@@ -48,7 +47,7 @@ mrf3_cl_prox <- function(rfit, k = NULL,
                          parallel = T,
                          sparse = F,
                          method_cl = "PAM",
-                         cores = max(1, detectCores() - 2),
+                         cores = NULL,
                          ...){
   dot_args <- list(...)
   if ("calc_imp" %in% names(dot_args)) {

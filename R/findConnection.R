@@ -22,7 +22,6 @@
 #' @return A character vector of selected model names (`response_predictor`).
 #' If `return_score = TRUE`, returns a list with `model_connection`,
 #' `connect_list`, `score`, `top_v_used`, and model-level quality metrics.
-#' @import randomForestSRC
 # ---------------------------------------------------------------------------------
 # Find directional connections from fitted models
 # ---------------------------------------------------------------------------------
@@ -232,7 +231,7 @@ get_r_sq <- function(mod){
   if(is.null(mod$yvar)){
     return(ex)
   } else {
-    if(class(mod)[3] == "class+"){
+    if(!is.null(class(mod)[3]) && identical(class(mod)[3], "class+")){
       ey <- na.omit(mod$err.rate)
     } else {
       ey <- mean(colMeans((fw %*% as.matrix(mod$yvar) - as.matrix(mod$yvar))^2)/matrixStats::colVars(as.matrix(mod$yvar)))

@@ -33,7 +33,6 @@ Imports:
     maxstat,
     plyr,
     purrr,
-    randomForestSRC,
     RColorBrewer,
     Rcpp (>= 1.0.0),
     Rtsne,
@@ -56,6 +55,7 @@ Suggests:
     knitr,
     mclust,
     pkgload,
+    randomForestSRC,
     rmarkdown,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr, rmarkdown

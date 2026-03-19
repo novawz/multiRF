@@ -2,6 +2,11 @@
 
 # Pre-process nativeArray once and split by treeID
 .prep_tree_dfs <- function(mod) {
+  # Native C++ engine: build nativeArray-equivalent from tree_info
+  if (!is.null(mod$tree_info) && is.null(mod$forest$nativeArray)) {
+    return(.prep_tree_dfs_native(mod))
+  }
+
   na_raw <- mod$forest$nativeArray
   na_df <- data.frame(na_raw)
   node.stat <- mod$node.stats
@@ -20,6 +25,53 @@
   split(na_df, na_df$treeID)
 }
 
+# Convert native engine tree_info to nativeArray-like per-tree data frames.
+# The C++ engine stores nodes in BFS order, but build_tree_network_cpp
+# expects pre-order (DFS) traversal, so we reorder here.
+.prep_tree_dfs_native <- function(mod) {
+  tree_info <- mod$tree_info
+  nt <- length(tree_info)
+  dfs <- vector("list", nt)
+  for (t in seq_len(nt)) {
+    ti <- tree_info[[t]]
+    n_nodes <- length(ti$split_var)
+    # Compute pre-order traversal of the tree
+    dfs_order <- .bfs_to_preorder(ti$left, ti$right, n_nodes)
+    # split_var: 0-indexed X column (-1 = leaf) -> parmID: 1-indexed (0 = leaf)
+    parmID <- ifelse(ti$split_var[dfs_order] < 0, 0L, ti$split_var[dfs_order] + 1L)
+    dfs[[t]] <- data.frame(
+      treeID = rep(t, n_nodes),
+      nodeID = seq_len(n_nodes),
+      parmID = parmID,
+      nodeSZ = as.integer(ti$nodesize[dfs_order]),
+      dpthST = as.integer(ti$depth[dfs_order]),
+      stringsAsFactors = FALSE
+    )
+  }
+  names(dfs) <- as.character(seq_len(nt))
+  dfs
+}
+
+# Convert BFS-ordered tree to pre-order (DFS) traversal indices.
+# left/right are 0-indexed child indices (-1 = no child / leaf).
+.bfs_to_preorder <- function(left, right, n_nodes) {
+  order_vec <- integer(n_nodes)
+  stack <- 1L  # 1-indexed root
+  idx <- 0L
+  while (length(stack) > 0L) {
+    node <- stack[length(stack)]
+    stack <- stack[-length(stack)]
+    idx <- idx + 1L
+    order_vec[idx] <- node
+    # Push right first so left is processed first (stack = LIFO)
+    r <- right[node]
+    l <- left[node]
+    if (r >= 0) stack <- c(stack, r + 1L)  # 0-indexed -> 1-indexed
+    if (l >= 0) stack <- c(stack, l + 1L)
+  }
+  order_vec
+}
+
 # Get tree net from random forest
 get_tree_net <- function(mod, tree.id, tree_dfs = NULL){
 
@@ -30,16 +82,32 @@ get_tree_net <- function(mod, tree.id, tree_dfs = NULL){
     tree.df <- tree_dfs[[as.character(tree.id)]]
   } else {
     # Fallback: compute on the fly (slow, for backwards compat)
-    na_df <- data.frame(mod$forest$nativeArray)
-    node.stat <- mod$node.stats
-    if (!is.null(node.stat) && NROW(node.stat) == nrow(na_df)) {
-      for (col in setdiff(colnames(node.stat), colnames(na_df))) {
-        na_df[[col]] <- node.stat[[col]]
+    if (!is.null(mod$tree_info) && is.null(mod$forest$nativeArray)) {
+      # Native engine: build single-tree df from tree_info (DFS order)
+      ti <- mod$tree_info[[tree.id]]
+      n_nodes <- length(ti$split_var)
+      dfs_order <- .bfs_to_preorder(ti$left, ti$right, n_nodes)
+      parmID <- ifelse(ti$split_var[dfs_order] < 0, 0L, ti$split_var[dfs_order] + 1L)
+      tree.df <- data.frame(
+        treeID = rep(tree.id, n_nodes),
+        nodeID = seq_len(n_nodes),
+        parmID = parmID,
+        nodeSZ = as.integer(ti$nodesize[dfs_order]),
+        dpthST = as.integer(ti$depth[dfs_order]),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      na_df <- data.frame(mod$forest$nativeArray)
+      node.stat <- mod$node.stats
+      if (!is.null(node.stat) && NROW(node.stat) == nrow(na_df)) {
+        for (col in setdiff(colnames(node.stat), colnames(na_df))) {
+          na_df[[col]] <- node.stat[[col]]
+        }
       }
+      if (!"nodeSZ" %in% names(na_df)) na_df$nodeSZ <- 1L
+      if (!"dpthST" %in% names(na_df)) na_df$dpthST <- 1L
+      tree.df <- na_df[na_df$treeID == tree.id, , drop = FALSE]
     }
-    if (!"nodeSZ" %in% names(na_df)) na_df$nodeSZ <- 1L
-    if (!"dpthST" %in% names(na_df)) na_df$dpthST <- 1L
-    tree.df <- na_df[na_df$treeID == tree.id, , drop = FALSE]
   }
 
   #converted.tree <- display.tree
@@ -57,9 +125,10 @@ get_tree_net <- function(mod, tree.id, tree_dfs = NULL){
   tree.df$var_count <- var.count
   tree.df$var_conc <- paste0(tree.df$var, "_", tree.df$var_count)
 
-  var.id <- c((num.node+1): nrow(tree.df))
-  tree.df$var.tip.id <- 1:nrow(tree.df)
-  tree.df$var.tip.id[tree.df$var != "<leaf>"] <- var.id
+  n_internal <- sum(tree.df$var != "<leaf>")
+  n_leaf     <- sum(tree.df$var == "<leaf>")
+  tree.df$var.tip.id <- integer(nrow(tree.df))
+  tree.df$var.tip.id[tree.df$var != "<leaf>"] <- n_leaf + seq_len(n_internal)
   tree.df$var.tip.id[tree.df$var == "<leaf>"] <- tree.df$var_count[tree.df$var == "<leaf>"]
 
   is_leaf_vec <- tree.df$var == "<leaf>"
@@ -468,7 +537,8 @@ add_lambda <- function(imp_ls, net, x_freq, lambda){
 }
 
 #' Get forest importance
-#' @param mod A fitted randomForestSRC model.
+#' @param mod A fitted forest model from the native multiRF engine or the
+#' optional `randomForestSRC` fallback.
 #' @param parallel Logical; whether to parallelize across trees.
 #' @param robust Logical; whether to use robust matrix-based aggregation.
 #' @param calc Which importance side to compute: `"X"`, `"Y"`, or `"Both"`.
@@ -480,13 +550,13 @@ add_lambda <- function(imp_ls, net, x_freq, lambda){
 #' @param cores Number of CPU cores used when `parallel = TRUE`.
 #' @param seed Random seed passed to stochastic components.
 #' @rdname get_imp_forest
-get_imp_forest <- function(mod, parallel = T, robust = F, calc = "Both", weighted = F, use_depth = F, normalized = F,
-                           w = NULL, yprob = 1, cores = max(1, detectCores() - 2), seed = -5){
+get_imp_forest <- function(mod, parallel = FALSE, robust = FALSE, calc = "Both", weighted = FALSE, use_depth = FALSE, normalized = FALSE,
+                           w = NULL, yprob = 1, cores = NULL, seed = -5){
 
   nt <- mod$ntree
 
   if(parallel){
-    cores <- max(1L, min(as.integer(cores), as.integer(parallel::detectCores())))
+    cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
     if(Sys.info()["sysname"] == "Windows"){
       cluster <- parallel::makeCluster(cores)
       doParallel::registerDoParallel(cluster)
@@ -619,17 +689,47 @@ get_iv <- function(var_name, imp){
 #' @param seed Random seed passed to stochastic components.
 #' @param ... Additional arguments for downstream helper functions.
 #' @rdname get_multi_weights
-get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = F,  use_depth = F, robust = F,
-                              parallel = T, normalized = T, calc = "Both", yprob = 1,
-                              w = NULL, cores = max(1, detectCores() - 2), seed = -5, ...){
+get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  use_depth = FALSE, robust = FALSE,
+                              parallel = FALSE, normalized = TRUE, calc = "Both", yprob = 1,
+                              w = NULL, cores = NULL, seed = -5, ...){
 
   mod_names <- names(mod_list)
-  # if(length(lambda) == 1) {
-  #   lambda <- rep(lambda, length(mod_list))
-  #   names(lambda) <- mod_names
-  # }
 
-  results <- get_results(mod_list = mod_list, parallel = parallel, robust = robust, weighted = weighted, normalized = F, use_depth = use_depth,
+  # Fast path: if ALL models have pre-computed imd_weights (native engine),
+  # skip the expensive post-hoc tree traversal entirely.
+  all_have_imd <- all(vapply(mod_list, function(m) !is.null(m$imd_weights), logical(1)))
+  if (all_have_imd) {
+    message("  Using pre-computed IMD weights from native engine (zero extra cost).")
+    weight_l <- lapply(mod_names, function(m_name) {
+      iw <- mod_list[[m_name]]$imd_weights
+      m_name_sep <- rev(unlist(stringr::str_split(m_name, "_")))
+      names(iw) <- m_name_sep
+      iw
+    })
+
+    block_names <- names(dat.list)
+    weight_list <- lapply(block_names, function(bn) {
+      ww <- purrr::compact(purrr::map(weight_l, bn))
+      if (length(ww) == 0L) return(setNames(numeric(ncol(dat.list[[bn]])), colnames(dat.list[[bn]])))
+      w_out <- Reduce("+", ww) / length(ww)
+      if (normalized) {
+        denom <- sqrt(sum(w_out^2))
+        if (is.finite(denom) && denom > 0) w_out <- w_out / denom
+      }
+      w_out
+    })
+    names(weight_list) <- block_names
+
+    return(list(
+      weight_list = weight_list,
+      weight_list_init = NULL,
+      net = NULL
+    ))
+  }
+
+  # Slow path: post-hoc tree traversal (used when models come from rfsrc or
+  # native engine without pre-computed IMD)
+  results <- get_results(mod_list = mod_list, parallel = parallel, robust = robust, weighted = weighted, normalized = FALSE, use_depth = use_depth,
                          calc = calc, w = w, cores = cores, yprob = yprob, seed = seed)
 
   net <- purrr::map(results, "net")
@@ -687,7 +787,7 @@ cal_freq <- function(mod, net){
   x_freq <- colMeans(mod$var.used != 0)
   freq <- list(X = x_freq)
 
-  if(is.null(mod$yvar) | class(mod)[3] == "class+"){
+  if(is.null(mod$yvar) || identical(class(mod)[3], "class+")){
     return(freq)
   } else {
 
@@ -794,7 +894,7 @@ cal_freq <- function(mod, net){
 
 get_results <- function(mod_list, parallel,
                         normalized = F, weighted = F, robust = F,
-                        use_depth = F, calc, w = NULL, yprob = 1, cores = max(1, detectCores() - 2), seed = -5){
+                        use_depth = F, calc, w = NULL, yprob = 1, cores = NULL, seed = -5){
 
   mod_names <- names(mod_list)
   plyr::llply(

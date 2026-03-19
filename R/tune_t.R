@@ -27,7 +27,7 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
                              max_candidates = 20,
                              reuse_tuned_k = TRUE,
                              parallel = TRUE,
-                             cores = max(1, parallel::detectCores() - 2),
+                             cores = NULL,
                              seed = 529,
                              object = "entropy_elbow"){
   entropy_only <- identical(as.character(object)[1], "entropy_elbow")
@@ -197,7 +197,7 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
                              max_candidates = 20,
                              reuse_tuned_k = TRUE,
                              parallel = TRUE,
-                             cores = max(1, parallel::detectCores() - 2),
+                             cores = NULL,
                              seed = 529,
                              object = "entropy_elbow",
                              early_stop = FALSE,
@@ -913,11 +913,14 @@ prepare_tune_inputs <- function(dat.list, mod, sample_n = NULL, sample_frac = NU
   list(dat.list = dat_sub, mod = mod_sub)
 }
 
-eval_grid <- function(grid, eval_fun, parallel = FALSE, cores = 1L) {
+eval_grid <- function(grid, eval_fun, parallel = FALSE, cores = NULL) {
   if (!isTRUE(parallel) || length(grid) <= 1L || .Platform$OS.type == "windows") {
     return(lapply(grid, eval_fun))
   }
-  cores <- max(1L, min(as.integer(cores), as.integer(parallel::detectCores())))
+  cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
+  if (cores <= 1L) {
+    return(lapply(grid, eval_fun))
+  }
   parallel::mclapply(grid, eval_fun, mc.cores = cores)
 }
 

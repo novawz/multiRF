@@ -324,12 +324,13 @@ get_selected_vars(vs_mix)</code></pre>
   k = 4, ntree = 200,
   run_imd = TRUE,
   run_variable_selection = TRUE,
+  run_cluster_imd = FALSE,
   run_robust_clustering = TRUE,
   variable_selection_args = list(method = "mixture"),
   seed = 529
 )
 
-table(fit_robust$robust_clusters)
+table(get_clusters(fit_robust, which = "robust"))
 summary(fit_robust)</code></pre>
 <pre class="r-output">#&gt;
 #&gt;  1  2  3  4
@@ -363,7 +364,7 @@ summary(fit_robust)</code></pre>
          main = "t-SNE: shared/specific branch")
 
 plot_umap(mod = fit_robust,
-          group = fit_robust$robust_clusters,
+          group = get_clusters(fit_robust, which = "robust"),
           source = "robust_clustering",
           main = "UMAP: robust clustering")</code></pre>
           <figure class="plot-figure">
@@ -376,10 +377,7 @@ plot_umap(mod = fit_robust,
              source = "specific_shared", cutoff = 0.3)</code></pre>
 
           <h3>7.3. Feature importance</h3>
-<pre><code>plot_weights(fit_vs, weight_source = "imd", top = 15)
-
-plot_weights(fit_robust, weight_source = "cluster_imd",
-             cluster = 1, top = 15)</code></pre>
+<pre><code>plot_weights(fit_vs, weight_source = "imd", top = 15)</code></pre>
           <figure class="plot-figure">
             <img src="assets/img/weights_imd.png" alt="Top 15 features by IMD weight per omics block">
             <figcaption>Figure 3. Top 15 features by IMD weight for each omics block (gene expression, methylation, miRNA).</figcaption>
@@ -390,12 +388,13 @@ plot_weights(fit_robust, weight_source = "cluster_imd",
 
           <h3>7.5. Survival analysis</h3>
 <pre><code>clinical_ids &lt;- tcga_brca_clinical$sampleID
-common_ids &lt;- intersect(names(get_clusters(fit)), clinical_ids)
+clusters &lt;- get_clusters(fit)
+common_ids &lt;- intersect(names(clusters), clinical_ids)
 clinical_sub &lt;- tcga_brca_clinical[
   match(common_ids, clinical_ids), , drop = FALSE
 ]
 
-plot_km(test_var = get_clusters(fit)[common_ids],
+plot_km(test_var = clusters[common_ids],
         time_var = "OS.time", event_var = "OS",
         pheno_mat = clinical_sub)</code></pre>
           <figure class="plot-figure">
@@ -411,21 +410,14 @@ plot_km(test_var = get_clusters(fit)[common_ids],
           <h3>Compare clusters against PAM50 subtypes</h3>
           <p>Use the bundled clinical annotations to compare the three clustering
           backends (fitted in <a href="#workflow">Section 4</a>) against known PAM50 molecular subtypes:</p>
-<pre><code># Align samples
-common_ids &lt;- intersect(
-  names(get_clusters(fit)),
-  tcga_brca_clinical$sampleID
-)
-pam50 &lt;- tcga_brca_clinical$BRCA_Subtype_PAM50[
-  match(common_ids, tcga_brca_clinical$sampleID)
-]
+<pre><code>pam50 &lt;- tcga_brca_clinical$BRCA_Subtype_PAM50
 
 # Pairwise ARI matrix (backends + PAM50)
 cluster_metric_matrix(
   list(
-    similarity         = get_clusters(fit_similarity)[common_ids],
-    proximity          = get_clusters(fit_proximity)[common_ids],
-    enhanced_proximity = get_clusters(fit_enhanced)[common_ids],
+    similarity         = get_clusters(fit),
+    proximity          = get_clusters(fit_proximity),
+    enhanced_proximity = get_clusters(fit_enhanced),
     PAM50              = pam50
   ),
   metric = "ari"
@@ -433,9 +425,9 @@ cluster_metric_matrix(
 
 # Per-backend metrics vs PAM50
 rbind(
-  similarity         = cluster_metrics(get_clusters(fit_similarity)[common_ids], pam50),
-  proximity          = cluster_metrics(get_clusters(fit_proximity)[common_ids], pam50),
-  enhanced_proximity = cluster_metrics(get_clusters(fit_enhanced)[common_ids], pam50)
+  similarity         = cluster_metrics(get_clusters(fit), pam50),
+  proximity          = cluster_metrics(get_clusters(fit_proximity), pam50),
+  enhanced_proximity = cluster_metrics(get_clusters(fit_enhanced), pam50)
 )</code></pre>
 
           <h3>Recommended workflow</h3>

@@ -3,25 +3,66 @@
 #' @param X A data frame that consider as predictor set
 #' @param Y A data frame that consider as response set. If Y = NULL, an unsupervised RF is conducted
 #' @param type Select the type of RF model. The default is regression. Can select from "regression", "classification", and "unsupervised"
-#' @param nodedepth rfsrc parameter. Maximum depth to which a tree should be grown. Parameter is ignored by default.
-#' @param ntree rfsrc parameter. Number of trees.
-#' @param forest.wt rfsrc parameter. Creates an nxn matrix which can be used for prediction and constructing customized estimators. The default is "all".
-#' Can select from "all", "inbag", "oob", TRUE, or FALSE. Setting forest.wt = TRUE is equivalent to forest.wt = "inbag".
-#' @param proximity rfsrc parameter. Proximity of cases as measured by the frequency of sharing the same terminal node. This is an nxn matrix, which can be large.
-#' Choices are inbag, oob, all, TRUE, or FALSE. Setting proximity = TRUE is equivalent to proximity = "inbag". The default is "all".
-#' @param ytry Optional `ytry` value passed to `randomForestSRC::rfsrc()`.
-#' @param seed Random seed passed to `randomForestSRC::rfsrc()`.
-#' @param ... Additional arguments passed to `randomForestSRC::rfsrc()`.
+#' @param nodedepth Maximum depth for the legacy `randomForestSRC` fallback.
+#' Ignored by the native engine.
+#' @param ntree Number of trees.
+#' @param forest.wt Forest-weight output mode for the legacy
+#' `randomForestSRC` fallback. Ignored by the native engine, which always
+#' returns the full `n x n` forest-weight matrix.
+#' @param proximity Proximity output mode for the legacy `randomForestSRC`
+#' fallback. Ignored by the native engine, which always returns the full
+#' `n x n` proximity matrix.
+#' @param ytry Optional `ytry` value passed to `randomForestSRC::rfsrc()`
+#' when `engine != "native"`.
+#' @param seed Random seed passed to the selected engine.
+#' @param engine Forest backend. Default is `getOption("multiRF.engine", "native")`.
+#' Native is the default and recommended engine. `randomForestSRC` is used only
+#' as a non-native fallback when explicitly requested.
+#' @param ... Additional arguments passed to `randomForestSRC::rfsrc()`
+#' when `engine != "native"`.
 #' @return A model list
+#' @details `fit_rfsrc()` now defaults to the package-native engine for
+#' classification, multivariate regression, and unsupervised fitting.
+#' `randomForestSRC` is optional and is only used when `engine != "native"`.
 fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
-                       ntree = 200, forest.wt = "all", proximity = "all", ytry = NULL, 
-                       seed = -10, ...){
+                       ntree = 200, forest.wt = "all", proximity = "all", ytry = NULL,
+                       seed = -10, engine = getOption("multiRF.engine", "native"), ...){
 
   X <- data.frame(X)
 
+  if (identical(engine, "native") && identical(type, "classification")) {
+    return(fit_class_forest(
+      X = X,
+      Y = Y,
+      ntree = as.integer(ntree),
+      nodesize = 5L,
+      seed = as.integer(seed)
+    ))
+  }
+
+  # Use native C++ engine for multivariate regression (default)
+  if (identical(engine, "native") && identical(type, "regression") && !is.null(Y)) {
+    ytry_val <- if (is.null(ytry)) 0L else as.integer(ytry)
+    return(fit_mv_forest(
+      X = X, Y = Y,
+      ntree = as.integer(ntree),
+      ytry = ytry_val,
+      nodesize = 5L,
+      seed = as.integer(seed)
+    ))
+  }
+
+  if (!requireNamespace("randomForestSRC", quietly = TRUE)) {
+    stop(
+      "`randomForestSRC` is only needed for non-native fallback paths. ",
+      "Install it or use `engine = 'native'`.",
+      call. = FALSE
+    )
+  }
+
   if(type == "classification"){
 
-    mrf <- rfsrc(
+    mrf <- randomForestSRC::rfsrc(
       Y ~ .,
       data = data.frame(Y = Y, X),
       membership = T,
@@ -41,8 +82,8 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
 
     Y <- data.frame(Y)
 
-    mrf <- rfsrc(
-      get.mv.formula(colnames(Y)),
+    mrf <- randomForestSRC::rfsrc(
+      randomForestSRC::get.mv.formula(colnames(Y)),
       data = data.frame(X,Y),
       membership = T,
       nodedepth = nodedepth,
@@ -62,7 +103,17 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
 
     if(is.null(ytry)) ytry <- 10
 
-    mrf <- rfsrc(
+    if (identical(engine, "native")) {
+      return(fit_mv_forest_unsup(
+        X = X,
+        ntree = as.integer(ntree),
+        ytry = as.integer(ytry),
+        nodesize = 5L,
+        seed = as.integer(seed)
+      ))
+    }
+
+    mrf <- randomForestSRC::rfsrc(
       data = X,
       membership = T,
       nodedepth = nodedepth,

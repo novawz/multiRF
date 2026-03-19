@@ -72,11 +72,12 @@ fit_full <- mrf3(
 ```r
 # align clinical rows to fitted cluster labels via sample IDs
 clinical_ids <- tcga_brca_clinical$sampleID
-common_ids <- intersect(names(fit$clusters), clinical_ids)
+clusters <- get_clusters(fit)
+common_ids <- intersect(names(clusters), clinical_ids)
 clinical_sub <- tcga_brca_clinical[match(common_ids, clinical_ids), , drop = FALSE]
 
 km <- plot_km(
-  test_var = fit$clusters[common_ids],
+  test_var = clusters[common_ids],
   time_var = "OS.time",
   event_var = "OS",
   pheno_mat = clinical_sub

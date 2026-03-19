@@ -15,6 +15,7 @@ fit_rfsrc(
   proximity = "all",
   ytry = NULL,
   seed = -10,
+  engine = getOption("multiRF.engine", "native"),
   ...
 )
 
@@ -34,21 +35,31 @@ fit_multi_rfsrc(
 
 \item{type}{Select the type of RF model. The default is regression. Can select from "regression", "classification", and "unsupervised"}
 
-\item{nodedepth}{rfsrc parameter. Maximum depth to which a tree should be grown. Parameter is ignored by default.}
+\item{nodedepth}{Maximum depth for the legacy \code{randomForestSRC} fallback.
+Ignored by the native engine.}
 
-\item{ntree}{rfsrc parameter. Number of trees.}
+\item{ntree}{Number of trees.}
 
-\item{forest.wt}{rfsrc parameter. Creates an nxn matrix which can be used for prediction and constructing customized estimators. The default is "all".
-Can select from "all", "inbag", "oob", TRUE, or FALSE. Setting forest.wt = TRUE is equivalent to forest.wt = "inbag".}
+\item{forest.wt}{Forest-weight output mode for the legacy
+\code{randomForestSRC} fallback. Ignored by the native engine, which always
+returns the full \code{n x n} forest-weight matrix.}
 
-\item{proximity}{rfsrc parameter. Proximity of cases as measured by the frequency of sharing the same terminal node. This is an nxn matrix, which can be large.
-Choices are inbag, oob, all, TRUE, or FALSE. Setting proximity = TRUE is equivalent to proximity = "inbag". The default is "all".}
+\item{proximity}{Proximity output mode for the legacy \code{randomForestSRC}
+fallback. Ignored by the native engine, which always returns the full
+\code{n x n} proximity matrix.}
 
-\item{ytry}{Optional \code{ytry} value passed to \code{randomForestSRC::rfsrc()}.}
+\item{ytry}{Optional \code{ytry} value passed to \code{randomForestSRC::rfsrc()}
+when \code{engine != "native"}.}
 
-\item{seed}{Random seed passed to \code{randomForestSRC::rfsrc()}.}
+\item{seed}{Random seed passed to the selected engine.}
 
-\item{...}{Additional arguments passed to \code{randomForestSRC::rfsrc()}.}
+\item{engine}{Forest backend. Default is
+\code{getOption("multiRF.engine", "native")}. Native is the default and
+recommended engine. \code{randomForestSRC} is used only as a non-native
+fallback when explicitly requested.}
+
+\item{...}{Additional arguments passed to \code{randomForestSRC::rfsrc()}
+when \code{engine != "native"}.}
 
 \item{dat.list}{A list that contains multi-omics datasets with samples in rows and features in columns. Samples should be matched in each dataset.}
 
@@ -64,4 +75,10 @@ A model list
 }
 \description{
 Fit random forest model and create model lists
+}
+\details{
+\code{fit_rfsrc()} now defaults to the package-native engine for
+classification, multivariate regression, and unsupervised fitting.
+\code{randomForestSRC} is optional and is only used when
+\code{engine != "native"}.
 }

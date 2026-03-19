@@ -37,6 +37,10 @@
 #' it is forced to `TRUE` when `run_robust_clustering = TRUE`, otherwise `FALSE`.
 #' @param run_robust_clustering Logical; whether to run a robust clustering
 #' branch that first selects variables from IMD weights and then re-clusters.
+#' @param robust_clustering_args A named list of clustering arguments
+#' (`shared_k`, `specific_k`, etc.) specific to the robust clustering branch.
+#' By default, robust clustering inherits the actual `k` chosen in Stage 4;
+#' values in this list override those inherited defaults.
 #' @param cluster_imd_args A named list of additional arguments passed to
 #' `cluster_imd()` when `run_imd = TRUE`.
 #' By default, this function reuses cluster labels from
@@ -89,11 +93,12 @@ mrf3_fit <- function(dat.list,
                           shared_specific_args = list(),
                           clustering_args = list(),
                           run_imd = FALSE,
-                          run_cluster_imd = NULL,
+                          run_cluster_imd = FALSE,
                           imd_args = list(),
                           run_variable_selection = FALSE,
                           variable_selection_args = list(),
                           run_robust_clustering = FALSE,
+                          robust_clustering_args = list(),
                           cluster_imd_args = list(),
                           top_v = NULL,
                           model_top_v = NULL,
@@ -126,6 +131,7 @@ mrf3_fit <- function(dat.list,
   if (!is.null(dots$run_shared_specific)) dots$run_shared_specific <- NULL
   if (!is.null(dots$run_specific_clustering)) dots$run_specific_clustering <- NULL
   if (!is.null(variable_selection_args$re_fit)) variable_selection_args$re_fit <- NULL
+  ## robust_clustering_args is now a formal parameter; ignore stale dots entry
   if (!is.null(dots$robust_clustering_args)) dots$robust_clustering_args <- NULL
   if (!is.null(dots$clustering_args)) dots$clustering_args <- NULL
   if (is.character(main_clustering) && length(main_clustering) == 1L &&
@@ -528,6 +534,21 @@ mrf3_fit <- function(dat.list,
         fused_top_v = final_fused_top_v
       )
 
+      ## Inherit main clustering k, then let robust_clustering_args override
+      robust_cl_args <- clustering_args
+      ## Extract actual k from Stage 4
+      main_shared_k <- main_shared$clustering$k
+      if (!is.null(main_shared_k) && is.null(robust_cl_args$shared_k)) {
+        robust_cl_args$shared_k <- main_shared_k
+      }
+      main_specific_k <- lapply(main_specific$clustering$by_omics, `[[`, "k")
+      main_specific_k <- Filter(Negate(is.null), main_specific_k)
+      if (length(main_specific_k) > 0L && is.null(robust_cl_args$specific_k)) {
+        robust_cl_args$specific_k <- main_specific_k
+      }
+      ## User overrides via robust_clustering_args take precedence
+      robust_cl_args <- utils::modifyList(robust_cl_args, robust_clustering_args)
+
       robust_run <- run_branch_pipeline(
         dat_input = robust_dat,
         mod_input = robust_mod_list,
@@ -543,7 +564,7 @@ mrf3_fit <- function(dat.list,
           fused_keep_ties = fused_keep_ties
         ),
         shared_specific_args = shared_specific_args,
-        clustering_args = clustering_args,
+        clustering_args = robust_cl_args,
         main_clustering = main_clustering
       )
       robust_branch <- robust_run$branch
