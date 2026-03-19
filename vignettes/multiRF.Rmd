@@ -227,11 +227,11 @@ plot_network(
 )
 ```
 
-```{r plot-weights, fig.width=8, fig.height=4}
+```{r plot-weights, fig.width=10, fig.height=4}
 plot_weights(fit_vs, weight_source = "imd", top = 15)
 ```
 
-```{r plot-km, fig.width=6, fig.height=6}
+```{r plot-km, fig.width=8, fig.height=6}
 clinical_ids <- tcga_brca_clinical$sampleID
 clusters <- get_clusters(fit)
 if (is.null(names(clusters))) {

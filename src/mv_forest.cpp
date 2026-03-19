@@ -299,7 +299,7 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
 
   // Defaults
   if (mtry <= 0) mtry = std::max(1, (int)std::sqrt((double)px));
-  if (ytry <= 0) ytry = std::max(1, qy / 3);
+  if (ytry <= 0) ytry = std::max(1, (int)std::ceil(std::sqrt((double)qy)));
   if (max_depth <= 0) max_depth = 150;
 
   #ifdef _OPENMP
@@ -334,7 +334,7 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     std::mt19937 rng_t(actual_seed + (unsigned int)t);
     std::uniform_int_distribution<int> boot_dist(0, n - 1);
 
-    // Bootstrap sample + record inbag mask
+    // Bootstrap sample WITH replacement (keep duplicates, like rfsrc)
     std::vector<int> bag(n);
     std::vector<int> inbag_vec(n, 0);
     for (int i = 0; i < n; i++) {
@@ -342,9 +342,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       bag[i] = idx;
       inbag_vec[idx] = 1;
     }
-    std::sort(bag.begin(), bag.end());
-    bag.erase(std::unique(bag.begin(), bag.end()), bag.end());
     tree_results[t].inbag = std::move(inbag_vec);
+    // Keep duplicates — a sample drawn twice has more influence on the split
+    std::sort(bag.begin(), bag.end());
 
     // Build tree
     tree_results[t].nodes = build_tree(X, Y, bag, mtry, ytry,
@@ -365,11 +365,16 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     for (auto& kv : leaf_groups) {
       const std::vector<int>& group = kv.second;
       int g = (int)group.size();
-      if (g < 2) continue;
+      if (g == 0) continue;
       double wt = 1.0 / g;
       for (int a = 0; a < g; a++) {
+        int ia = group[a];
+        // Diagonal
+        fw_local[ia * n + ia] += wt;
+        prox_local[ia * n + ia] += 1.0;
+        // Off-diagonal
         for (int b = a + 1; b < g; b++) {
-          int ia = group[a], ib = group[b];
+          int ib = group[b];
           prox_local[ia * n + ib] += 1.0;
           prox_local[ib * n + ia] += 1.0;
           fw_local[ia * n + ib] += wt;
@@ -617,11 +622,10 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     int mtry_t = std::max(1, (int)std::sqrt((double)n_x));
     int ytry_t = std::min(ytry, n_y);
 
-    // Bootstrap
+    // Bootstrap WITH replacement (keep duplicates)
     std::vector<int> bag(n);
     for (int i = 0; i < n; i++) bag[i] = boot_dist(rng_t);
     std::sort(bag.begin(), bag.end());
-    bag.erase(std::unique(bag.begin(), bag.end()), bag.end());
 
     std::vector<Node> tree = build_tree(X_sub, Y_sub, bag,
                                         mtry_t, ytry_t, nodesize_min,
@@ -639,11 +643,16 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     for (auto& kv : leaf_groups) {
       const std::vector<int>& group = kv.second;
       int g = (int)group.size();
-      if (g < 2) continue;
+      if (g == 0) continue;
       double wt = 1.0 / g;
       for (int a = 0; a < g; a++) {
+        int ia = group[a];
+        // Diagonal
+        fw_local[ia * n + ia] += wt;
+        prox_local[ia * n + ia] += 1.0;
+        // Off-diagonal
         for (int b = a + 1; b < g; b++) {
-          int ia = group[a], ib = group[b];
+          int ib = group[b];
           prox_local[ia * n + ib] += 1.0;
           prox_local[ib * n + ia] += 1.0;
           fw_local[ia * n + ib] += wt;

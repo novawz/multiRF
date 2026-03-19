@@ -160,17 +160,13 @@ fit_multi_rfsrc <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob 
 
         if(length(dat_fit) == 1){
 
-          ytry <- min(ceiling(ncol(dat_fit[[1]]) * yprob), 20)
+          # Native engine uses sqrt(qy) by default (ytry=0 triggers C++ default)
+          ytry <- 0L
           mod <- fit_rfsrc(dat_fit[[1]], xvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
         } else {
 
-          if(is.null(varwt)) {
-            ytry <- min(ceiling(ncol(dat_fit[[1]]) * yprob), 5000)
-          } else {
-            ytry <- min(ceiling(ncol(dat_fit[[1]]) * yprob), length(varwt[[1]][varwt[[1]] != 0]))
-          }
-
-          if(ytry == ncol(dat_fit[[1]])) ytry <- NULL
+          # Let native engine choose ytry = ceil(sqrt(qy)) via ytry=0
+          ytry <- 0L
 
           mod <- fit_rfsrc(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
         }
