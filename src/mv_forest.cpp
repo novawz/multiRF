@@ -82,6 +82,286 @@ static std::vector<std::vector<int>> presort_columns(
   return sort_order;
 }
 
+// ──────────────── Partition-based split (ranger-style) ────────────────
+// Each node holds its own sorted index subsets (node_sorted[j] has only
+// n_node entries, already in sorted order for variable j).  No in_node
+// scanning needed — every entry belongs to this node.
+
+template <typename XMat, typename YMat>
+static bool find_best_split_part(
+    const XMat& X, const YMat& Y,
+    const std::vector<int>& samples,                    // samples in this node
+    const std::vector<std::vector<int>>& node_sorted,   // [px][n_node] pre-sorted per var
+    std::vector<int>& sample_pos,                       // reusable scratch [n_total]
+    int mtry, int ytry, int nodesize_min,
+    std::mt19937& rng,
+    int& best_var, double& best_val, double& best_score,
+    std::vector<int>& left_samples, std::vector<int>& right_samples,
+    std::vector<double>& best_y_stats)
+{
+  int n_node = (int)samples.size();
+  int px = X.ncol();
+  int qy = Y.ncol();
+
+  if (n_node < 2 * nodesize_min) return false;
+
+  // Random subset of X columns (mtry)
+  std::vector<int> x_candidates(px);
+  std::iota(x_candidates.begin(), x_candidates.end(), 0);
+  std::shuffle(x_candidates.begin(), x_candidates.end(), rng);
+  int n_x_try = std::min(mtry, px);
+
+  // Random subset of Y columns (ytry)
+  std::vector<int> y_candidates(qy);
+  std::iota(y_candidates.begin(), y_candidates.end(), 0);
+  std::shuffle(y_candidates.begin(), y_candidates.end(), rng);
+  int n_y_try = std::min(ytry, qy);
+
+  // Pre-standardize selected Y columns within this node
+  std::vector<double> y_means(n_y_try, 0.0);
+  std::vector<double> y_sds(n_y_try, 1.0);
+  for (int jj = 0; jj < n_y_try; jj++) {
+    int j = y_candidates[jj];
+    double sum = 0.0;
+    for (int k = 0; k < n_node; k++) sum += Y(samples[k], j);
+    y_means[jj] = sum / n_node;
+  }
+  for (int jj = 0; jj < n_y_try; jj++) {
+    int j = y_candidates[jj];
+    double ss = 0.0;
+    for (int k = 0; k < n_node; k++) {
+      double d = Y(samples[k], j) - y_means[jj];
+      ss += d * d;
+    }
+    double var = (n_node > 1) ? ss / n_node : 1.0;
+    y_sds[jj] = (var > 1e-12) ? std::sqrt(var) : 1.0;
+  }
+
+  best_score = -1.0;
+  best_var = -1;
+  best_val = 0.0;
+
+  // Pre-compute standardized Y; build sample_id -> local index map
+  std::vector<double> y_std_flat(n_y_try * n_node);
+  for (int jj = 0; jj < n_y_try; jj++) {
+    int j = y_candidates[jj];
+    double inv_sd = 1.0 / y_sds[jj];
+    for (int k = 0; k < n_node; k++) {
+      y_std_flat[jj * n_node + k] =
+        (Y(samples[k], j) - y_means[jj]) * inv_sd;
+    }
+  }
+  for (int k = 0; k < n_node; k++) sample_pos[samples[k]] = k;
+
+  for (int xi = 0; xi < n_x_try; xi++) {
+    int xvar = x_candidates[xi];
+    const std::vector<int>& order = node_sorted[xvar];
+    // order has exactly n_node entries, all in this node — no skipping
+
+    std::vector<double> sum_L(n_y_try, 0.0);
+    int nL = 0;
+
+    for (int s = 0; s < n_node; s++) {
+      int si = order[s];
+      double x_val = X(si, xvar);
+      int local_k = sample_pos[si];
+
+      // Check split before adding this sample to left
+      if (nL >= nodesize_min && (n_node - nL) >= nodesize_min && s > 0) {
+        double prev_x = X(order[s - 1], xvar);
+        if (x_val != prev_x) {
+          double score = 0.0;
+          for (int jj = 0; jj < n_y_try; jj++) {
+            double sL = sum_L[jj];
+            score += (sL * sL) / nL + (sL * sL) / (n_node - nL);
+          }
+          score /= n_y_try;
+
+          if (score > best_score) {
+            best_score = score;
+            best_y_stats.assign(qy, 0.0);
+            for (int jj = 0; jj < n_y_try; jj++) {
+              double sL = sum_L[jj];
+              best_y_stats[y_candidates[jj]] = (sL * sL) / nL + (sL * sL) / (n_node - nL);
+            }
+            best_var = xvar;
+            best_val = (prev_x + x_val) / 2.0;
+          }
+        }
+      }
+
+      nL++;
+      for (int jj = 0; jj < n_y_try; jj++) {
+        sum_L[jj] += y_std_flat[jj * n_node + local_k];
+      }
+    }
+  }
+
+  // Clean up sample_pos
+  for (int k = 0; k < n_node; k++) sample_pos[samples[k]] = -1;
+
+  if (best_var < 0) return false;
+
+  // Partition samples
+  left_samples.clear();
+  right_samples.clear();
+  left_samples.reserve(n_node);
+  right_samples.reserve(n_node);
+  for (int k = 0; k < n_node; k++) {
+    if (X(samples[k], best_var) <= best_val) {
+      left_samples.push_back(samples[k]);
+    } else {
+      right_samples.push_back(samples[k]);
+    }
+  }
+
+  return !left_samples.empty() && !right_samples.empty();
+}
+
+// Build tree with partition-based sorted indices (ranger-style).
+// Each node owns its sorted index subsets; children get partitioned copies.
+template <typename XMat, typename YMat>
+static std::vector<Node> build_tree_part(
+    const XMat& X, const YMat& Y,
+    const std::vector<int>& bag_samples,
+    const std::vector<std::vector<int>>& sort_order,  // global pre-sorted [px][n]
+    int n_total, int px,
+    int mtry, int ytry, int nodesize_min, int max_depth,
+    std::mt19937& rng)
+{
+  std::vector<Node> nodes;
+  nodes.reserve(256);
+
+  std::vector<int> sample_pos(n_total, -1);  // reusable scratch
+  std::vector<char> left_flag(n_total, 0);   // reusable scratch for partitioning
+
+  // BFS task: node id + its per-variable sorted indices
+  struct SplitTask {
+    int node_id;
+    std::vector<std::vector<int>> sorted;  // [px][n_node]
+  };
+
+  // Create root node
+  Node root;
+  root.id = 0;
+  root.left = -1;
+  root.right = -1;
+  root.split_var = -1;
+  root.split_val = 0.0;
+  root.depth = 0;
+  root.samples = bag_samples;
+  nodes.push_back(root);
+
+  // Build root's sorted indices: filter global sort_order to bag samples
+  // Mark bag membership
+  std::vector<char> in_bag(n_total, 0);
+  for (int si : bag_samples) in_bag[si] = 1;
+
+  SplitTask root_task;
+  root_task.node_id = 0;
+  root_task.sorted.resize(px);
+  for (int j = 0; j < px; j++) {
+    root_task.sorted[j].reserve(bag_samples.size());
+    for (int si : sort_order[j]) {
+      if (in_bag[si]) root_task.sorted[j].push_back(si);
+    }
+  }
+
+  std::vector<SplitTask> to_split;
+  to_split.push_back(std::move(root_task));
+
+  while (!to_split.empty()) {
+    std::vector<SplitTask> next_split;
+
+    for (auto& task : to_split) {
+      Node& node = nodes[task.node_id];
+
+      if ((int)node.samples.size() < 2 * nodesize_min) continue;
+      if (max_depth > 0 && node.depth >= max_depth) continue;
+
+      int bv;
+      double bval, bscore;
+      std::vector<int> lsamp, rsamp;
+      std::vector<double> by_stats;
+
+      bool found = find_best_split_part(
+        X, Y, node.samples, task.sorted, sample_pos,
+        mtry, ytry, nodesize_min, rng,
+        bv, bval, bscore, lsamp, rsamp, by_stats);
+
+      if (!found) continue;
+
+      node.split_var = bv;
+      node.split_val = bval;
+      node.imd_y_stats = std::move(by_stats);
+      node.imd_x_score = bscore;
+
+      // Mark left samples for partitioning
+      for (int si : lsamp) left_flag[si] = 1;
+
+      // Partition each variable's sorted indices into left/right
+      std::vector<std::vector<int>> left_sorted(px), right_sorted(px);
+      for (int j = 0; j < px; j++) {
+        left_sorted[j].reserve(lsamp.size());
+        right_sorted[j].reserve(rsamp.size());
+        for (int si : task.sorted[j]) {
+          if (left_flag[si]) left_sorted[j].push_back(si);
+          else right_sorted[j].push_back(si);
+        }
+      }
+
+      // Clear left_flag
+      for (int si : lsamp) left_flag[si] = 0;
+
+      // Free parent's sorted indices (no longer needed)
+      task.sorted.clear();
+      task.sorted.shrink_to_fit();
+
+      int left_id = (int)nodes.size();
+      Node left_node;
+      left_node.id = left_id;
+      left_node.left = -1;
+      left_node.right = -1;
+      left_node.split_var = -1;
+      left_node.split_val = 0.0;
+      left_node.depth = node.depth + 1;
+      left_node.samples = std::move(lsamp);
+      nodes.push_back(left_node);
+
+      int right_id = (int)nodes.size();
+      Node right_node;
+      right_node.id = right_id;
+      right_node.left = -1;
+      right_node.right = -1;
+      right_node.split_var = -1;
+      right_node.split_val = 0.0;
+      right_node.depth = node.depth + 1;
+      right_node.samples = std::move(rsamp);
+      nodes.push_back(right_node);
+
+      nodes[task.node_id].left = left_id;
+      nodes[task.node_id].right = right_id;
+
+      // Queue children with their partitioned sorted indices
+      SplitTask left_task;
+      left_task.node_id = left_id;
+      left_task.sorted = std::move(left_sorted);
+      next_split.push_back(std::move(left_task));
+
+      SplitTask right_task;
+      right_task.node_id = right_id;
+      right_task.sorted = std::move(right_sorted);
+      next_split.push_back(std::move(right_task));
+    }
+
+    to_split = std::move(next_split);
+  }
+
+  return nodes;
+}
+
+// ──────────────── Global-scan split (kept for fallback) ────────────────
+
 // Fast split using pre-sorted indices.
 // in_node[i] = true if sample i belongs to current node.
 // sort_order[j] = global sorted indices for X column j.
@@ -909,8 +1189,8 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     tree_results[t].inbag = inbag_freq;
     std::sort(bag.begin(), bag.end());
 
-    // Build tree using pre-sorted indices (no per-node re-sorting)
-    tree_results[t].nodes = build_tree_fast(Xv, Yv, bag, sort_order, n,
+    // Build tree with partition-based sorted indices (ranger-style)
+    tree_results[t].nodes = build_tree_part(Xv, Yv, bag, sort_order, n, px,
                                              mtry, ytry, nodesize_min,
                                              max_depth, rng_t);
 
