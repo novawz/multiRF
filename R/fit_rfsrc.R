@@ -73,6 +73,11 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
   # rfsrc doesn't accept "none"; map to FALSE for the fallback path
   if (identical(proximity, "none")) proximity <- FALSE
 
+  # rfsrc only accepts integer mtry/ytry; resolve formula strings here
+  n.xvar <- ncol(data.frame(X))
+  if (is.character(mtry)) mtry <- resolve_param(mtry, p = n.xvar, default = NULL, name = "mtry")
+  if (is.character(ytry)) ytry <- resolve_param(ytry, p = ncol(data.frame(Y)), default = NULL, name = "ytry")
+
   if(type == "classification"){
 
     mrf <- randomForestSRC::rfsrc(
@@ -83,6 +88,7 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       var.used = "by.tree",
       forest.wt = forest.wt,
       ntree = ntree,
+      mtry = mtry,
       na.action = "na.impute",
       statistics = TRUE,
       proximity = proximity,
@@ -104,6 +110,7 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       var.used = "by.tree",
       forest.wt = forest.wt,
       ntree = ntree,
+      mtry = mtry,
       na.action = "na.impute",
       statistics = TRUE,
       proximity = proximity,
@@ -137,6 +144,7 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       var.used = "by.tree",
       forest.wt = forest.wt,
       ntree = ntree,
+      mtry = mtry,
       statistics = TRUE,
       proximity = proximity,
       samptype = samptype,
@@ -163,8 +171,8 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
 fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob = 1, ytry = NULL, seed = -10, ...){
 
   if(is.null(connect_list)){
-    ytry_use <- if (!is.null(ytry)) as.integer(ytry) else NULL
-    mod_l <- full_connect(dat.list, ytry = ytry_use, seed = seed, ...)
+    # Pass ytry as-is; resolve_param in fit_mv_forest handles string/integer/NULL
+    mod_l <- full_connect(dat.list, ytry = ytry, seed = seed, ...)
 
   } else {
 
@@ -179,15 +187,12 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob
           varwt <- NULL
         }
 
-        # Resolve ytry: explicit > default (0 = let C++ decide)
-        ytry_use <- if (!is.null(ytry)) as.integer(ytry) else 0L
-
         if(length(dat_fit) == 1){
 
-          mod <- fit_forest(dat_fit[[1]], xvar.wt = varwt[[1]], ytry = ytry_use, seed = seed, ...)
+          mod <- fit_forest(dat_fit[[1]], xvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
         } else {
 
-          mod <- fit_forest(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry_use, seed = seed, ...)
+          mod <- fit_forest(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
         }
 
 

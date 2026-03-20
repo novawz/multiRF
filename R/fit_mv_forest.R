@@ -82,8 +82,9 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
   proximity <- match.arg(proximity)
   prox_mode <- if (proximity == "none") -1L else match(proximity, c("all", "inbag", "oob")) - 1L
 
-  # Default ytry = 15 for unsupervised (n_y varies per tree)
-  ytry_int <- if (is.null(ytry)) 15L else as.integer(ytry)
+  # Default ytry = 15 for unsupervised; accept string formulas like "sqrt(p)"
+  p_unsup <- ncol(X_mat)
+  ytry_int <- resolve_param(ytry, p = p_unsup, default = 15L, name = "ytry")
 
   # Map samptype string to integer: 0 = swor, 1 = swr
   samptype <- match.arg(samptype)
