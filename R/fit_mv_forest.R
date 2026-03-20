@@ -43,7 +43,7 @@
 #'   `xvar.names`, `ntree`, and `engine = "multiRF"`.
 #' @keywords internal
 fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
-                                 proximity = c("all", "inbag", "oob"),
+                                 proximity = c("all", "inbag", "oob", "none"),
                                  nodesize = 3L, max_depth = 0L, seed = -1L,
                                  samptype = c("swor", "swr"),
                                  nthread = getOption("multiRF.nthread", 0L)) {
@@ -53,7 +53,7 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
   all_names <- colnames(X)
   X_mat <- as.matrix(X)
   proximity <- match.arg(proximity)
-  prox_mode <- match(proximity, c("all", "inbag", "oob")) - 1L
+  prox_mode <- if (proximity == "none") -1L else match(proximity, c("all", "inbag", "oob")) - 1L
 
   # Default ytry = 15 for unsupervised (n_y varies per tree)
   ytry_int <- if (is.null(ytry)) 15L else as.integer(ytry)
@@ -123,7 +123,7 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
 
 fit_mv_forest <- function(X, Y, ntree = 500L,
                            mtry = NULL, ytry = NULL,
-                           proximity = c("all", "inbag", "oob"),
+                           proximity = c("all", "inbag", "oob", "none"),
                            nodesize = 5L, max_depth = 0L, seed = -1L,
                            samptype = c("swor", "swr"),
                            nthread = getOption("multiRF.nthread", 0L)) {
@@ -131,7 +131,8 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   X <- as.data.frame(X, check.names = FALSE)
   Y <- as.data.frame(Y, check.names = FALSE)
   proximity <- match.arg(proximity)
-  prox_mode <- match(proximity, c("all", "inbag", "oob")) - 1L
+  # -1 = skip proximity, 0 = all, 1 = inbag, 2 = oob
+  prox_mode <- if (proximity == "none") -1L else match(proximity, c("all", "inbag", "oob")) - 1L
 
   stopifnot(nrow(X) == nrow(Y))
 
@@ -260,7 +261,7 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
 #'
 #' @keywords internal
 fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL,
-                             proximity = c("all", "inbag", "oob"),
+                             proximity = c("all", "inbag", "oob", "none"),
                              nodesize = 1L, max_depth = 0L, seed = -1L,
                              samptype = c("swor", "swr"),
                              nthread = getOption("multiRF.nthread", 0L)) {

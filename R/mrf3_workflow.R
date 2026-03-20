@@ -197,6 +197,9 @@ mrf3_fit <- function(dat.list,
     dots$sub_mrf_args <- sma
   }
 
+  # Skip proximity computation when clustering doesn't need it
+  prox_arg <- if (main_clustering == "similarity") "none" else "all"
+
   init_args <- c(
     list(
       dat.list = dat.list,
@@ -204,6 +207,7 @@ mrf3_fit <- function(dat.list,
       scale = scale,
       ytry = ytry,
       samptype = samptype,
+      proximity = prox_arg,
       connect_list = connect_list,
       filter_mode = filter_mode,
       filter_method = filter_method,

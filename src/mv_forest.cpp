@@ -36,6 +36,7 @@ struct Node {
   int split_var;  // column index in X (-1 = leaf)
   double split_val;
   int depth;
+  int nodesize;
   std::vector<int> samples;  // row indices in this node
   // IMD: per-Y-column split contribution at this node
   // imd_y_stats[j] = (sum_L_j^2/nL + sum_R_j^2/nR) for full Y
@@ -350,6 +351,7 @@ static std::vector<Node> build_tree_unsup(
   root.split_val = 0.0;
   root.depth = 0;
   root.samples = bag_samples;
+  root.nodesize = (int)bag_samples.size();
   nodes.push_back(root);
 
   std::vector<int> to_split = {0};
@@ -384,6 +386,7 @@ static std::vector<Node> build_tree_unsup(
       left_node.split_val = 0.0;
       left_node.depth = node.depth + 1;
       left_node.samples = std::move(lsamp);
+      left_node.nodesize = (int)left_node.samples.size();
       nodes.push_back(left_node);
 
       int right_id = (int)nodes.size();
@@ -395,6 +398,7 @@ static std::vector<Node> build_tree_unsup(
       right_node.split_val = 0.0;
       right_node.depth = node.depth + 1;
       right_node.samples = std::move(rsamp);
+      right_node.nodesize = (int)right_node.samples.size();
       nodes.push_back(right_node);
 
       nodes[ni].left = left_id;
@@ -431,6 +435,7 @@ static std::vector<Node> build_tree(
   root.split_val = 0.0;
   root.depth = 0;
   root.samples = bag_samples;
+  root.nodesize = (int)bag_samples.size();
   nodes.push_back(root);
 
   // BFS-style tree building
@@ -469,6 +474,7 @@ static std::vector<Node> build_tree(
       left_node.split_val = 0.0;
       left_node.depth = node.depth + 1;
       left_node.samples = std::move(lsamp);
+      left_node.nodesize = (int)left_node.samples.size();
       nodes.push_back(left_node);
 
       int right_id = (int)nodes.size();
@@ -480,6 +486,7 @@ static std::vector<Node> build_tree(
       right_node.split_val = 0.0;
       right_node.depth = node.depth + 1;
       right_node.samples = std::move(rsamp);
+      right_node.nodesize = (int)right_node.samples.size();
       nodes.push_back(right_node);
 
       // Update parent pointers (re-reference since vector may reallocate)
@@ -538,14 +545,25 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   if (nthread > 0) omp_set_num_threads(nthread);
   #endif
 
+  // Copy to thread-safe MatrixView (avoid Rcpp operator() inside OpenMP)
+  std::vector<double> X_buf(n * px), Y_buf(n * qy);
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < px; j++) X_buf[i + j * n] = X(i, j);
+    for (int j = 0; j < qy; j++) Y_buf[i + j * n] = Y(i, j);
+  }
+  MatrixView Xv(X_buf.data(), n, px);
+  MatrixView Yv(Y_buf.data(), n, qy);
+
   // Seed
   unsigned int actual_seed = (seed < 0) ? std::random_device{}() : (unsigned int)seed;
 
   // Output: plain C++ buffers for thread-safe accumulation
+  // prox_mode: -1 = skip proximity entirely, 0 = all, 1 = inbag, 2 = oob
+  bool compute_prox = (prox_mode >= 0);
   std::vector<double> fw_buf(n * n, 0.0);
   std::vector<double> fw_denom_buf(n, 0.0);
-  std::vector<double> prox_buf(n * n, 0.0);
-  std::vector<double> prox_denom_buf(n * n, 0.0);
+  std::vector<double> prox_buf(compute_prox ? n * n : 0, 0.0);
+  std::vector<double> prox_denom_buf(prox_mode > 0 ? n * n : 0, 0.0);
 
   // Per-tree results: tree structure + leaf membership + bootstrap frequency
   struct TreeResult {
@@ -558,13 +576,15 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   // Parallel tree building with thread-local accumulation buffers.
   #ifdef _OPENMP
   #pragma omp parallel
+  #endif
   {
     std::vector<double> fw_local(n * n, 0.0);
     std::vector<double> fw_denom_local(n, 0.0);
-    std::vector<double> prox_local(n * n, 0.0);
-    std::vector<double> prox_denom_local(n * n, 0.0);
-  #pragma omp for schedule(dynamic)
-  #endif
+    std::vector<double> prox_local(compute_prox ? n * n : 0, 0.0);
+    std::vector<double> prox_denom_local(prox_mode > 0 ? n * n : 0, 0.0);
+    #ifdef _OPENMP
+    #pragma omp for schedule(dynamic)
+    #endif
   for (int t = 0; t < ntree; t++) {
     // Per-thread RNG (deterministic: seed + tree index)
     std::mt19937 rng_t(actual_seed + (unsigned int)t);
@@ -599,13 +619,20 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     std::sort(bag.begin(), bag.end());
 
     // Build tree
-    tree_results[t].nodes = build_tree(X, Y, bag, mtry, ytry,
+    tree_results[t].nodes = build_tree(Xv, Yv, bag, mtry, ytry,
                                        nodesize_min, max_depth, rng_t);
+
+    // Release sample vectors from all nodes — they are only needed during
+    // tree construction; leaf membership is obtained via predict_leaf.
+    for (auto& node : tree_results[t].nodes) {
+      node.samples.clear();
+      node.samples.shrink_to_fit();
+    }
 
     // Predict leaf for ALL samples (both IB and OOB)
     tree_results[t].leaf_ids.resize(n);
     for (int i = 0; i < n; i++) {
-      tree_results[t].leaf_ids[i] = predict_leaf(tree_results[t].nodes, X, i);
+      tree_results[t].leaf_ids[i] = predict_leaf(tree_results[t].nodes, Xv, i);
     }
 
     // Accumulate forest weights and proximity.
@@ -623,85 +650,119 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       int g = (int)group.size();
       if (g == 0) continue;
 
-      // Bootstrap leaf size = sum of donor multiplicities for inbag samples
-      // in this leaf.  With swor sampling this is the inbag count; with
-      // bootstrap sampling this would be the total bootstrap frequency.
+      // Pre-extract inbag donors and their weights in this leaf.
+      // This avoids the branch `if (inbag_freq[ib] > 0)` in the inner loop.
+      std::vector<int> ib_idx;
+      std::vector<double> ib_wt;
       double boot_leaf_size = 0.0;
+      ib_idx.reserve(g);
+      ib_wt.reserve(g);
       for (int a = 0; a < g; a++) {
-        boot_leaf_size += inbag_freq[group[a]];
+        int freq = inbag_freq[group[a]];
+        if (freq > 0) {
+          ib_idx.push_back(group[a]);
+          ib_wt.push_back((double)freq);
+          boot_leaf_size += freq;
+        }
       }
       if (boot_leaf_size < 1.0) continue;
+
+      // Normalize weights once
+      double inv_bls = 1.0 / boot_leaf_size;
+      int n_ib = (int)ib_idx.size();
 
       for (int a = 0; a < g; a++) {
         int ia = group[a];
         fw_denom_local[ia] += 1.0;
-        for (int b = 0; b < g; b++) {
-          int ib = group[b];
-          if (inbag_freq[ib] > 0) {
-            fw_local[ia * n + ib] += (double)inbag_freq[ib] / boot_leaf_size;
+        double* row = &fw_local[ia * n];
+        for (int b = 0; b < n_ib; b++) {
+          row[ib_idx[b]] += ib_wt[b] * inv_bls;
+        }
+      }
+    }
+
+    // Proximity accumulation (skipped when prox_mode == -1).
+    if (compute_prox) {
+      if (prox_mode == 0) {
+        // All samples — reuse leaf_groups; denom = ntree (handled at finalize)
+        for (auto& kv : leaf_groups) {
+          const std::vector<int>& group = kv.second;
+          int g = (int)group.size();
+          for (int a = 0; a < g; a++) {
+            int ia = group[a];
+            prox_local[ia * n + ia] += 1.0;
+            for (int b = a + 1; b < g; b++) {
+              int ib = group[b];
+              prox_local[ia * n + ib] += 1.0;
+              prox_local[ib * n + ia] += 1.0;
+            }
+          }
+        }
+      } else {
+        // inbag or oob mode: subset of samples, need per-pair denom
+        std::vector<int> prox_members;
+        prox_members.reserve(n);
+        if (prox_mode == 1) {
+          for (int i = 0; i < n; i++) {
+            if (inbag_freq[i] > 0) prox_members.push_back(i);
+          }
+        } else {
+          for (int i = 0; i < n; i++) {
+            if (inbag_freq[i] == 0) prox_members.push_back(i);
+          }
+        }
+
+        std::unordered_map<int, std::vector<int>> prox_leaf_groups;
+        for (int idx : prox_members) {
+          prox_leaf_groups[tree_results[t].leaf_ids[idx]].push_back(idx);
+        }
+        for (int a = 0; a < (int)prox_members.size(); a++) {
+          int ia = prox_members[a];
+          prox_denom_local[ia * n + ia] += 1.0;
+          for (int b = a + 1; b < (int)prox_members.size(); b++) {
+            int ib = prox_members[b];
+            prox_denom_local[ia * n + ib] += 1.0;
+            prox_denom_local[ib * n + ia] += 1.0;
+          }
+        }
+        for (auto& kv : prox_leaf_groups) {
+          const std::vector<int>& group = kv.second;
+          int g = (int)group.size();
+          for (int a = 0; a < g; a++) {
+            int ia = group[a];
+            prox_local[ia * n + ia] += 1.0;
+            for (int b = a + 1; b < g; b++) {
+              int ib = group[b];
+              prox_local[ia * n + ib] += 1.0;
+              prox_local[ib * n + ia] += 1.0;
+            }
           }
         }
       }
     }
-
-    std::vector<int> prox_members;
-    prox_members.reserve(n);
-    if (prox_mode == 1) {
-      for (int i = 0; i < n; i++) {
-        if (inbag_freq[i] > 0) prox_members.push_back(i);
-      }
-    } else if (prox_mode == 2) {
-      for (int i = 0; i < n; i++) {
-        if (inbag_freq[i] == 0) prox_members.push_back(i);
-      }
-    } else {
-      prox_members.resize(n);
-      std::iota(prox_members.begin(), prox_members.end(), 0);
-    }
-
-    std::unordered_map<int, std::vector<int>> prox_leaf_groups;
-    for (int idx : prox_members) {
-      prox_leaf_groups[tree_results[t].leaf_ids[idx]].push_back(idx);
-    }
-    for (int a = 0; a < (int)prox_members.size(); a++) {
-      int ia = prox_members[a];
-      prox_denom_local[ia * n + ia] += 1.0;
-      for (int b = a + 1; b < (int)prox_members.size(); b++) {
-        int ib = prox_members[b];
-        prox_denom_local[ia * n + ib] += 1.0;
-        prox_denom_local[ib * n + ia] += 1.0;
-      }
-    }
-    for (auto& kv : prox_leaf_groups) {
-      const std::vector<int>& group = kv.second;
-      int g = (int)group.size();
-      for (int a = 0; a < g; a++) {
-        int ia = group[a];
-        prox_local[ia * n + ia] += 1.0;
-        for (int b = a + 1; b < g; b++) {
-          int ib = group[b];
-          prox_local[ia * n + ib] += 1.0;
-          prox_local[ib * n + ia] += 1.0;
-        }
-      }
-    }
   }
-  #ifdef _OPENMP
-  #pragma omp critical
+    #ifdef _OPENMP
+    #pragma omp critical
+    #endif
     {
       for (std::size_t i = 0; i < fw_denom_buf.size(); ++i) {
         fw_denom_buf[i] += fw_denom_local[i];
       }
-      for (std::size_t idx = 0; idx < prox_denom_buf.size(); ++idx) {
-        prox_denom_buf[idx] += prox_denom_local[idx];
+      if (prox_mode > 0) {
+        for (std::size_t idx = 0; idx < prox_denom_buf.size(); ++idx) {
+          prox_denom_buf[idx] += prox_denom_local[idx];
+        }
       }
       for (std::size_t idx = 0; idx < fw_buf.size(); ++idx) {
         fw_buf[idx] += fw_local[idx];
-        prox_buf[idx] += prox_local[idx];
+      }
+      if (compute_prox) {
+        for (std::size_t idx = 0; idx < prox_buf.size(); ++idx) {
+          prox_buf[idx] += prox_local[idx];
+        }
       }
     }
   }
-  #endif
 
   // Copy to R matrices + normalize
   NumericMatrix forest_wt(n, n);
@@ -712,7 +773,17 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
       forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[i * n + j] / fw_denom_buf[i] : NA_REAL;
-      prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
+    }
+  }
+  if (compute_prox) {
+    for (int i = 0; i < n; i++) {
+      for (int j = 0; j < n; j++) {
+        if (prox_mode == 0) {
+          prox(i, j) = prox_buf[i * n + j] / ntree;
+        } else {
+          prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
+        }
+      }
     }
   }
 
@@ -825,7 +896,7 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       t_left[ni] = tree_results[t].nodes[ni].left;
       t_right[ni] = tree_results[t].nodes[ni].right;
       t_depth[ni] = tree_results[t].nodes[ni].depth;
-      t_nodesize[ni] = (int)tree_results[t].nodes[ni].samples.size();
+      t_nodesize[ni] = tree_results[t].nodes[ni].nodesize;
       t_is_leaf[ni] = (tree_results[t].nodes[ni].split_var < 0);
     }
 
@@ -887,10 +958,11 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
   unsigned int actual_seed = (seed < 0) ? std::random_device{}() : (unsigned int)seed;
 
+  bool compute_prox = (prox_mode >= 0);
   std::vector<double> fw_buf(n * n, 0.0);
   std::vector<double> fw_denom_buf(n, 0.0);
-  std::vector<double> prox_buf(n * n, 0.0);
-  std::vector<double> prox_denom_buf(n * n, 0.0);
+  std::vector<double> prox_buf(compute_prox ? n * n : 0, 0.0);
+  std::vector<double> prox_denom_buf(prox_mode > 0 ? n * n : 0, 0.0);
 
   struct UnsupTreeResult {
     std::vector<Node> nodes;
@@ -912,13 +984,15 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
   #ifdef _OPENMP
   #pragma omp parallel
+  #endif
   {
     std::vector<double> fw_local(n * n, 0.0);
     std::vector<double> fw_denom_local(n, 0.0);
-    std::vector<double> prox_local(n * n, 0.0);
-    std::vector<double> prox_denom_local(n * n, 0.0);
-  #pragma omp for schedule(dynamic)
-  #endif
+    std::vector<double> prox_local(compute_prox ? n * n : 0, 0.0);
+    std::vector<double> prox_denom_local(prox_mode > 0 ? n * n : 0, 0.0);
+    #ifdef _OPENMP
+    #pragma omp for schedule(dynamic)
+    #endif
   for (int t = 0; t < ntree; t++) {
     std::mt19937 rng_t(actual_seed + (unsigned int)t);
     std::uniform_int_distribution<int> boot_dist(0, n - 1);
@@ -954,6 +1028,12 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
                                                mtry_default, ytry_use,
                                                nodesize_min, max_depth, rng_t);
 
+    // Release sample vectors (only needed during tree construction)
+    for (auto& node : tree) {
+      node.samples.clear();
+      node.samples.shrink_to_fit();
+    }
+
     std::vector<int> leaf_ids(n);
     for (int i = 0; i < n; i++) {
       leaf_ids[i] = predict_leaf(tree, D, i);
@@ -969,62 +1049,89 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       const std::vector<int>& group = kv.second;
       int g = (int)group.size();
       if (g == 0) continue;
+
+      // Pre-extract inbag donors (same optimization as supervised engine)
+      std::vector<int> ib_idx;
+      std::vector<double> ib_wt;
       double boot_leaf_size = 0.0;
+      ib_idx.reserve(g);
+      ib_wt.reserve(g);
       for (int a = 0; a < g; a++) {
-        boot_leaf_size += inbag_freq[group[a]];
+        int freq = inbag_freq[group[a]];
+        if (freq > 0) {
+          ib_idx.push_back(group[a]);
+          ib_wt.push_back((double)freq);
+          boot_leaf_size += freq;
+        }
       }
       if (boot_leaf_size < 1.0) continue;
+
+      double inv_bls = 1.0 / boot_leaf_size;
+      int n_ib = (int)ib_idx.size();
 
       for (int a = 0; a < g; a++) {
         int ia = group[a];
         fw_denom_local[ia] += 1.0;
-        for (int b = 0; b < g; b++) {
-          int ib = group[b];
-          if (inbag_freq[ib] > 0) {
-            fw_local[ia * n + ib] += (double)inbag_freq[ib] / boot_leaf_size;
-          }
+        double* row = &fw_local[ia * n];
+        for (int b = 0; b < n_ib; b++) {
+          row[ib_idx[b]] += ib_wt[b] * inv_bls;
         }
       }
     }
 
-    std::vector<int> prox_members;
-    prox_members.reserve(n);
-    if (prox_mode == 1) {
-      for (int i = 0; i < n; i++) {
-        if (inbag_freq[i] > 0) prox_members.push_back(i);
-      }
-    } else if (prox_mode == 2) {
-      for (int i = 0; i < n; i++) {
-        if (inbag_freq[i] == 0) prox_members.push_back(i);
-      }
-    } else {
-      prox_members.resize(n);
-      std::iota(prox_members.begin(), prox_members.end(), 0);
-    }
+    if (compute_prox) {
+      if (prox_mode == 0) {
+        for (auto& kv : leaf_groups) {
+          const std::vector<int>& group = kv.second;
+          int g = (int)group.size();
+          for (int a = 0; a < g; a++) {
+            int ia = group[a];
+            prox_local[ia * n + ia] += 1.0;
+            for (int b = a + 1; b < g; b++) {
+              int ib = group[b];
+              prox_local[ia * n + ib] += 1.0;
+              prox_local[ib * n + ia] += 1.0;
+            }
+          }
+        }
+      } else {
+        std::vector<int> prox_members;
+        prox_members.reserve(n);
+        if (prox_mode == 1) {
+          for (int i = 0; i < n; i++) {
+            if (inbag_freq[i] > 0) prox_members.push_back(i);
+          }
+        } else {
+          for (int i = 0; i < n; i++) {
+            if (inbag_freq[i] == 0) prox_members.push_back(i);
+          }
+        }
 
-    std::unordered_map<int, std::vector<int>> prox_leaf_groups;
-    for (int idx : prox_members) {
-      prox_leaf_groups[leaf_ids[idx]].push_back(idx);
-    }
-    for (int a = 0; a < (int)prox_members.size(); a++) {
-      int ia = prox_members[a];
-      prox_denom_local[ia * n + ia] += 1.0;
-      for (int b = a + 1; b < (int)prox_members.size(); b++) {
-        int ib = prox_members[b];
-        prox_denom_local[ia * n + ib] += 1.0;
-        prox_denom_local[ib * n + ia] += 1.0;
-      }
-    }
-    for (auto& kv : prox_leaf_groups) {
-      const std::vector<int>& group = kv.second;
-      int g = (int)group.size();
-      for (int a = 0; a < g; a++) {
-        int ia = group[a];
-        prox_local[ia * n + ia] += 1.0;
-        for (int b = a + 1; b < g; b++) {
-          int ib = group[b];
-          prox_local[ia * n + ib] += 1.0;
-          prox_local[ib * n + ia] += 1.0;
+        std::unordered_map<int, std::vector<int>> prox_leaf_groups;
+        for (int idx : prox_members) {
+          prox_leaf_groups[leaf_ids[idx]].push_back(idx);
+        }
+        for (int a = 0; a < (int)prox_members.size(); a++) {
+          int ia = prox_members[a];
+          prox_denom_local[ia * n + ia] += 1.0;
+          for (int b = a + 1; b < (int)prox_members.size(); b++) {
+            int ib = prox_members[b];
+            prox_denom_local[ia * n + ib] += 1.0;
+            prox_denom_local[ib * n + ia] += 1.0;
+          }
+        }
+        for (auto& kv : prox_leaf_groups) {
+          const std::vector<int>& group = kv.second;
+          int g = (int)group.size();
+          for (int a = 0; a < g; a++) {
+            int ia = group[a];
+            prox_local[ia * n + ia] += 1.0;
+            for (int b = a + 1; b < g; b++) {
+              int ib = group[b];
+              prox_local[ia * n + ib] += 1.0;
+              prox_local[ib * n + ia] += 1.0;
+            }
+          }
         }
       }
     }
@@ -1032,22 +1139,28 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     tree_results[t].nodes = std::move(tree);
     tree_results[t].leaf_ids = std::move(leaf_ids);
   }
-  #ifdef _OPENMP
-  #pragma omp critical
+    #ifdef _OPENMP
+    #pragma omp critical
+    #endif
     {
       for (std::size_t i = 0; i < fw_denom_buf.size(); ++i) {
         fw_denom_buf[i] += fw_denom_local[i];
       }
-      for (std::size_t idx = 0; idx < prox_denom_buf.size(); ++idx) {
-        prox_denom_buf[idx] += prox_denom_local[idx];
+      if (prox_mode > 0) {
+        for (std::size_t idx = 0; idx < prox_denom_buf.size(); ++idx) {
+          prox_denom_buf[idx] += prox_denom_local[idx];
+        }
       }
       for (std::size_t idx = 0; idx < fw_buf.size(); ++idx) {
         fw_buf[idx] += fw_local[idx];
-        prox_buf[idx] += prox_local[idx];
+      }
+      if (compute_prox) {
+        for (std::size_t idx = 0; idx < prox_buf.size(); ++idx) {
+          prox_buf[idx] += prox_local[idx];
+        }
       }
     }
   }
-  #endif
 
   // Copy to R matrices + normalize
   NumericMatrix forest_wt(n, n);
@@ -1057,7 +1170,13 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
       forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[i * n + j] / fw_denom_buf[i] : NA_REAL;
-      prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
+      if (compute_prox) {
+        if (prox_mode == 0) {
+          prox(i, j) = prox_buf[i * n + j] / ntree;
+        } else {
+          prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
+        }
+      }
     }
   }
 
@@ -1085,7 +1204,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       t_left[ni] = tree_results[t].nodes[ni].left;
       t_right[ni] = tree_results[t].nodes[ni].right;
       t_depth[ni] = tree_results[t].nodes[ni].depth;
-      t_nodesize[ni] = (int)tree_results[t].nodes[ni].samples.size();
+      t_nodesize[ni] = tree_results[t].nodes[ni].nodesize;
       t_is_leaf[ni] = (sv < 0);
     }
 
