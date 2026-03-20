@@ -199,7 +199,218 @@ static bool find_best_split(
   return !left_samples.empty() && !right_samples.empty();
 }
 
-// Build a single tree
+// ──────────────── Unsupervised split ────────────────
+// Matches rfsrc's unsupervised split: X = Y = same data matrix.
+// For each candidate split variable, exclude it from pseudo-Y,
+// then randomly sample ytry pseudo-responses from the remaining columns.
+template <typename Mat>
+static bool find_best_split_unsup(
+    const Mat& D,                     // n x p data (used as both X and Y)
+    const std::vector<int>& samples,
+    int mtry, int ytry, int nodesize_min,
+    std::mt19937& rng,
+    int& best_var, double& best_val, double& best_score,
+    std::vector<int>& left_samples, std::vector<int>& right_samples)
+{
+  int n_node = (int)samples.size();
+  int p = D.ncol();
+
+  if (n_node < 2 * nodesize_min) return false;
+
+  // Random subset of candidate split variables (mtry)
+  std::vector<int> x_candidates(p);
+  std::iota(x_candidates.begin(), x_candidates.end(), 0);
+  std::shuffle(x_candidates.begin(), x_candidates.end(), rng);
+  int n_x_try = std::min(mtry, p);
+
+  best_score = -1.0;
+  best_var = -1;
+  best_val = 0.0;
+
+  for (int xi = 0; xi < n_x_try; xi++) {
+    int xvar = x_candidates[xi];
+
+    // Select ytry pseudo-responses from columns OTHER than xvar
+    // (rfsrc unsupervisedSplit excludes the current covariate)
+    std::vector<int> y_pool;
+    y_pool.reserve(p - 1);
+    for (int j = 0; j < p; j++) {
+      if (j != xvar) y_pool.push_back(j);
+    }
+    std::shuffle(y_pool.begin(), y_pool.end(), rng);
+    int n_y_try = std::min(ytry, (int)y_pool.size());
+
+    // Pre-standardize selected pseudo-Y columns within this node
+    std::vector<double> y_means(n_y_try, 0.0);
+    std::vector<double> y_sds(n_y_try, 1.0);
+    for (int jj = 0; jj < n_y_try; jj++) {
+      int j = y_pool[jj];
+      double sum = 0.0;
+      for (int k = 0; k < n_node; k++) sum += D(samples[k], j);
+      y_means[jj] = sum / n_node;
+    }
+    for (int jj = 0; jj < n_y_try; jj++) {
+      int j = y_pool[jj];
+      double ss = 0.0;
+      for (int k = 0; k < n_node; k++) {
+        double d = D(samples[k], j) - y_means[jj];
+        ss += d * d;
+      }
+      double var = (n_node > 1) ? ss / n_node : 1.0;
+      y_sds[jj] = (var > 1e-12) ? std::sqrt(var) : 1.0;
+    }
+
+    // Check if any pseudo-Y is informative
+    bool any_informative = false;
+    for (int jj = 0; jj < n_y_try; jj++) {
+      if (y_sds[jj] > 1e-6) { any_informative = true; break; }
+    }
+    if (!any_informative) continue;
+
+    // Sort samples by split variable
+    std::vector<std::pair<double, int>> x_sorted(n_node);
+    for (int k = 0; k < n_node; k++) {
+      x_sorted[k] = {D(samples[k], xvar), k};
+    }
+    std::sort(x_sorted.begin(), x_sorted.end());
+
+    // Running sums for left child
+    std::vector<double> sum_L(n_y_try, 0.0);
+    int nL = 0;
+
+    for (int s = 0; s < n_node - 1; s++) {
+      int sample_idx = x_sorted[s].second;
+      nL++;
+      int nR = n_node - nL;
+
+      for (int jj = 0; jj < n_y_try; jj++) {
+        int j = y_pool[jj];
+        double y_star = (D(samples[sample_idx], j) - y_means[jj]) / y_sds[jj];
+        sum_L[jj] += y_star;
+      }
+
+      if (x_sorted[s].first == x_sorted[s + 1].first) continue;
+      if (nL < nodesize_min || nR < nodesize_min) continue;
+
+      // Normalized between-group SS, averaged over informative pseudo-Ys
+      // (matches rfsrc: delta / deltaNorm)
+      double score = 0.0;
+      int deltaNorm = 0;
+      for (int jj = 0; jj < n_y_try; jj++) {
+        if (y_sds[jj] > 1e-6) {
+          double sL = sum_L[jj];
+          score += (sL * sL) / nL + (sL * sL) / nR;
+          deltaNorm++;
+        }
+      }
+      if (deltaNorm > 0) score /= deltaNorm;
+      else continue;
+
+      if (score > best_score) {
+        best_score = score;
+        best_var = xvar;
+        best_val = (x_sorted[s].first + x_sorted[s + 1].first) / 2.0;
+      }
+    }
+  }
+
+  if (best_var < 0) return false;
+
+  left_samples.clear();
+  right_samples.clear();
+  left_samples.reserve(n_node);
+  right_samples.reserve(n_node);
+  for (int k = 0; k < n_node; k++) {
+    if (D(samples[k], best_var) <= best_val) {
+      left_samples.push_back(samples[k]);
+    } else {
+      right_samples.push_back(samples[k]);
+    }
+  }
+
+  return !left_samples.empty() && !right_samples.empty();
+}
+
+// Build an unsupervised tree (rfsrc-style: dynamic pseudo-Y per split)
+template <typename Mat>
+static std::vector<Node> build_tree_unsup(
+    const Mat& D,
+    const std::vector<int>& bag_samples,
+    int mtry, int ytry, int nodesize_min, int max_depth,
+    std::mt19937& rng)
+{
+  std::vector<Node> nodes;
+  nodes.reserve(256);
+
+  Node root;
+  root.id = 0;
+  root.left = -1;
+  root.right = -1;
+  root.split_var = -1;
+  root.split_val = 0.0;
+  root.depth = 0;
+  root.samples = bag_samples;
+  nodes.push_back(root);
+
+  std::vector<int> to_split = {0};
+
+  while (!to_split.empty()) {
+    std::vector<int> next_split;
+
+    for (int ni : to_split) {
+      Node& node = nodes[ni];
+
+      if ((int)node.samples.size() < 2 * nodesize_min) continue;
+      if (max_depth > 0 && node.depth >= max_depth) continue;
+
+      int bv;
+      double bval, bscore;
+      std::vector<int> lsamp, rsamp;
+
+      if (!find_best_split_unsup(D, node.samples, mtry, ytry, nodesize_min,
+                                  rng, bv, bval, bscore, lsamp, rsamp)) {
+        continue;
+      }
+
+      node.split_var = bv;
+      node.split_val = bval;
+
+      int left_id = (int)nodes.size();
+      Node left_node;
+      left_node.id = left_id;
+      left_node.left = -1;
+      left_node.right = -1;
+      left_node.split_var = -1;
+      left_node.split_val = 0.0;
+      left_node.depth = node.depth + 1;
+      left_node.samples = std::move(lsamp);
+      nodes.push_back(left_node);
+
+      int right_id = (int)nodes.size();
+      Node right_node;
+      right_node.id = right_id;
+      right_node.left = -1;
+      right_node.right = -1;
+      right_node.split_var = -1;
+      right_node.split_val = 0.0;
+      right_node.depth = node.depth + 1;
+      right_node.samples = std::move(rsamp);
+      nodes.push_back(right_node);
+
+      nodes[ni].left = left_id;
+      nodes[ni].right = right_id;
+
+      next_split.push_back(left_id);
+      next_split.push_back(right_id);
+    }
+
+    to_split = std::move(next_split);
+  }
+
+  return nodes;
+}
+
+// Build a single tree (supervised)
 // Returns vector of Nodes
 template <typename XMat, typename YMat>
 static std::vector<Node> build_tree(
@@ -649,9 +860,10 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
 
 
 // ──────────────── Unsupervised forest ────────────────
-// Each tree randomly splits columns into pseudo-X and pseudo-Y,
-// then fits a multivariate regression tree.  This emulates
-// randomForestSRC's unsupervised mode entirely in C++.
+// Matches rfsrc unsupervised mode: at each split, the current covariate
+// is excluded and ytry pseudo-responses are drawn from the remaining
+// columns.  All p columns serve as both candidate split variables and
+// candidate pseudo-responses.
 
 // [[Rcpp::export]]
 List fit_mv_forest_unsup_cpp(NumericMatrix data,
@@ -683,11 +895,20 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   struct UnsupTreeResult {
     std::vector<Node> nodes;
     std::vector<int> leaf_ids;
-    std::vector<int> col_perm;  // column permutation for this tree
-    int n_y;
-    int n_x;
   };
   std::vector<UnsupTreeResult> tree_results(ntree);
+
+  // Copy data to a thread-safe MatrixView (avoid Rcpp inside OpenMP)
+  std::vector<double> data_buf(n * p);
+  for (int i = 0; i < n; i++)
+    for (int j = 0; j < p; j++)
+      data_buf[i + j * n] = data(i, j);
+  MatrixView D(data_buf.data(), n, p);
+
+  // mtry default: ceiling(sqrt(p)), matching rfsrc unsupervised
+  int mtry_default = std::max(1, (int)std::ceil(std::sqrt((double)p)));
+  // ytry default: min(ytry_param, p-1); ytry <= 0 means use p-1
+  int ytry_use = (ytry <= 0) ? std::max(1, p - 1) : std::min(ytry, p - 1);
 
   #ifdef _OPENMP
   #pragma omp parallel
@@ -701,31 +922,6 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   for (int t = 0; t < ntree; t++) {
     std::mt19937 rng_t(actual_seed + (unsigned int)t);
     std::uniform_int_distribution<int> boot_dist(0, n - 1);
-
-    // Random column split
-    std::vector<int> col_perm(p);
-    std::iota(col_perm.begin(), col_perm.end(), 0);
-    std::shuffle(col_perm.begin(), col_perm.end(), rng_t);
-    int n_y = std::max(1, p / 2);
-    int n_x = p - n_y;
-    if (n_x == 0) { n_x = 1; n_y = p - 1; }
-
-    // Build sub-matrices (thread-local, no R allocations)
-    // Use raw vectors to avoid Rcpp thread-safety issues
-    std::vector<double> X_buf(n * n_x), Y_buf(n * n_y);
-    for (int i = 0; i < n; i++) {
-      for (int j = 0; j < n_x; j++) X_buf[i + j * n] = data(i, col_perm[n_y + j]);
-      for (int j = 0; j < n_y; j++) Y_buf[i + j * n] = data(i, col_perm[j]);
-    }
-
-    // Pure C++ matrix views; avoid creating Rcpp objects inside OpenMP threads.
-    MatrixView X_sub(X_buf.data(), n, n_x);
-    MatrixView Y_sub(Y_buf.data(), n, n_y);
-
-    int mtry_t = std::max(1, (int)std::sqrt((double)n_x));
-    // ytry <= 0 means "use default sqrt(n_y)" per tree
-    int ytry_t = (ytry <= 0) ? std::max(1, (int)std::sqrt((double)n_y))
-                              : std::min(ytry, n_y);
 
     // Bootstrap sampling (same logic as supervised engine)
     std::vector<int> bag;
@@ -752,13 +948,15 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     }
     std::sort(bag.begin(), bag.end());
 
-    std::vector<Node> tree = build_tree(X_sub, Y_sub, bag,
-                                        mtry_t, ytry_t, nodesize_min,
-                                        max_depth, rng_t);
+    // Build unsupervised tree: all p columns as both X and Y,
+    // pseudo-Y selected dynamically per split (excluding split var)
+    std::vector<Node> tree = build_tree_unsup(D, bag,
+                                               mtry_default, ytry_use,
+                                               nodesize_min, max_depth, rng_t);
 
     std::vector<int> leaf_ids(n);
     for (int i = 0; i < n; i++) {
-      leaf_ids[i] = predict_leaf(tree, X_sub, i);
+      leaf_ids[i] = predict_leaf(tree, D, i);
     }
 
     // Accumulate forest weights and proximity with the same "all" semantics
@@ -833,9 +1031,6 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
     tree_results[t].nodes = std::move(tree);
     tree_results[t].leaf_ids = std::move(leaf_ids);
-    tree_results[t].col_perm = std::move(col_perm);
-    tree_results[t].n_y = n_y;
-    tree_results[t].n_x = n_x;
   }
   #ifdef _OPENMP
   #pragma omp critical
@@ -873,9 +1068,6 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     }
 
     int n_nodes = (int)tree_results[t].nodes.size();
-    int n_y = tree_results[t].n_y;
-    int n_x = tree_results[t].n_x;
-    const auto& col_perm = tree_results[t].col_perm;
 
     IntegerVector t_split_var(n_nodes);
     NumericVector t_split_val(n_nodes);
@@ -885,10 +1077,10 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     IntegerVector t_nodesize(n_nodes);
     LogicalVector t_is_leaf(n_nodes);
 
-    // Remap split_var from local X_sub index to global column index
+    // split_var is already a global column index (no remap needed)
     for (int ni = 0; ni < n_nodes; ni++) {
       int sv = tree_results[t].nodes[ni].split_var;
-      t_split_var[ni] = (sv >= 0) ? col_perm[n_y + sv] : -1;
+      t_split_var[ni] = sv;
       t_split_val[ni] = tree_results[t].nodes[ni].split_val;
       t_left[ni] = tree_results[t].nodes[ni].left;
       t_right[ni] = tree_results[t].nodes[ni].right;
@@ -897,11 +1089,6 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       t_is_leaf[ni] = (sv < 0);
     }
 
-    IntegerVector y_cols(n_y);
-    IntegerVector x_cols(n_x);
-    for (int j = 0; j < n_y; j++) y_cols[j] = col_perm[j] + 1;
-    for (int j = 0; j < n_x; j++) x_cols[j] = col_perm[n_y + j] + 1;
-
     tree_info_list[t] = List::create(
       Named("split_var") = t_split_var,
       Named("split_val") = t_split_val,
@@ -909,9 +1096,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       Named("right") = t_right,
       Named("depth") = t_depth,
       Named("nodesize") = t_nodesize,
-      Named("is_leaf") = t_is_leaf,
-      Named("y_cols") = y_cols,
-      Named("x_cols") = x_cols
+      Named("is_leaf") = t_is_leaf
     );
   }
 
