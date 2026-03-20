@@ -65,7 +65,7 @@ compute_oob_fw <- function(mod) {
 #'   sub-model overfits to its response subset).
 #' @param ntree_per_sub  Number of trees per sub-MRF (default 50).
 #' @param ytry  Number of candidate Y variables per split. Default `0L` means
-#'   the C++ engine uses `sqrt(qy)`.  A positive integer overrides this.
+#'   the C++ engine uses `min(qy, ceiling(p/3))`. A positive integer overrides this.
 #' @param min_response  Minimum number of response columns per sub-MRF.
 #' @param min_predictor  Minimum number of predictor columns per sub-MRF.
 #' @param enhanced  Logical; if `TRUE`, compute soft enhanced proximity
@@ -371,7 +371,8 @@ fit_sub_mrf <- function(X, Y,
 #' @param connect_list  A list of connections, each a character vector of
 #'   length 2: `c(response_name, predictor_name)`.  Same format as used
 #'   by `fit_multi_forest()`.
-#' @param ytry  Number of candidate Y variables per split (0 = sqrt(qy) default).
+#' @param ytry  Number of candidate Y variables per split
+#'   (0 = `min(qy, ceiling(p/3))` default).
 #' @param min_response_for_sub Minimum response-block size below which all
 #'   response features are used instead of sub-sampling.
 #' @param min_predictor_for_sub Minimum predictor-block size below which all

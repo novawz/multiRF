@@ -318,9 +318,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   int px = X.ncol();
   int qy = Y.ncol();
 
-  // Defaults (matching rfsrc: ceiling(p/3) for regression, all Y for ytry)
+  // Defaults: ceiling(p/3) for mtry and min(qy, ceiling(p/3)) for ytry
   if (mtry <= 0) mtry = std::max(1, (int)std::ceil((double)px / 3.0));
-  if (ytry <= 0) ytry = qy;  // default: all response columns
+  if (ytry <= 0) ytry = std::min(qy, std::max(1, (int)std::ceil((double)px / 3.0)));
   // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
   #ifdef _OPENMP

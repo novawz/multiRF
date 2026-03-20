@@ -10,7 +10,8 @@
 #' @param ntree Number of trees.
 #' @param mtry Number of candidate X variables per split. Default `NULL` =
 #'   `ceiling(px/3)` for regression (matching rfsrc), `ceiling(sqrt(px))` for classification.
-#' @param ytry Number of candidate Y variables per split. Default `NULL` = `floor(sqrt(qy))`.
+#' @param ytry Number of candidate Y variables per split. Default `NULL` =
+#'   `min(qy, ceiling(px/3))`.
 #' @param nodesize Minimum terminal node size. Default: 5.
 #' @param max_depth Maximum tree depth (0 = unlimited). Default: 0.
 #' @param seed Random seed.
@@ -137,9 +138,9 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   X_mat <- as.matrix(X)
   Y_mat <- as.matrix(Y)
 
-  # Defaults: ceiling(p/3) for mtry (matches rfsrc regr/regr+), all qy for ytry
+  # Defaults: ceiling(p/3) for mtry and min(qy, ceiling(p/3)) for ytry
   if (is.null(mtry)) mtry <- max(1L, ceiling(ncol(X_mat) / 3))
-  if (is.null(ytry)) ytry <- ncol(Y_mat)
+  if (is.null(ytry)) ytry <- min(ncol(Y_mat), max(1L, ceiling(ncol(X_mat) / 3)))
 
   # Map samptype string to integer: 0 = swor, 1 = swr
   samptype <- match.arg(samptype)

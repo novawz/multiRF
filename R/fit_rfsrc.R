@@ -15,7 +15,7 @@
 #' @param mtry Number of candidate X variables per split. Default `NULL` =
 #'   `floor(sqrt(px))`. Passed to native engine; ignored by rfsrc fallback.
 #' @param ytry Number of candidate Y variables per split. Default `NULL` =
-#'   `floor(sqrt(qy))` for supervised, `15` for unsupervised.
+#'   `min(qy, ceiling(px/3))` for supervised, `15` for unsupervised.
 #' @param seed Random seed passed to the selected engine.
 #' @param engine Forest backend. Default is `getOption("multiRF.engine", "native")`.
 #' Native is the default and recommended engine. `randomForestSRC` is used only
@@ -153,7 +153,7 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
 #' @param var.wt Optional variable-weight list aligned with `dat.list`.
 #' @param yprob Deprecated. Use `ytry` directly instead.
 #' @param ytry Number of response variables randomly selected per split.
-#'   Default `NULL` means the native engine uses `ceil(sqrt(qy))`.
+#'   Default `NULL` means the native engine uses `min(qy, ceiling(px/3))`.
 #'   Set to a specific integer to override (e.g., `ytry = ncol(Y) / 2`).
 #' @rdname fit_forest
 #'
