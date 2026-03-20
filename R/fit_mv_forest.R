@@ -1,3 +1,27 @@
+#' Resolve a tuning parameter (mtry or ytry) from integer, formula string, or NULL
+#'
+#' Accepts an integer (used as-is), a formula string like `"sqrt(p)"`,
+#' `"p/3"`, `"p/2"`, or `NULL` (returns `default`).
+#' In the formula, `p` refers to the number of columns (px for mtry, qy for ytry).
+#'
+#' @param value Integer, character formula, or `NULL`.
+#' @param p Number of columns to substitute into the formula.
+#' @param default Value to return when `value` is `NULL`.
+#' @param name Parameter name for error messages (e.g. "mtry", "ytry").
+#' @return An integer value (>= 1).
+#' @keywords internal
+resolve_param <- function(value, p, default, name = "param") {
+  if (is.null(value)) return(max(1L, as.integer(default)))
+  if (is.numeric(value)) return(max(1L, as.integer(value)))
+  if (is.character(value)) {
+    expr <- tryCatch(parse(text = value)[[1]], error = function(e) NULL)
+    if (is.null(expr)) stop("Cannot parse ", name, " formula: ", value)
+    val <- eval(expr, envir = list(p = p))
+    return(max(1L, as.integer(ceiling(val))))
+  }
+  stop("`", name, "` must be NULL, an integer, or a formula string like \"sqrt(p)\" or \"p/3\".")
+}
+
 #' Fit a multivariate regression forest (native C++ engine)
 #'
 #' Drop-in replacement for `fit_forest()` when `type = "regression"`.
@@ -8,10 +32,13 @@
 #' @param X Data frame or matrix of predictor features (n x px).
 #' @param Y Data frame or matrix of response features (n x qy).
 #' @param ntree Number of trees.
-#' @param mtry Number of candidate X variables per split. Default `NULL` =
-#'   `ceiling(px/3)` for regression (matching rfsrc), `ceiling(sqrt(px))` for classification.
-#' @param ytry Number of candidate Y variables per split. Default `NULL` =
-#'   `min(qy, ceiling(px/3))`.
+#' @param mtry Number of candidate X variables per split. Accepts an integer,
+#'   a formula string (`"sqrt(p)"`, `"p/3"`, `"p/2"`), or `NULL` for the
+#'   default (`ceiling(px/3)` for regression, `ceiling(sqrt(px))` for
+#'   classification). In formulas, `p` is the number of predictor columns.
+#' @param ytry Number of candidate Y variables per split. Accepts an integer,
+#'   a formula string (`"sqrt(p)"`, `"p/3"`), or `NULL` for the default
+#'   (`min(qy, ceiling(px/3))`). In formulas, `p` is the number of Y columns.
 #' @param nodesize Minimum terminal node size. Default: 5.
 #' @param max_depth Maximum tree depth (0 = unlimited). Default: 0.
 #' @param seed Random seed.
@@ -139,9 +166,11 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   X_mat <- as.matrix(X)
   Y_mat <- as.matrix(Y)
 
-  # Defaults: ceiling(p/3) for mtry and min(qy, ceiling(p/3)) for ytry
-  if (is.null(mtry)) mtry <- max(1L, ceiling(ncol(X_mat) / 3))
-  if (is.null(ytry)) ytry <- min(ncol(Y_mat), max(1L, ceiling(ncol(X_mat) / 3)))
+  # Resolve mtry and ytry: accept integer, formula string ("sqrt(p)", "p/3"), or NULL
+  px <- ncol(X_mat)
+  qy <- ncol(Y_mat)
+  mtry <- resolve_param(mtry, p = px, default = ceiling(px / 3), name = "mtry")
+  ytry <- resolve_param(ytry, p = qy, default = min(qy, ceiling(px / 3)), name = "ytry")
 
   # Map samptype string to integer: 0 = swor, 1 = swr
   samptype <- match.arg(samptype)
@@ -282,7 +311,7 @@ fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL,
   proximity <- match.arg(proximity)
 
   # Default mtry for classification: ceiling(sqrt(p)), matching rfsrc class/class+
-  if (is.null(mtry)) mtry <- max(1L, ceiling(sqrt(ncol(X))))
+  mtry <- resolve_param(mtry, p = ncol(X), default = ceiling(sqrt(ncol(X))), name = "mtry")
 
   y_mat <- stats::model.matrix(~ y_fac - 1L)
   colnames(y_mat) <- levels(y_fac)

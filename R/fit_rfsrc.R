@@ -70,6 +70,9 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
     )
   }
 
+  # rfsrc doesn't accept "none"; map to FALSE for the fallback path
+  if (identical(proximity, "none")) proximity <- FALSE
+
   if(type == "classification"){
 
     mrf <- randomForestSRC::rfsrc(
