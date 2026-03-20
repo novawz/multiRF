@@ -243,7 +243,7 @@ mrf3_vs <- function(mod,
     m <- NULL
   } 
   if(re_fit) {
-    refit <- fit_multi_rfsrc(new_dat2, connect_list = connect_list, ntree = ntree,
+    refit <- fit_multi_forest(new_dat2, connect_list = connect_list, ntree = ntree,
                              type = mod$type, var.wt = m, ytry = mod$ytry, ...)
 
     oob_err <- purrr::map(refit, ~get_r_sq(.))
@@ -312,7 +312,7 @@ choose_thres2 <- function(weights, connection, new_dat, ytry, ntree, type, oob_i
 
     oob_err0 <- plyr::laply(1:k,
                             .fun = function(k) {
-                              refit <- fit_multi_rfsrc(new_dat2, connect_list = connection,
+                              refit <- fit_multi_forest(new_dat2, connect_list = connection,
                                                        ntree = ntree, type = type, ytry = ytry,
                                                        var.wt = NULL,
                                                        forest.wt = "oob")

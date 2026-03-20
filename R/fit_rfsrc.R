@@ -23,15 +23,17 @@
 #' @param ... Additional arguments passed to `randomForestSRC::rfsrc()`
 #' when `engine != "native"`.
 #' @return A model list
-#' @details `fit_rfsrc()` now defaults to the package-native engine for
+#' @details `fit_forest()` now defaults to the package-native engine for
 #' classification, multivariate regression, and unsupervised fitting.
 #' `randomForestSRC` is optional and is only used when `engine != "native"`.
-fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
+fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
                        ntree = 200, forest.wt = "all", proximity = "all",
                        mtry = NULL, ytry = NULL,
+                       samptype = c("swor", "swr"),
                        seed = -10, engine = getOption("multiRF.engine", "native"), ...){
 
   X <- data.frame(X)
+  samptype <- match.arg(samptype)
 
   if (identical(engine, "native") && identical(type, "classification")) {
     return(fit_class_forest(
@@ -39,8 +41,10 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       Y = Y,
       ntree = as.integer(ntree),
       mtry = mtry,
-      nodesize = 5L,
-      seed = as.integer(seed)
+      nodesize = 1L,
+      seed = as.integer(seed),
+      proximity = proximity,
+      samptype = samptype
     ))
   }
 
@@ -52,7 +56,9 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       mtry = mtry,
       ytry = ytry,
       nodesize = 5L,
-      seed = as.integer(seed)
+      seed = as.integer(seed),
+      proximity = proximity,
+      samptype = samptype
     ))
   }
 
@@ -77,6 +83,7 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       na.action = "na.impute",
       statistics = TRUE,
       proximity = proximity,
+      samptype = samptype,
       seed = seed,
       ...
     )
@@ -97,6 +104,7 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       na.action = "na.impute",
       statistics = TRUE,
       proximity = proximity,
+      samptype = samptype,
       ytry = ytry,
       seed = seed,
       ...
@@ -110,8 +118,10 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
         X = X,
         ntree = as.integer(ntree),
         ytry = ytry,
-        nodesize = 5L,
-        seed = as.integer(seed)
+        nodesize = 3L,
+        seed = as.integer(seed),
+        proximity = proximity,
+        samptype = samptype
       ))
     }
 
@@ -126,6 +136,7 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       ntree = ntree,
       statistics = TRUE,
       proximity = proximity,
+      samptype = samptype,
       ytry = ytry,
       seed = seed,
       ...
@@ -144,9 +155,9 @@ fit_rfsrc <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
 #' @param ytry Number of response variables randomly selected per split.
 #'   Default `NULL` means the native engine uses `ceil(sqrt(qy))`.
 #'   Set to a specific integer to override (e.g., `ytry = ncol(Y) / 2`).
-#' @rdname fit_rfsrc
+#' @rdname fit_forest
 #'
-fit_multi_rfsrc <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob = 1, ytry = NULL, seed = -10, ...){
+fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob = 1, ytry = NULL, seed = -10, ...){
 
   if(is.null(connect_list)){
     ytry_use <- if (!is.null(ytry)) as.integer(ytry) else NULL
@@ -170,10 +181,10 @@ fit_multi_rfsrc <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob 
 
         if(length(dat_fit) == 1){
 
-          mod <- fit_rfsrc(dat_fit[[1]], xvar.wt = varwt[[1]], ytry = ytry_use, seed = seed, ...)
+          mod <- fit_forest(dat_fit[[1]], xvar.wt = varwt[[1]], ytry = ytry_use, seed = seed, ...)
         } else {
 
-          mod <- fit_rfsrc(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry_use, seed = seed, ...)
+          mod <- fit_forest(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry_use, seed = seed, ...)
         }
 
 
@@ -186,4 +197,15 @@ fit_multi_rfsrc <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob 
 
   return(mod_l)
 
+}
+
+# Backward compatibility aliases
+fit_rfsrc <- function(...) {
+  .Deprecated("fit_forest")
+  fit_forest(...)
+}
+
+fit_multi_rfsrc <- function(...) {
+  .Deprecated("fit_multi_forest")
+  fit_multi_forest(...)
 }

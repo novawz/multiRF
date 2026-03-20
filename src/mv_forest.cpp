@@ -156,13 +156,15 @@ static bool find_best_split(
       // Skip if children too small
       if (nL < nodesize_min || nR < nodesize_min) continue;
 
-      // Score = sum_j { (sum_L_j*)^2 / nL + (sum_R_j*)^2 / nR }
-      // where Y* is pre-standardized, sum_R* = -sum_L* (centered)
+      // Score = average_j { (sum_L_j*)^2 / nL + (sum_R_j*)^2 / nR }
+      // where Y* is pre-standardized, sum_R* = -sum_L* (centered).
+      // randomForestSRC averages over the informative response coordinates.
       double score = 0.0;
       for (int jj = 0; jj < n_y_try; jj++) {
         double sL = sum_L[jj];
         score += (sL * sL) / nL + (sL * sL) / nR;
       }
+      score /= n_y_try;
 
       if (score > best_score) {
         best_score = score;
@@ -308,14 +310,16 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
                        int nodesize_min = 5,
                        int max_depth = 0,
                        int seed = -1,
-                       int nthread = 0) {
+                       int nthread = 0,
+                       int samptype = 0,
+                       int prox_mode = 0) {  // 0 = all, 1 = inbag, 2 = oob
 
   int n = X.nrow();
   int px = X.ncol();
   int qy = Y.ncol();
 
-  // Defaults
-  if (mtry <= 0) mtry = std::max(1, (int)std::sqrt((double)px));
+  // Defaults (matching rfsrc: ceiling(p/3) for regression, all Y for ytry)
+  if (mtry <= 0) mtry = std::max(1, (int)std::ceil((double)px / 3.0));
   if (ytry <= 0) ytry = qy;  // default: all response columns
   // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
@@ -328,7 +332,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
 
   // Output: plain C++ buffers for thread-safe accumulation
   std::vector<double> fw_buf(n * n, 0.0);
+  std::vector<double> fw_denom_buf(n, 0.0);
   std::vector<double> prox_buf(n * n, 0.0);
+  std::vector<double> prox_denom_buf(n * n, 0.0);
 
   // Per-tree results: tree structure + leaf membership + bootstrap frequency
   struct TreeResult {
@@ -343,7 +349,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   #pragma omp parallel
   {
     std::vector<double> fw_local(n * n, 0.0);
+    std::vector<double> fw_denom_local(n, 0.0);
     std::vector<double> prox_local(n * n, 0.0);
+    std::vector<double> prox_denom_local(n * n, 0.0);
   #pragma omp for schedule(dynamic)
   #endif
   for (int t = 0; t < ntree; t++) {
@@ -351,17 +359,30 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     std::mt19937 rng_t(actual_seed + (unsigned int)t);
     std::uniform_int_distribution<int> boot_dist(0, n - 1);
 
-    // Bootstrap: sample WITHOUT replacement (rfsrc default: samptype="swor")
-    // Draw ~63.2% of samples (matching expected unique count of standard bootstrap)
-    int samp_size = std::max(1, (int)std::round(n * (1.0 - std::exp(-1.0))));
-    std::vector<int> all_idx(n);
-    std::iota(all_idx.begin(), all_idx.end(), 0);
-    std::shuffle(all_idx.begin(), all_idx.end(), rng_t);
+    // Bootstrap sampling
+    std::vector<int> bag;
+    std::vector<int> inbag_freq(n, 0);
 
-    std::vector<int> bag(all_idx.begin(), all_idx.begin() + samp_size);
-    std::vector<int> inbag_freq(n, 0);  // 0 or 1 (no duplicates)
-    for (int i = 0; i < samp_size; i++) {
-      inbag_freq[bag[i]] = 1;
+    if (samptype == 1) {
+      // SWR: sample WITH replacement (n draws from {0, ..., n-1})
+      // Matches rfsrc samptype="swr": same index can appear multiple times
+      bag.resize(n);
+      for (int i = 0; i < n; i++) {
+        int idx = boot_dist(rng_t);
+        bag[i] = idx;
+        inbag_freq[idx]++;
+      }
+    } else {
+      // SWOR: sample WITHOUT replacement (default, matches rfsrc samptype="swor")
+      // Draw ~63.2% of samples (matching expected unique count of standard bootstrap)
+      int samp_size = std::max(1, (int)std::round(n * (1.0 - std::exp(-1.0))));
+      std::vector<int> all_idx(n);
+      std::iota(all_idx.begin(), all_idx.end(), 0);
+      std::shuffle(all_idx.begin(), all_idx.end(), rng_t);
+      bag.assign(all_idx.begin(), all_idx.begin() + samp_size);
+      for (int i = 0; i < samp_size; i++) {
+        inbag_freq[bag[i]] = 1;
+      }
     }
     tree_results[t].inbag = inbag_freq;
     std::sort(bag.begin(), bag.end());
@@ -377,10 +398,10 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     }
 
     // Accumulate forest weights and proximity.
-    // rfsrc convention: W(i,j) = (1/B) sum_b n_{j,b} * 1{same leaf} /
-    //                                       sum_k n_{k,b} * 1{k in leaf}
-    // Bootstrap frequency n_{j,b} weights each sample's contribution.
-    // "all" = compute for all samples; "inbag" = same formula (OOB get n=0).
+    // For forest weights, follow randomForestSRC's "all" mode logic:
+    //   - rows are all samples predicted through the tree
+    //   - columns are inbag donors only
+    //   - each row is normalized by the number of trees contributing to it
     std::unordered_map<int, std::vector<int>> leaf_groups;
     for (int i = 0; i < n; i++) {
       leaf_groups[tree_results[t].leaf_ids[i]].push_back(i);
@@ -391,29 +412,65 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       int g = (int)group.size();
       if (g == 0) continue;
 
-      // Bootstrap leaf size = sum of n_{k,b} for all samples in this leaf
+      // Bootstrap leaf size = sum of donor multiplicities for inbag samples
+      // in this leaf.  With swor sampling this is the inbag count; with
+      // bootstrap sampling this would be the total bootstrap frequency.
       double boot_leaf_size = 0.0;
       for (int a = 0; a < g; a++) {
         boot_leaf_size += inbag_freq[group[a]];
       }
-      // If leaf is entirely OOB (rare), fall back to uniform
-      if (boot_leaf_size < 1.0) boot_leaf_size = (double)g;
+      if (boot_leaf_size < 1.0) continue;
 
       for (int a = 0; a < g; a++) {
         int ia = group[a];
-        double wt_a = (double)inbag_freq[ia] / boot_leaf_size;
-        // Diagonal
-        fw_local[ia * n + ia] += wt_a;
-        // Off-diagonal
+        fw_denom_local[ia] += 1.0;
+        for (int b = 0; b < g; b++) {
+          int ib = group[b];
+          if (inbag_freq[ib] > 0) {
+            fw_local[ia * n + ib] += (double)inbag_freq[ib] / boot_leaf_size;
+          }
+        }
+      }
+    }
+
+    std::vector<int> prox_members;
+    prox_members.reserve(n);
+    if (prox_mode == 1) {
+      for (int i = 0; i < n; i++) {
+        if (inbag_freq[i] > 0) prox_members.push_back(i);
+      }
+    } else if (prox_mode == 2) {
+      for (int i = 0; i < n; i++) {
+        if (inbag_freq[i] == 0) prox_members.push_back(i);
+      }
+    } else {
+      prox_members.resize(n);
+      std::iota(prox_members.begin(), prox_members.end(), 0);
+    }
+
+    std::unordered_map<int, std::vector<int>> prox_leaf_groups;
+    for (int idx : prox_members) {
+      prox_leaf_groups[tree_results[t].leaf_ids[idx]].push_back(idx);
+    }
+    for (int a = 0; a < (int)prox_members.size(); a++) {
+      int ia = prox_members[a];
+      prox_denom_local[ia * n + ia] += 1.0;
+      for (int b = a + 1; b < (int)prox_members.size(); b++) {
+        int ib = prox_members[b];
+        prox_denom_local[ia * n + ib] += 1.0;
+        prox_denom_local[ib * n + ia] += 1.0;
+      }
+    }
+    for (auto& kv : prox_leaf_groups) {
+      const std::vector<int>& group = kv.second;
+      int g = (int)group.size();
+      for (int a = 0; a < g; a++) {
+        int ia = group[a];
+        prox_local[ia * n + ia] += 1.0;
         for (int b = a + 1; b < g; b++) {
           int ib = group[b];
-          double wt_b = (double)inbag_freq[ib] / boot_leaf_size;
           prox_local[ia * n + ib] += 1.0;
           prox_local[ib * n + ia] += 1.0;
-          // W(ia, ib): weight of ib for predicting at ia
-          fw_local[ia * n + ib] += wt_b;
-          // W(ib, ia): weight of ia for predicting at ib
-          fw_local[ib * n + ia] += wt_a;
         }
       }
     }
@@ -421,6 +478,12 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   #ifdef _OPENMP
   #pragma omp critical
     {
+      for (std::size_t i = 0; i < fw_denom_buf.size(); ++i) {
+        fw_denom_buf[i] += fw_denom_local[i];
+      }
+      for (std::size_t idx = 0; idx < prox_denom_buf.size(); ++idx) {
+        prox_denom_buf[idx] += prox_denom_local[idx];
+      }
       for (std::size_t idx = 0; idx < fw_buf.size(); ++idx) {
         fw_buf[idx] += fw_local[idx];
         prox_buf[idx] += prox_local[idx];
@@ -437,10 +500,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      forest_wt(i, j) = fw_buf[i * n + j] / ntree;
-      prox(i, j) = prox_buf[i * n + j] / ntree;
+      forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[i * n + j] / fw_denom_buf[i] : NA_REAL;
+      prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
     }
-    prox(i, i) = 1.0;
   }
 
   // ──── IMD aggregation ────
@@ -598,7 +660,9 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
                               int nodesize_min = 5,
                               int max_depth = 0,
                               int seed = -1,
-                              int nthread = 0) {
+                              int nthread = 0,
+                              int samptype = 0,
+                              int prox_mode = 0) {  // 0 = all, 1 = inbag, 2 = oob
 
   int n = data.nrow();
   int p = data.ncol();
@@ -612,7 +676,9 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   unsigned int actual_seed = (seed < 0) ? std::random_device{}() : (unsigned int)seed;
 
   std::vector<double> fw_buf(n * n, 0.0);
+  std::vector<double> fw_denom_buf(n, 0.0);
   std::vector<double> prox_buf(n * n, 0.0);
+  std::vector<double> prox_denom_buf(n * n, 0.0);
 
   struct UnsupTreeResult {
     std::vector<Node> nodes;
@@ -627,7 +693,9 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   #pragma omp parallel
   {
     std::vector<double> fw_local(n * n, 0.0);
+    std::vector<double> fw_denom_local(n, 0.0);
     std::vector<double> prox_local(n * n, 0.0);
+    std::vector<double> prox_denom_local(n * n, 0.0);
   #pragma omp for schedule(dynamic)
   #endif
   for (int t = 0; t < ntree; t++) {
@@ -659,9 +727,29 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     int ytry_t = (ytry <= 0) ? std::max(1, (int)std::sqrt((double)n_y))
                               : std::min(ytry, n_y);
 
-    // Bootstrap WITH replacement (keep duplicates)
-    std::vector<int> bag(n);
-    for (int i = 0; i < n; i++) bag[i] = boot_dist(rng_t);
+    // Bootstrap sampling (same logic as supervised engine)
+    std::vector<int> bag;
+    std::vector<int> inbag_freq(n, 0);
+
+    if (samptype == 1) {
+      // SWR: sample WITH replacement
+      bag.resize(n);
+      for (int i = 0; i < n; i++) {
+        int idx = boot_dist(rng_t);
+        bag[i] = idx;
+        inbag_freq[idx]++;
+      }
+    } else {
+      // SWOR: sample WITHOUT replacement (default)
+      int samp_size_u = std::max(1, (int)std::round(n * (1.0 - std::exp(-1.0))));
+      std::vector<int> all_idx_u(n);
+      std::iota(all_idx_u.begin(), all_idx_u.end(), 0);
+      std::shuffle(all_idx_u.begin(), all_idx_u.end(), rng_t);
+      bag.assign(all_idx_u.begin(), all_idx_u.begin() + samp_size_u);
+      for (int i = 0; i < samp_size_u; i++) {
+        inbag_freq[bag[i]] = 1;
+      }
+    }
     std::sort(bag.begin(), bag.end());
 
     std::vector<Node> tree = build_tree(X_sub, Y_sub, bag,
@@ -673,7 +761,9 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       leaf_ids[i] = predict_leaf(tree, X_sub, i);
     }
 
-    // Accumulate into thread-local buffers.
+    // Accumulate forest weights and proximity with the same "all" semantics
+    // used by the supervised engine: rows are all samples, columns are
+    // inbag donors, and rows are normalized by their effective tree count.
     std::unordered_map<int, std::vector<int>> leaf_groups;
     for (int i = 0; i < n; i++) leaf_groups[leaf_ids[i]].push_back(i);
 
@@ -681,19 +771,62 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       const std::vector<int>& group = kv.second;
       int g = (int)group.size();
       if (g == 0) continue;
-      double wt = 1.0 / g;
-      // Diagonal: self-weight from leaf membership (needed by prepare_weight_matrix)
+      double boot_leaf_size = 0.0;
       for (int a = 0; a < g; a++) {
-        fw_local[group[a] * n + group[a]] += wt;
+        boot_leaf_size += inbag_freq[group[a]];
       }
-      // Off-diagonal
+      if (boot_leaf_size < 1.0) continue;
+
       for (int a = 0; a < g; a++) {
+        int ia = group[a];
+        fw_denom_local[ia] += 1.0;
+        for (int b = 0; b < g; b++) {
+          int ib = group[b];
+          if (inbag_freq[ib] > 0) {
+            fw_local[ia * n + ib] += (double)inbag_freq[ib] / boot_leaf_size;
+          }
+        }
+      }
+    }
+
+    std::vector<int> prox_members;
+    prox_members.reserve(n);
+    if (prox_mode == 1) {
+      for (int i = 0; i < n; i++) {
+        if (inbag_freq[i] > 0) prox_members.push_back(i);
+      }
+    } else if (prox_mode == 2) {
+      for (int i = 0; i < n; i++) {
+        if (inbag_freq[i] == 0) prox_members.push_back(i);
+      }
+    } else {
+      prox_members.resize(n);
+      std::iota(prox_members.begin(), prox_members.end(), 0);
+    }
+
+    std::unordered_map<int, std::vector<int>> prox_leaf_groups;
+    for (int idx : prox_members) {
+      prox_leaf_groups[leaf_ids[idx]].push_back(idx);
+    }
+    for (int a = 0; a < (int)prox_members.size(); a++) {
+      int ia = prox_members[a];
+      prox_denom_local[ia * n + ia] += 1.0;
+      for (int b = a + 1; b < (int)prox_members.size(); b++) {
+        int ib = prox_members[b];
+        prox_denom_local[ia * n + ib] += 1.0;
+        prox_denom_local[ib * n + ia] += 1.0;
+      }
+    }
+    for (auto& kv : prox_leaf_groups) {
+      const std::vector<int>& group = kv.second;
+      int g = (int)group.size();
+      for (int a = 0; a < g; a++) {
+        int ia = group[a];
+        prox_local[ia * n + ia] += 1.0;
         for (int b = a + 1; b < g; b++) {
-          int ia = group[a], ib = group[b];
+          int ib = group[b];
           prox_local[ia * n + ib] += 1.0;
           prox_local[ib * n + ia] += 1.0;
-          fw_local[ia * n + ib] += wt;
-          fw_local[ib * n + ia] += wt;
         }
       }
     }
@@ -707,6 +840,12 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   #ifdef _OPENMP
   #pragma omp critical
     {
+      for (std::size_t i = 0; i < fw_denom_buf.size(); ++i) {
+        fw_denom_buf[i] += fw_denom_local[i];
+      }
+      for (std::size_t idx = 0; idx < prox_denom_buf.size(); ++idx) {
+        prox_denom_buf[idx] += prox_denom_local[idx];
+      }
       for (std::size_t idx = 0; idx < fw_buf.size(); ++idx) {
         fw_buf[idx] += fw_local[idx];
         prox_buf[idx] += prox_local[idx];
@@ -722,10 +861,9 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      forest_wt(i, j) = fw_buf[i * n + j] / ntree;
-      prox(i, j) = prox_buf[i * n + j] / ntree;
+      forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[i * n + j] / fw_denom_buf[i] : NA_REAL;
+      prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
     }
-    prox(i, i) = 1.0;
   }
 
   List tree_info_list(ntree);

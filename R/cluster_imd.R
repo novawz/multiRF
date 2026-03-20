@@ -175,7 +175,7 @@ cluster_imd <- function(x,
 
     mod_sub <- tryCatch({
       if (use_refit) {
-        fit_multi_rfsrc(
+        fit_multi_forest(
           dat.list = dat_sub,
           connect_list = conn_global,
           ntree = if (is.null(base$ntree)) 200L else base$ntree,

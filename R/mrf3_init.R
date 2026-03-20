@@ -16,7 +16,7 @@
 #' @param filter_verbose Logical; whether to print filtering diagnostics.
 #' @param return_data Whether to return the data list. Default is FALSE.
 #' @param sub_mrf  Logical; if `TRUE`, uses `fit_sub_multi_rfsrc()` instead of
-#'   `fit_multi_rfsrc()` for the final model fit.  This sub-samples response and
+#'   `fit_multi_forest()` for the final model fit.  This sub-samples response and
 #'   predictor features per connection, fits smaller MRFs, and averages the
 #'   resulting n x n matrices.  Useful when p is large.  Default is `FALSE`.
 #' @param sub_mrf_args  Named list of arguments forwarded to
@@ -52,6 +52,7 @@ mrf3_init <- function(dat.list,
                  ntree = 300,
                  scale = TRUE,
                  ytry = NULL,
+                 samptype = c("swor", "swr"),
                  # Find connections
                  connect_list = NULL,
                  filter_mode = c("auto", "none", "manual"),
@@ -89,6 +90,7 @@ mrf3_init <- function(dat.list,
     names(dat.list) <- paste0("omics", seq_along(dat.list))
   }
 
+  samptype <- match.arg(samptype)
   filter_mode <- match.arg(filter_mode)
   filter_method <- match.arg(filter_method)
 
@@ -194,12 +196,13 @@ mrf3_init <- function(dat.list,
     ## ==== Standard full-MRF path ====
     if (length(new_dat) > 1 && is.null(connect_list)) {
       ## Fit ALL pairwise connections once with forest.wt = "all"
-      mod_all <- fit_multi_rfsrc(
+      mod_all <- fit_multi_forest(
         new_dat,
         connect_list = NULL,
         ntree = ntree,
         type = type,
         ytry = ytry,
+        samptype = samptype,
         seed = seed,
         forest.wt = "all",
         ...
@@ -216,12 +219,13 @@ mrf3_init <- function(dat.list,
                                FUN.VALUE = character(1))
       mod_list <- mod_all[selected_names]
     } else {
-      mod_list <- fit_multi_rfsrc(
+      mod_list <- fit_multi_forest(
         new_dat,
         connect_list = connect_list,
         ntree = ntree,
         type = type,
         ytry = ytry,
+        samptype = samptype,
         seed = seed,
         forest.wt = "all",
         ...

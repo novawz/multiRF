@@ -98,7 +98,7 @@ get_shared_specific_weights <- function(dat.list,
     predicted[[d]] <- X_hat
     residual[[d]] <- R
 
-    r_mod <- fit_rfsrc(
+    r_mod <- fit_forest(
       X = as.data.frame(R, check.names = FALSE),
       Y = NULL,
       type = "unsupervised"

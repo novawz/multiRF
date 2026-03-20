@@ -80,7 +80,7 @@ compute_oob_fw <- function(mod) {
 #' @param parallel  Logical; if `TRUE`, use [parallel::mclapply()].
 #' @param cores  Number of cores when `parallel = TRUE`.
 #' @param verbose  Logical; print progress messages.
-#' @param ...  Additional arguments forwarded to `fit_rfsrc()`.
+#' @param ...  Additional arguments forwarded to `fit_forest()`.
 #'
 #' @return An rfsrc-like list with:
 #' \describe{
@@ -167,7 +167,7 @@ fit_sub_mrf <- function(X, Y,
     x_idx <- sort(sample.int(pX, size = n_pred))
     X_sub <- X[, x_idx, drop = FALSE]
 
-    mod <- fit_rfsrc(
+    mod <- fit_forest(
       X = X_sub,
       Y = Y_sub,
       ntree = ntree_per_sub,
@@ -362,7 +362,7 @@ fit_sub_mrf <- function(X, Y,
 
 #' Fit sub-MRF ensemble for a multi-omics connection list
 #'
-#' Higher-level wrapper that matches the interface of `fit_multi_rfsrc()`.
+#' Higher-level wrapper that matches the interface of `fit_multi_forest()`.
 #' For each directed connection (response_block -> predictor_block),
 #' features are sub-sampled from both blocks independently, and the
 #' resulting n x n matrices are averaged across replicates.
@@ -370,7 +370,7 @@ fit_sub_mrf <- function(X, Y,
 #' @param dat.list  Named list of data frames (samples x features).
 #' @param connect_list  A list of connections, each a character vector of
 #'   length 2: `c(response_name, predictor_name)`.  Same format as used
-#'   by `fit_multi_rfsrc()`.
+#'   by `fit_multi_forest()`.
 #' @param ytry  Number of candidate Y variables per split (0 = sqrt(qy) default).
 #' @param min_response_for_sub Minimum response-block size below which all
 #'   response features are used instead of sub-sampling.
@@ -378,11 +378,11 @@ fit_sub_mrf <- function(X, Y,
 #'   predictor features are used instead of sub-sampling.
 #' @param ntree_full Deprecated compatibility argument. Ignored.
 #' @inheritParams fit_sub_mrf
-#' @param ...  Passed to `fit_sub_mrf()` and then `fit_rfsrc()`.
+#' @param ...  Passed to `fit_sub_mrf()` and then `fit_forest()`.
 #'
 #' @return A **named list** of rfsrc-compatible objects, one per connection.
 #'   Names follow the `"response_predictor"` convention used by
-#'   `fit_multi_rfsrc()`.  Each object contains `forest.wt`, `forest.wt.oob`,
+#'   `fit_multi_forest()`.  Each object contains `forest.wt`, `forest.wt.oob`,
 #'   `proximity`, `xvar`, `yvar`.
 #' @details
 #' Sub-MRF uses the default engine (native C++) for its internal fits.
@@ -452,7 +452,7 @@ fit_sub_multi_rfsrc <- function(dat.list,
         if (verbose) message(sprintf(
           "  resp (%d) and pred (%d) both small -> using full forest", ncol(Y), ncol(X)
         ))
-        mod <- fit_rfsrc(X, Y, mtry = mtry, ytry = ytry, ntree = ntree_full,
+        mod <- fit_forest(X, Y, mtry = mtry, ytry = ytry, ntree = ntree_full,
                          seed = seed, forest.wt = "all", ...)
         return(mod)
       }

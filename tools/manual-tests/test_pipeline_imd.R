@@ -219,7 +219,7 @@ cat(sprintf("  Signal strength: geneA=2.5, cpg=2.0, miR=2.2\n\n"))
 cat("--- Test 1: Full forest + IMD (baseline) ---\n")
 t0 <- proc.time()
 
-full_mods <- fit_multi_rfsrc(
+full_mods <- fit_multi_forest(
   dat.list = dat_list,
   connect_list = connect_list,
   ntree = 100,
@@ -228,7 +228,7 @@ full_mods <- fit_multi_rfsrc(
   seed = 42
 )
 
-cat(sprintf("  fit_multi_rfsrc done [%s]\n", elapsed(t0)))
+cat(sprintf("  fit_multi_forest done [%s]\n", elapsed(t0)))
 cat("  Model structures:\n")
 for (cn in names(full_mods)) {
   report_model_structure(full_mods[[cn]], cn)

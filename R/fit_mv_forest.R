@@ -1,6 +1,6 @@
 #' Fit a multivariate regression forest (native C++ engine)
 #'
-#' Drop-in replacement for `fit_rfsrc()` when `type = "regression"`.
+#' Drop-in replacement for `fit_forest()` when `type = "regression"`.
 #' Returns an object with the same interface (`$forest.wt`, `$proximity`,
 #' `$membership`, `$xvar`, `$yvar`, `$ntree`, `$xvar.names`) so downstream
 #' code in multiRF works without changes.
@@ -8,7 +8,8 @@
 #' @param X Data frame or matrix of predictor features (n x px).
 #' @param Y Data frame or matrix of response features (n x qy).
 #' @param ntree Number of trees.
-#' @param mtry Number of candidate X variables per split. Default `NULL` = `floor(sqrt(px))`.
+#' @param mtry Number of candidate X variables per split. Default `NULL` =
+#'   `ceiling(px/3)` for regression (matching rfsrc), `ceiling(sqrt(px))` for classification.
 #' @param ytry Number of candidate Y variables per split. Default `NULL` = `floor(sqrt(qy))`.
 #' @param nodesize Minimum terminal node size. Default: 5.
 #' @param max_depth Maximum tree depth (0 = unlimited). Default: 0.
@@ -41,16 +42,24 @@
 #'   `xvar.names`, `ntree`, and `engine = "multiRF"`.
 #' @keywords internal
 fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
-                                 nodesize = 5L, max_depth = 0L, seed = -1L,
+                                 proximity = c("all", "inbag", "oob"),
+                                 nodesize = 3L, max_depth = 0L, seed = -1L,
+                                 samptype = c("swor", "swr"),
                                  nthread = getOption("multiRF.nthread", 0L)) {
 
   X <- as.data.frame(X, check.names = FALSE)
   n <- nrow(X)
   all_names <- colnames(X)
   X_mat <- as.matrix(X)
+  proximity <- match.arg(proximity)
+  prox_mode <- match(proximity, c("all", "inbag", "oob")) - 1L
 
   # Default ytry = 15 for unsupervised (n_y varies per tree)
   ytry_int <- if (is.null(ytry)) 15L else as.integer(ytry)
+
+  # Map samptype string to integer: 0 = swor, 1 = swr
+  samptype <- match.arg(samptype)
+  samptype_int <- if (samptype == "swr") 1L else 0L
 
   # All-C++ unsupervised forest (random column splits done in C++)
   res <- fit_mv_forest_unsup_cpp(
@@ -60,7 +69,9 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
     nodesize_min = as.integer(nodesize),
     max_depth = as.integer(max_depth),
     seed = as.integer(seed),
-    nthread = as.integer(nthread)
+    nthread = as.integer(nthread),
+    samptype = samptype_int,
+    prox_mode = as.integer(prox_mode)
   )
 
   sample_names <- rownames(X)
@@ -111,20 +122,28 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
 
 fit_mv_forest <- function(X, Y, ntree = 500L,
                            mtry = NULL, ytry = NULL,
+                           proximity = c("all", "inbag", "oob"),
                            nodesize = 5L, max_depth = 0L, seed = -1L,
+                           samptype = c("swor", "swr"),
                            nthread = getOption("multiRF.nthread", 0L)) {
 
   X <- as.data.frame(X, check.names = FALSE)
   Y <- as.data.frame(Y, check.names = FALSE)
+  proximity <- match.arg(proximity)
+  prox_mode <- match(proximity, c("all", "inbag", "oob")) - 1L
 
   stopifnot(nrow(X) == nrow(Y))
 
   X_mat <- as.matrix(X)
   Y_mat <- as.matrix(Y)
 
-  # Defaults: sqrt(px) for mtry, all qy for ytry
-  if (is.null(mtry)) mtry <- max(1L, floor(sqrt(ncol(X_mat))))
+  # Defaults: ceiling(p/3) for mtry (matches rfsrc regr/regr+), all qy for ytry
+  if (is.null(mtry)) mtry <- max(1L, ceiling(ncol(X_mat) / 3))
   if (is.null(ytry)) ytry <- ncol(Y_mat)
+
+  # Map samptype string to integer: 0 = swor, 1 = swr
+  samptype <- match.arg(samptype)
+  samptype_int <- if (samptype == "swr") 1L else 0L
 
   # C++ engine
   res <- fit_mv_forest_cpp(
@@ -136,7 +155,9 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
     nodesize_min = as.integer(nodesize),
     max_depth = as.integer(max_depth),
     nthread = as.integer(nthread),
-    seed = as.integer(seed)
+    seed = as.integer(seed),
+    samptype = samptype_int,
+    prox_mode = as.integer(prox_mode)
   )
 
   # Set row/col names
@@ -238,7 +259,9 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
 #'
 #' @keywords internal
 fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL,
-                             nodesize = 5L, max_depth = 0L, seed = -1L,
+                             proximity = c("all", "inbag", "oob"),
+                             nodesize = 1L, max_depth = 0L, seed = -1L,
+                             samptype = c("swor", "swr"),
                              nthread = getOption("multiRF.nthread", 0L)) {
 
   X <- as.data.frame(X, check.names = FALSE)
@@ -254,6 +277,10 @@ fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL,
   if (nlevels(y_fac) < 2L) {
     stop("Classification requires at least two response classes.")
   }
+  proximity <- match.arg(proximity)
+
+  # Default mtry for classification: ceiling(sqrt(p)), matching rfsrc class/class+
+  if (is.null(mtry)) mtry <- max(1L, ceiling(sqrt(ncol(X))))
 
   y_mat <- stats::model.matrix(~ y_fac - 1L)
   colnames(y_mat) <- levels(y_fac)
@@ -263,9 +290,11 @@ fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL,
     ntree = ntree,
     mtry = mtry,
     ytry = ncol(y_mat),
+    proximity = proximity,
     nodesize = nodesize,
     max_depth = max_depth,
     seed = seed,
+    samptype = match.arg(samptype),
     nthread = nthread
   )
 

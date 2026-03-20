@@ -205,7 +205,7 @@ full_connect <- function(dat.list, ...){
       predict_d <- dat.list[!names(dat.list) %in% d]
 
       mod <- plyr::llply(predict_d, .fun = function(pred){
-        fit_rfsrc(X = pred, Y = response_d, ...)
+        fit_forest(X = pred, Y = response_d, ...)
       })
 
       mod_names <- paste0(d, "_", names(predict_d))

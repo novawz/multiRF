@@ -71,7 +71,7 @@ cat(sprintf("Connection: mRNA -> CpG\n\n"))
 ## ---- full MRF reference ----------------------------------------------------
 cat("Fitting full MRF (ntree=500)...\n")
 t_full <- system.time({
-  full_mods <- fit_multi_rfsrc(
+  full_mods <- fit_multi_forest(
     dat.list = dat_list,
     connect_list = connect_list,
     ntree = 500,

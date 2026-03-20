@@ -2,13 +2,13 @@ test_that("native classification fit returns class-compatible fields", {
   skip_if_not_installed("pkgload")
   pkgload::load_all(export_all = FALSE, helpers = FALSE, quiet = TRUE)
 
-  fit_rfsrc <- get("fit_rfsrc", envir = asNamespace("multiRF"))
+  fit_forest <- get("fit_forest", envir = asNamespace("multiRF"))
 
   set.seed(1)
   X <- as.data.frame(matrix(rnorm(30 * 5), nrow = 30, ncol = 5))
   Y <- factor(rep(c("A", "B", "C"), each = 10))
 
-  fit <- fit_rfsrc(
+  fit <- fit_forest(
     X = X,
     Y = Y,
     type = "classification",

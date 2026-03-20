@@ -82,6 +82,7 @@ mrf3_fit <- function(dat.list,
                           ntree = 500,
                           scale = TRUE,
                           ytry = NULL,
+                          samptype = c("swor", "swr"),
                           connect_list = NULL,
                           filter_mode = c("auto", "none", "manual"),
                           filter_method = c("mad", "variance"),
@@ -144,6 +145,7 @@ mrf3_fit <- function(dat.list,
     )
   }
   main_clustering <- match.arg(main_clustering)
+  samptype <- match.arg(samptype)
   filter_mode <- match.arg(filter_mode)
   filter_method <- match.arg(filter_method)
   recon_fusion <- match.arg(recon_fusion)
@@ -201,6 +203,7 @@ mrf3_fit <- function(dat.list,
       ntree = ntree,
       scale = scale,
       ytry = ytry,
+      samptype = samptype,
       connect_list = connect_list,
       filter_mode = filter_mode,
       filter_method = filter_method,

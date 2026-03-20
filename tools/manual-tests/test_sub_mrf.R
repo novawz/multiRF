@@ -2,7 +2,7 @@
 ## Test: sub-MRF ensemble vs full MRF (per-connection architecture)
 ##
 ## Each connection is a directed pair: response_block -> predictor_block
-## e.g., mRNA -> CpG, mRNA -> miRNA (matching fit_multi_rfsrc design)
+## e.g., mRNA -> CpG, mRNA -> miRNA (matching fit_multi_forest design)
 ##
 ## Usage:  Rscript tests/test_sub_mrf.R   (from multiRF/ or paper2_vs_cov/)
 ## ============================================================================
@@ -94,7 +94,7 @@ cat(sprintf("Connections: %s\n\n",
 ## ---- 1) Full MRF per connection --------------------------------------------
 cat("=== Full MRF (per-connection, ntree=500) ===\n")
 t_full <- system.time({
-  full_mods <- fit_multi_rfsrc(
+  full_mods <- fit_multi_forest(
     dat.list = dat_list,
     connect_list = connect_list,
     ntree = 500,
