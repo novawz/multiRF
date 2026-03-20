@@ -94,17 +94,19 @@ static bool find_best_split(
   std::shuffle(y_candidates.begin(), y_candidates.end(), rng);
   int n_y_try = std::min(ytry, qy);
 
-  // Pre-compute column means and variances for selected Y within this node
+  // Pre-standardize selected Y columns within this node: Y* = (Y - mean) / sd
+  // This matches rfsrc's normalized composite splitting rule.
+  // n_node here is the bootstrap bag size (including duplicates).
   std::vector<double> y_means(n_y_try, 0.0);
-  std::vector<double> y_vars(n_y_try, 0.0);
+  std::vector<double> y_sds(n_y_try, 1.0);
   for (int jj = 0; jj < n_y_try; jj++) {
     int j = y_candidates[jj];
+    double sum = 0.0;
     for (int k = 0; k < n_node; k++) {
-      y_means[jj] += Y(samples[k], j);
+      sum += Y(samples[k], j);
     }
-    y_means[jj] /= n_node;
+    y_means[jj] = sum / n_node;
   }
-  // Compute within-node variance for each selected Y column
   for (int jj = 0; jj < n_y_try; jj++) {
     int j = y_candidates[jj];
     double ss = 0.0;
@@ -112,9 +114,9 @@ static bool find_best_split(
       double d = Y(samples[k], j) - y_means[jj];
       ss += d * d;
     }
-    // Use (n-1) denominator; guard against zero-variance columns
-    y_vars[jj] = (n_node > 1) ? ss / (n_node - 1) : 1.0;
-    if (y_vars[jj] < 1e-12) y_vars[jj] = 1.0;  // degenerate → skip normalization
+    // Standard deviation with n denominator (population sd within node)
+    double var = (n_node > 1) ? ss / n_node : 1.0;
+    y_sds[jj] = (var > 1e-12) ? std::sqrt(var) : 1.0;
   }
 
   best_score = -1.0;
@@ -141,11 +143,11 @@ static bool find_best_split(
       nL++;
       int nR = n_node - nL;
 
-      // Update left sums
+      // Update left sums of standardized Y*
       for (int jj = 0; jj < n_y_try; jj++) {
         int j = y_candidates[jj];
-        double val = Y(samples[sample_idx], j) - y_means[jj];
-        sum_L[jj] += val;
+        double y_star = (Y(samples[sample_idx], j) - y_means[jj]) / y_sds[jj];
+        sum_L[jj] += y_star;
       }
 
       // Skip if same X value as next
@@ -154,25 +156,22 @@ static bool find_best_split(
       // Skip if children too small
       if (nL < nodesize_min || nR < nodesize_min) continue;
 
-      // Compute normalized score: sum_j [ (sum_L_j^2/nL + sum_R_j^2/nR) / var_j ]
-      // sum_R_j = total_j - sum_L_j, but total_j = 0 (centered)
-      // so sum_R_j = -sum_L_j
-      // Division by var_j standardizes each Y coordinate to unit variance
-      // (matching randomForestSRC's D*_q(s,t) formula)
+      // Score = sum_j { (sum_L_j*)^2 / nL + (sum_R_j*)^2 / nR }
+      // where Y* is pre-standardized, sum_R* = -sum_L* (centered)
       double score = 0.0;
       for (int jj = 0; jj < n_y_try; jj++) {
         double sL = sum_L[jj];
-        score += ((sL * sL) / nL + (sL * sL) / nR) / y_vars[jj];
+        score += (sL * sL) / nL + (sL * sL) / nR;
       }
 
       if (score > best_score) {
         best_score = score;
         // Record per-Y split stats for IMD (only for the ytry columns tried)
-        // Normalize by within-node variance to match the split criterion
+        // Y* is already standardized, so no separate variance division needed
         best_y_stats.assign(qy, 0.0);
         for (int jj = 0; jj < n_y_try; jj++) {
           double sL = sum_L[jj];
-          best_y_stats[y_candidates[jj]] = ((sL * sL) / nL + (sL * sL) / nR) / y_vars[jj];
+          best_y_stats[y_candidates[jj]] = (sL * sL) / nL + (sL * sL) / nR;
         }
         best_var = xvar;
         best_val = (x_sorted[s].first + x_sorted[s + 1].first) / 2.0;
@@ -317,8 +316,8 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
 
   // Defaults
   if (mtry <= 0) mtry = std::max(1, (int)std::sqrt((double)px));
-  if (ytry <= 0) ytry = std::max(1, qy / 2);  // default: p_a/2
-  if (max_depth <= 0) max_depth = 150;
+  if (ytry <= 0) ytry = qy;  // default: all response columns
+  // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
   #ifdef _OPENMP
   if (nthread > 0) omp_set_num_threads(nthread);
@@ -331,11 +330,11 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   std::vector<double> fw_buf(n * n, 0.0);
   std::vector<double> prox_buf(n * n, 0.0);
 
-  // Per-tree results: tree structure + leaf membership + inbag mask
+  // Per-tree results: tree structure + leaf membership + bootstrap frequency
   struct TreeResult {
     std::vector<Node> nodes;
     std::vector<int> leaf_ids;
-    std::vector<int> inbag;   // 0/1 per sample
+    std::vector<int> inbag;   // bootstrap frequency n_{i,b} per sample
   };
   std::vector<TreeResult> tree_results(ntree);
 
@@ -352,29 +351,36 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     std::mt19937 rng_t(actual_seed + (unsigned int)t);
     std::uniform_int_distribution<int> boot_dist(0, n - 1);
 
-    // Bootstrap sample WITH replacement (keep duplicates, like rfsrc)
-    std::vector<int> bag(n);
-    std::vector<int> inbag_vec(n, 0);
-    for (int i = 0; i < n; i++) {
-      int idx = boot_dist(rng_t);
-      bag[i] = idx;
-      inbag_vec[idx] = 1;
+    // Bootstrap: sample WITHOUT replacement (rfsrc default: samptype="swor")
+    // Draw ~63.2% of samples (matching expected unique count of standard bootstrap)
+    int samp_size = std::max(1, (int)std::round(n * (1.0 - std::exp(-1.0))));
+    std::vector<int> all_idx(n);
+    std::iota(all_idx.begin(), all_idx.end(), 0);
+    std::shuffle(all_idx.begin(), all_idx.end(), rng_t);
+
+    std::vector<int> bag(all_idx.begin(), all_idx.begin() + samp_size);
+    std::vector<int> inbag_freq(n, 0);  // 0 or 1 (no duplicates)
+    for (int i = 0; i < samp_size; i++) {
+      inbag_freq[bag[i]] = 1;
     }
-    tree_results[t].inbag = std::move(inbag_vec);
-    // Keep duplicates — a sample drawn twice has more influence on the split
+    tree_results[t].inbag = inbag_freq;
     std::sort(bag.begin(), bag.end());
 
     // Build tree
     tree_results[t].nodes = build_tree(X, Y, bag, mtry, ytry,
                                        nodesize_min, max_depth, rng_t);
 
-    // Predict leaf for ALL samples
+    // Predict leaf for ALL samples (both IB and OOB)
     tree_results[t].leaf_ids.resize(n);
     for (int i = 0; i < n; i++) {
       tree_results[t].leaf_ids[i] = predict_leaf(tree_results[t].nodes, X, i);
     }
 
-    // Accumulate proximity and forest weights into thread-local buffers.
+    // Accumulate forest weights and proximity.
+    // rfsrc convention: W(i,j) = (1/B) sum_b n_{j,b} * 1{same leaf} /
+    //                                       sum_k n_{k,b} * 1{k in leaf}
+    // Bootstrap frequency n_{j,b} weights each sample's contribution.
+    // "all" = compute for all samples; "inbag" = same formula (OOB get n=0).
     std::unordered_map<int, std::vector<int>> leaf_groups;
     for (int i = 0; i < n; i++) {
       leaf_groups[tree_results[t].leaf_ids[i]].push_back(i);
@@ -384,19 +390,30 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       const std::vector<int>& group = kv.second;
       int g = (int)group.size();
       if (g == 0) continue;
-      double wt = 1.0 / g;
-      // Diagonal: self-weight from leaf membership (needed by prepare_weight_matrix)
+
+      // Bootstrap leaf size = sum of n_{k,b} for all samples in this leaf
+      double boot_leaf_size = 0.0;
       for (int a = 0; a < g; a++) {
-        fw_local[group[a] * n + group[a]] += wt;
+        boot_leaf_size += inbag_freq[group[a]];
       }
-      // Off-diagonal
+      // If leaf is entirely OOB (rare), fall back to uniform
+      if (boot_leaf_size < 1.0) boot_leaf_size = (double)g;
+
       for (int a = 0; a < g; a++) {
+        int ia = group[a];
+        double wt_a = (double)inbag_freq[ia] / boot_leaf_size;
+        // Diagonal
+        fw_local[ia * n + ia] += wt_a;
+        // Off-diagonal
         for (int b = a + 1; b < g; b++) {
-          int ia = group[a], ib = group[b];
+          int ib = group[b];
+          double wt_b = (double)inbag_freq[ib] / boot_leaf_size;
           prox_local[ia * n + ib] += 1.0;
           prox_local[ib * n + ia] += 1.0;
-          fw_local[ia * n + ib] += wt;
-          fw_local[ib * n + ia] += wt;
+          // W(ia, ib): weight of ib for predicting at ia
+          fw_local[ia * n + ib] += wt_b;
+          // W(ib, ia): weight of ia for predicting at ib
+          fw_local[ib * n + ia] += wt_a;
         }
       }
     }
@@ -586,7 +603,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   int n = data.nrow();
   int p = data.ncol();
 
-  if (max_depth <= 0) max_depth = 150;
+  // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
   #ifdef _OPENMP
   if (nthread > 0) omp_set_num_threads(nthread);

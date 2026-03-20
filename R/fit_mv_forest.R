@@ -122,9 +122,9 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   X_mat <- as.matrix(X)
   Y_mat <- as.matrix(Y)
 
-  # Defaults: sqrt(px) for mtry, p_a/2 for ytry
+  # Defaults: sqrt(px) for mtry, all qy for ytry
   if (is.null(mtry)) mtry <- max(1L, floor(sqrt(ncol(X_mat))))
-  if (is.null(ytry)) ytry <- max(1L, floor(ncol(Y_mat) / 2))
+  if (is.null(ytry)) ytry <- ncol(Y_mat)
 
   # C++ engine
   res <- fit_mv_forest_cpp(
