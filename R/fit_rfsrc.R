@@ -32,7 +32,9 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
                        ntree = 200, forest.wt = "inbag", proximity = "all",
                        mtry = NULL, ytry = NULL, nsplit = 10,
                        samptype = c("swor", "swr"),
-                       seed = -10, engine = getOption("multiRF.engine", "native"), ...){
+                       seed = -10, engine = getOption("multiRF.engine", "native"),
+                       enhanced_prox = FALSE, sibling_gamma = 0.5,
+                       leaf_embed_dim = 10L, ...){
 
   X <- data.frame(X)
   samptype <- match.arg(samptype)
@@ -61,7 +63,10 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
       nodesize = 5L,
       seed = as.integer(seed),
       proximity = proximity,
-      samptype = samptype
+      samptype = samptype,
+      enhanced_prox = enhanced_prox,
+      sibling_gamma = sibling_gamma,
+      leaf_embed_dim = leaf_embed_dim
     ))
   }
 

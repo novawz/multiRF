@@ -1290,6 +1290,53 @@ static int predict_leaf(const std::vector<Node>& tree,
   return node_idx;
 }
 
+// ──────────────── Spearman correlation helper ────────────────
+
+// Spearman correlation between two vectors of length d.
+// For small d (≈10) this is trivially fast.
+static double spearman_corr(const double* a, const double* b, int d) {
+  if (d < 2) return 0.0;
+
+  // Rank vectors using simple insertion-sort index (d is tiny)
+  std::vector<int> ord_a(d), ord_b(d);
+  std::iota(ord_a.begin(), ord_a.end(), 0);
+  std::iota(ord_b.begin(), ord_b.end(), 0);
+  std::sort(ord_a.begin(), ord_a.end(), [&](int i, int j){ return a[i] < a[j]; });
+  std::sort(ord_b.begin(), ord_b.end(), [&](int i, int j){ return b[i] < b[j]; });
+
+  // Assign ranks (average rank for ties)
+  auto assign_ranks = [&](const double* v, const std::vector<int>& ord, std::vector<double>& ranks) {
+    ranks.resize(d);
+    int i = 0;
+    while (i < d) {
+      int j = i + 1;
+      while (j < d && v[ord[j]] == v[ord[i]]) j++;
+      double avg_rank = 0.5 * (i + j - 1);  // 0-based average
+      for (int k = i; k < j; k++) ranks[ord[k]] = avg_rank;
+      i = j;
+    }
+  };
+
+  std::vector<double> ra, rb;
+  assign_ranks(a, ord_a, ra);
+  assign_ranks(b, ord_b, rb);
+
+  // Pearson on ranks
+  double mean_a = 0, mean_b = 0;
+  for (int i = 0; i < d; i++) { mean_a += ra[i]; mean_b += rb[i]; }
+  mean_a /= d; mean_b /= d;
+
+  double cov = 0, va = 0, vb = 0;
+  for (int i = 0; i < d; i++) {
+    double da = ra[i] - mean_a, db = rb[i] - mean_b;
+    cov += da * db;
+    va += da * da;
+    vb += db * db;
+  }
+  double denom = std::sqrt(va * vb);
+  return (denom > 1e-12) ? cov / denom : 0.0;
+}
+
 // ──────────────── Forest + matrix accumulation ────────────────
 
 // [[Rcpp::export]]
@@ -1303,7 +1350,11 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
                        int seed = -1,
                        int nthread = 0,
                        int samptype = 0,
-                       int prox_mode = 0) {  // 0 = all, 1 = inbag, 2 = oob
+                       int prox_mode = 0,
+                       Nullable<NumericMatrix> embed = R_NilValue,
+                       double sibling_gamma = 0.5,
+                       int enhanced_prox_mode = 0) {
+  // enhanced_prox_mode: 0 = off, 1 = compute enhanced proximity
 
   int n = X.nrow();
   int px = X.ncol();
@@ -1348,6 +1399,19 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     chain_seed_b[t] = -(int)seed_lc;
   }
 
+  // ──── Enhanced proximity setup ────
+  bool compute_enhanced = (enhanced_prox_mode > 0) && embed.isNotNull();
+  int embed_dim = 0;
+  std::vector<double> embed_buf;
+  if (compute_enhanced) {
+    NumericMatrix embed_mat(embed.get());
+    embed_dim = embed_mat.ncol();
+    embed_buf.resize(n * embed_dim);
+    for (int i = 0; i < n; i++)
+      for (int j = 0; j < embed_dim; j++)
+        embed_buf[i + j * n] = embed_mat(i, j);
+  }
+
   // Output: plain C++ buffers for thread-safe accumulation
   // prox_mode: -1 = skip proximity entirely, 0 = all, 1 = inbag, 2 = oob
   bool compute_prox = (prox_mode >= 0);
@@ -1355,6 +1419,7 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   std::vector<double> fw_denom_buf(n, 0.0);
   std::vector<double> prox_buf(compute_prox ? n * n : 0, 0.0);
   std::vector<double> prox_denom_buf(prox_mode > 0 ? n * n : 0, 0.0);
+  std::vector<double> eprox_buf(compute_enhanced ? n * n : 0, 0.0);
 
   // Per-tree results: tree structure + leaf membership + bootstrap frequency
   struct TreeResult {
@@ -1376,6 +1441,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     std::vector<double> fw_denom_local(n, 0.0);
     std::vector<double> prox_local(compute_prox ? n * n : 0, 0.0);
     std::vector<double> prox_denom_local(prox_mode > 0 ? n * n : 0, 0.0);
+    std::vector<double> eprox_local(compute_enhanced ? n * n : 0, 0.0);
+    // Scratch buffers for enhanced proximity centroid computation
+    std::vector<double> centroid_scratch(compute_enhanced ? 2 * embed_dim : 0, 0.0);
     #ifdef _OPENMP
     #pragma omp for schedule(dynamic)
     #endif
@@ -1532,6 +1600,77 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
         }
       }
     }
+
+    // ──── Enhanced proximity accumulation ────
+    // For each sibling-leaf pair (two leaves sharing the same parent),
+    // compute Spearman correlation of leaf centroids in embedding space.
+    // Same-leaf pairs get weight 1; sibling-leaf pairs get gamma * max(corr, 0).
+    if (compute_enhanced) {
+      const auto& nodes = tree_results[t].nodes;
+      const auto& lids = tree_results[t].leaf_ids;
+
+      // 1. Same-leaf contribution (weight = 1)
+      for (auto& kv : leaf_groups) {
+        const std::vector<int>& group = kv.second;
+        int g = (int)group.size();
+        for (int a = 0; a < g; a++) {
+          int ia = group[a];
+          eprox_local[ia * n + ia] += 1.0;
+          for (int b = a + 1; b < g; b++) {
+            int ib = group[b];
+            eprox_local[ia * n + ib] += 1.0;
+            eprox_local[ib * n + ia] += 1.0;
+          }
+        }
+      }
+
+      // 2. Sibling-leaf contribution
+      //    Find internal nodes whose left AND right children are both leaves.
+      for (const auto& nd : nodes) {
+        if (nd.split_var < 0) continue;  // leaf node, skip
+        int li = nd.left, ri = nd.right;
+        if (li < 0 || ri < 0) continue;
+        if (nodes[li].split_var >= 0 || nodes[ri].split_var >= 0) continue;
+        // Both children are leaves — this is a sibling pair.
+
+        // Find samples in each sibling leaf via leaf_groups
+        auto it_l = leaf_groups.find(li);
+        auto it_r = leaf_groups.find(ri);
+        if (it_l == leaf_groups.end() || it_r == leaf_groups.end()) continue;
+        const std::vector<int>& grp_l = it_l->second;
+        const std::vector<int>& grp_r = it_r->second;
+        if (grp_l.empty() || grp_r.empty()) continue;
+
+        // Compute centroids in embedding space
+        double* cent_l = centroid_scratch.data();
+        double* cent_r = centroid_scratch.data() + embed_dim;
+        std::fill(cent_l, cent_l + embed_dim, 0.0);
+        std::fill(cent_r, cent_r + embed_dim, 0.0);
+        for (int si : grp_l)
+          for (int d = 0; d < embed_dim; d++)
+            cent_l[d] += embed_buf[si + d * n];
+        for (int si : grp_r)
+          for (int d = 0; d < embed_dim; d++)
+            cent_r[d] += embed_buf[si + d * n];
+        double inv_l = 1.0 / grp_l.size();
+        double inv_r = 1.0 / grp_r.size();
+        for (int d = 0; d < embed_dim; d++) { cent_l[d] *= inv_l; cent_r[d] *= inv_r; }
+
+        // Spearman correlation of centroids
+        double corr = spearman_corr(cent_l, cent_r, embed_dim);
+        double w = sibling_gamma * std::max(corr, 0.0);
+        if (w <= 0.0) continue;
+        if (w > 1.0) w = 1.0;
+
+        // Add sibling proximity
+        for (int a : grp_l) {
+          for (int b : grp_r) {
+            eprox_local[a * n + b] += w;
+            eprox_local[b * n + a] += w;
+          }
+        }
+      }
+    }
   }
     #ifdef _OPENMP
     #pragma omp critical
@@ -1551,6 +1690,11 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       if (compute_prox) {
         for (std::size_t idx = 0; idx < prox_buf.size(); ++idx) {
           prox_buf[idx] += prox_local[idx];
+        }
+      }
+      if (compute_enhanced) {
+        for (std::size_t idx = 0; idx < eprox_buf.size(); ++idx) {
+          eprox_buf[idx] += eprox_local[idx];
         }
       }
     }
@@ -1575,6 +1719,16 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
         } else {
           prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
         }
+      }
+    }
+  }
+
+  // ──── Enhanced proximity normalization ────
+  NumericMatrix enhanced_prox(compute_enhanced ? n : 0, compute_enhanced ? n : 0);
+  if (compute_enhanced) {
+    for (int i = 0; i < n; i++) {
+      for (int j = 0; j < n; j++) {
+        enhanced_prox(i, j) = eprox_buf[i * n + j] / ntree;
       }
     }
   }
@@ -1706,6 +1860,7 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   return List::create(
     Named("forest.wt") = forest_wt,
     Named("proximity") = prox,
+    Named("enhanced_prox") = enhanced_prox,
     Named("membership") = membership,
     Named("inbag") = inbag_mat,
     Named("imd_x") = imd_x,

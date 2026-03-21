@@ -154,7 +154,10 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
                            proximity = c("all", "inbag", "oob", "none"),
                            nodesize = 5L, max_depth = 0L, seed = -1L,
                            samptype = c("swor", "swr"),
-                           nthread = getOption("multiRF.nthread", 0L)) {
+                           nthread = getOption("multiRF.nthread", 0L),
+                           enhanced_prox = FALSE,
+                           sibling_gamma = 0.5,
+                           leaf_embed_dim = 10L) {
 
   X <- as.data.frame(X, check.names = FALSE)
   Y <- as.data.frame(Y, check.names = FALSE)
@@ -178,6 +181,20 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   samptype <- match.arg(samptype)
   samptype_int <- if (samptype == "swr") 1L else 0L
 
+  # Build embedding for enhanced proximity (PCA on combined X+Y, computed once)
+  embed_mat <- NULL
+  if (isTRUE(enhanced_prox)) {
+    embed_k <- max(1L, min(as.integer(leaf_embed_dim),
+                            ncol(X_mat) + ncol(Y_mat) - 1L,
+                            nrow(X_mat) - 1L))
+    embed_mat <- tryCatch({
+      pc <- stats::prcomp(cbind(X_mat, Y_mat), center = TRUE, scale. = TRUE, rank. = embed_k)
+      pc$x[, seq_len(min(embed_k, ncol(pc$x))), drop = FALSE]
+    }, error = function(e) {
+      scale(cbind(X_mat, Y_mat))[, seq_len(embed_k), drop = FALSE]
+    })
+  }
+
   # C++ engine
   res <- fit_mv_forest_cpp(
     X = X_mat,
@@ -191,7 +208,10 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
     nthread = as.integer(nthread),
     seed = as.integer(seed),
     samptype = samptype_int,
-    prox_mode = as.integer(prox_mode)
+    prox_mode = as.integer(prox_mode),
+    embed = embed_mat,
+    sibling_gamma = as.double(sibling_gamma),
+    enhanced_prox_mode = if (isTRUE(enhanced_prox)) 1L else 0L
   )
 
   # Set row/col names
@@ -199,6 +219,9 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   if (is.null(sample_names)) sample_names <- paste0("S", seq_len(nrow(X)))
   rownames(res$forest.wt) <- colnames(res$forest.wt) <- sample_names
   rownames(res$proximity)  <- colnames(res$proximity)  <- sample_names
+  if (isTRUE(enhanced_prox) && !is.null(res$enhanced_prox) && nrow(res$enhanced_prox) == nrow(X)) {
+    rownames(res$enhanced_prox) <- colnames(res$enhanced_prox) <- sample_names
+  }
   rownames(res$membership) <- sample_names
 
   # Remap membership from 0-indexed C++ node indices to sequential
@@ -261,9 +284,14 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   rownames(pairwise_xy) <- colnames(X)
   colnames(pairwise_xy) <- colnames(Y)
 
+  # Enhanced proximity (NULL when not requested — zero overhead)
+  eprox_out <- if (isTRUE(enhanced_prox) && !is.null(res$enhanced_prox) &&
+                    nrow(res$enhanced_prox) == nrow(X)) res$enhanced_prox else NULL
+
   out <- list(
     forest.wt  = res$forest.wt,
     proximity  = res$proximity,
+    enhanced_prox = eprox_out,
     membership = mem,
     inbag      = inbag_out,
     imd_weights = imd_weights,
