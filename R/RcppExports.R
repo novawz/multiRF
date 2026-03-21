@@ -13,8 +13,8 @@ fit_mv_forest_cpp <- function(X, Y, ntree = 500L, mtry = 0L, ytry = 0L, nsplit =
     .Call(`_multiRF_fit_mv_forest_cpp`, X, Y, ntree, mtry, ytry, nsplit, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode)
 }
 
-fit_mv_forest_unsup_cpp <- function(data, ntree = 500L, ytry = 10L, nodesize_min = 5L, max_depth = 0L, seed = -1L, nthread = 0L, samptype = 0L, prox_mode = 0L) {
-    .Call(`_multiRF_fit_mv_forest_unsup_cpp`, data, ntree, ytry, nodesize_min, max_depth, seed, nthread, samptype, prox_mode)
+fit_mv_forest_unsup_cpp <- function(data, ntree = 500L, ytry = 10L, nodesize_min = 5L, max_depth = 0L, seed = -1L, nthread = 0L, samptype = 0L, prox_mode = 0L, embed = NULL, sibling_gamma = 0.5, enhanced_prox_mode = 0L) {
+    .Call(`_multiRF_fit_mv_forest_unsup_cpp`, data, ntree, ytry, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode)
 }
 
 tsne_cost_gradient_cpp <- function(Y, P) {

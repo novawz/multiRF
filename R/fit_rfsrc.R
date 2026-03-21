@@ -139,7 +139,10 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
         nodesize = 3L,
         seed = as.integer(seed),
         proximity = proximity,
-        samptype = samptype
+        samptype = samptype,
+        enhanced_prox = enhanced_prox,
+        sibling_gamma = sibling_gamma,
+        leaf_embed_dim = leaf_embed_dim
       ))
     }
 

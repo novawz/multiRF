@@ -73,7 +73,10 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
                                  proximity = c("all", "inbag", "oob", "none"),
                                  nodesize = 3L, max_depth = 0L, seed = -1L,
                                  samptype = c("swor", "swr"),
-                                 nthread = getOption("multiRF.nthread", 0L)) {
+                                 nthread = getOption("multiRF.nthread", 0L),
+                                 enhanced_prox = FALSE,
+                                 sibling_gamma = 0.5,
+                                 leaf_embed_dim = 10L) {
 
   X <- as.data.frame(X, check.names = FALSE)
   n <- nrow(X)
@@ -90,6 +93,20 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
   samptype <- match.arg(samptype)
   samptype_int <- if (samptype == "swr") 1L else 0L
 
+  # Build embedding for enhanced proximity (PCA on X, computed once)
+  embed_mat <- NULL
+  if (isTRUE(enhanced_prox)) {
+    embed_k <- max(1L, min(as.integer(leaf_embed_dim),
+                            ncol(X_mat) - 1L,
+                            nrow(X_mat) - 1L))
+    embed_mat <- tryCatch({
+      pc <- stats::prcomp(X_mat, center = TRUE, scale. = TRUE, rank. = embed_k)
+      pc$x[, seq_len(min(embed_k, ncol(pc$x))), drop = FALSE]
+    }, error = function(e) {
+      scale(X_mat)[, seq_len(embed_k), drop = FALSE]
+    })
+  }
+
   # All-C++ unsupervised forest (random column splits done in C++)
   res <- fit_mv_forest_unsup_cpp(
     data = X_mat,
@@ -100,13 +117,19 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
     seed = as.integer(seed),
     nthread = as.integer(nthread),
     samptype = samptype_int,
-    prox_mode = as.integer(prox_mode)
+    prox_mode = as.integer(prox_mode),
+    embed = embed_mat,
+    sibling_gamma = as.double(sibling_gamma),
+    enhanced_prox_mode = if (isTRUE(enhanced_prox)) 1L else 0L
   )
 
   sample_names <- rownames(X)
   if (is.null(sample_names)) sample_names <- paste0("S", seq_len(n))
   rownames(res$forest.wt) <- colnames(res$forest.wt) <- sample_names
   rownames(res$proximity) <- colnames(res$proximity) <- sample_names
+  if (isTRUE(enhanced_prox) && !is.null(res$enhanced_prox) && nrow(res$enhanced_prox) == n) {
+    rownames(res$enhanced_prox) <- colnames(res$enhanced_prox) <- sample_names
+  }
   rownames(res$membership) <- sample_names
 
   # Remap membership: 0-indexed node index -> sequential leaf ID (DFS order)
@@ -132,9 +155,13 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
     mem[, t] <- leaf_map[mem[, t] + 1L]
   }
 
+  eprox_out <- if (isTRUE(enhanced_prox) && !is.null(res$enhanced_prox) &&
+                    nrow(res$enhanced_prox) == n) res$enhanced_prox else NULL
+
   out <- list(
     forest.wt  = res$forest.wt,
     proximity  = res$proximity,
+    enhanced_prox = eprox_out,
     membership = mem,
     xvar       = X,
     yvar       = X,

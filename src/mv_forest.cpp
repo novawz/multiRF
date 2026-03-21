@@ -1892,7 +1892,11 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
                               int seed = -1,
                               int nthread = 0,
                               int samptype = 0,
-                              int prox_mode = 0) {  // 0 = all, 1 = inbag, 2 = oob
+                              int prox_mode = 0,
+                              Nullable<NumericMatrix> embed = R_NilValue,
+                              double sibling_gamma = 0.5,
+                              int enhanced_prox_mode = 0) {
+  // enhanced_prox_mode: 0 = off, 1 = compute enhanced proximity
 
   int n = data.nrow();
   int p = data.ncol();
@@ -1905,11 +1909,25 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
   unsigned int actual_seed = (seed < 0) ? std::random_device{}() : (unsigned int)seed;
 
+  // ──── Enhanced proximity setup ────
+  bool compute_enhanced = (enhanced_prox_mode > 0) && embed.isNotNull();
+  int embed_dim = 0;
+  std::vector<double> embed_buf;
+  if (compute_enhanced) {
+    NumericMatrix embed_mat(embed.get());
+    embed_dim = embed_mat.ncol();
+    embed_buf.resize(n * embed_dim);
+    for (int i = 0; i < n; i++)
+      for (int j = 0; j < embed_dim; j++)
+        embed_buf[i + j * n] = embed_mat(i, j);
+  }
+
   bool compute_prox = (prox_mode >= 0);
   std::vector<double> fw_buf(n * n, 0.0);
   std::vector<double> fw_denom_buf(n, 0.0);
   std::vector<double> prox_buf(compute_prox ? n * n : 0, 0.0);
   std::vector<double> prox_denom_buf(prox_mode > 0 ? n * n : 0, 0.0);
+  std::vector<double> eprox_buf(compute_enhanced ? n * n : 0, 0.0);
 
   struct UnsupTreeResult {
     std::vector<Node> nodes;
@@ -1940,6 +1958,8 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     std::vector<double> fw_denom_local(n, 0.0);
     std::vector<double> prox_local(compute_prox ? n * n : 0, 0.0);
     std::vector<double> prox_denom_local(prox_mode > 0 ? n * n : 0, 0.0);
+    std::vector<double> eprox_local(compute_enhanced ? n * n : 0, 0.0);
+    std::vector<double> centroid_scratch(compute_enhanced ? 2 * embed_dim : 0, 0.0);
     #ifdef _OPENMP
     #pragma omp for schedule(dynamic)
     #endif
@@ -2084,6 +2104,60 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       }
     }
 
+    // ──── Enhanced proximity accumulation (unsupervised) ────
+    if (compute_enhanced) {
+      // 1. Same-leaf contribution (weight = 1)
+      for (auto& kv : leaf_groups) {
+        const std::vector<int>& group = kv.second;
+        int g = (int)group.size();
+        for (int a = 0; a < g; a++) {
+          int ia = group[a];
+          eprox_local[ia * n + ia] += 1.0;
+          for (int b = a + 1; b < g; b++) {
+            int ib = group[b];
+            eprox_local[ia * n + ib] += 1.0;
+            eprox_local[ib * n + ia] += 1.0;
+          }
+        }
+      }
+      // 2. Sibling-leaf contribution
+      for (const auto& nd : tree) {
+        if (nd.split_var < 0) continue;
+        int li = nd.left, ri = nd.right;
+        if (li < 0 || ri < 0) continue;
+        if (tree[li].split_var >= 0 || tree[ri].split_var >= 0) continue;
+        auto it_l = leaf_groups.find(li);
+        auto it_r = leaf_groups.find(ri);
+        if (it_l == leaf_groups.end() || it_r == leaf_groups.end()) continue;
+        const std::vector<int>& grp_l = it_l->second;
+        const std::vector<int>& grp_r = it_r->second;
+        if (grp_l.empty() || grp_r.empty()) continue;
+        double* cent_l = centroid_scratch.data();
+        double* cent_r = centroid_scratch.data() + embed_dim;
+        std::fill(cent_l, cent_l + embed_dim, 0.0);
+        std::fill(cent_r, cent_r + embed_dim, 0.0);
+        for (int si : grp_l)
+          for (int d = 0; d < embed_dim; d++)
+            cent_l[d] += embed_buf[si + d * n];
+        for (int si : grp_r)
+          for (int d = 0; d < embed_dim; d++)
+            cent_r[d] += embed_buf[si + d * n];
+        double inv_l = 1.0 / grp_l.size();
+        double inv_r = 1.0 / grp_r.size();
+        for (int d = 0; d < embed_dim; d++) { cent_l[d] *= inv_l; cent_r[d] *= inv_r; }
+        double corr = spearman_corr(cent_l, cent_r, embed_dim);
+        double w = sibling_gamma * std::max(corr, 0.0);
+        if (w <= 0.0) continue;
+        if (w > 1.0) w = 1.0;
+        for (int a : grp_l) {
+          for (int b : grp_r) {
+            eprox_local[a * n + b] += w;
+            eprox_local[b * n + a] += w;
+          }
+        }
+      }
+    }
+
     tree_results[t].nodes = std::move(tree);
     tree_results[t].leaf_ids = std::move(leaf_ids);
   }
@@ -2107,7 +2181,20 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
           prox_buf[idx] += prox_local[idx];
         }
       }
+      if (compute_enhanced) {
+        for (std::size_t idx = 0; idx < eprox_buf.size(); ++idx) {
+          eprox_buf[idx] += eprox_local[idx];
+        }
+      }
     }
+  }
+
+  // ──── Enhanced proximity normalization (unsupervised) ────
+  NumericMatrix enhanced_prox(compute_enhanced ? n : 0, compute_enhanced ? n : 0);
+  if (compute_enhanced) {
+    for (int i = 0; i < n; i++)
+      for (int j = 0; j < n; j++)
+        enhanced_prox(i, j) = eprox_buf[i * n + j] / ntree;
   }
 
   // Copy to R matrices + normalize
@@ -2170,6 +2257,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   return List::create(
     Named("forest.wt") = forest_wt,
     Named("proximity") = prox,
+    Named("enhanced_prox") = enhanced_prox,
     Named("membership") = membership,
     Named("ntree") = ntree,
     Named("n") = n,
