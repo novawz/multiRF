@@ -200,6 +200,21 @@ mrf3_fit <- function(dat.list,
   # Skip proximity computation when clustering doesn't need it
   prox_arg <- if (main_clustering == "similarity") "none" else "all"
 
+  # When enhanced_proximity is requested and the native engine is active,
+  # compute enhanced proximity inside C++ during tree building.
+  # This avoids the slow R-level cl_forest() foreach loop.
+  if (identical(main_clustering, "enhanced_proximity") &&
+      identical(getOption("multiRF.engine", "native"), "native")) {
+    if (is.null(dots$enhanced_prox)) dots$enhanced_prox <- TRUE
+    # Forward sibling_gamma from clustering_args if set there
+    if (is.null(dots$sibling_gamma) && !is.null(clustering_args$sibling_gamma)) {
+      dots$sibling_gamma <- clustering_args$sibling_gamma
+    }
+    if (is.null(dots$leaf_embed_dim) && !is.null(clustering_args$leaf_embed_dim)) {
+      dots$leaf_embed_dim <- clustering_args$leaf_embed_dim
+    }
+  }
+
   init_args <- c(
     list(
       dat.list = dat.list,
