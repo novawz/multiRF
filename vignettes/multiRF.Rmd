@@ -1,0 +1,256 @@
+---
+title: "Getting Started with multiRF"
+author: "Wei Zhang"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with multiRF}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4.5,
+  fig.align = "center",
+  eval = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+library(multiRF)
+data("tcga_brca_data")
+```
+
+## Overview
+
+`multiRF` provides a workflow for integrating matched multi-omics datasets with
+random forests, MRF-style weighting, clustering, and downstream summaries.
+
+The typical workflow is:
+
+1. Prepare a named list of omics matrices with matched samples.
+2. Run `mrf3()` to fit the integration model and produce cluster labels.
+3. Inspect weights, selected variables, and cluster assignments.
+4. Use plotting helpers for survival and embedding diagnostics.
+
+## Method Maps
+
+### Clustering choices
+
+| Setting | Scope | Typical use |
+|---------|-------|-------------|
+| `similarity` | Global `main_clustering` | Default fused-similarity workflow; best starting point. |
+| `proximity` | Global `main_clustering` | Use when RF proximity is the main object of interest. |
+| `enhanced_proximity` | Global `main_clustering` | Aggressive proximity-based branch. |
+| `PAM` | Shared or specific branch | Medoid-based clustering. |
+| `Spectral` | Shared or specific branch | Similarity geometry-based clustering. |
+
+### Variable-selection choices
+
+| Method | Signal model | Typical use |
+|--------|-------------|-------------|
+| `filter` | Heuristic threshold | Good baseline for a practical first pass. |
+| `test` | Significance-style | Hypothesis-testing flavor for weight selection. |
+| `mixture` | Signal/noise mixture | When weights separate into background and enriched components. |
+
+### Plotting choices
+
+| Function | Input focus |
+|----------|------------|
+| `plot_tsne()` | Similarity or reconstruction |
+| `plot_umap()` | Similarity or reconstruction |
+| `plot_embed()` | Matrix-based quick embedding |
+| `plot_network()` | Similarity graph |
+| `plot_weights()` | IMD or cluster-IMD weights |
+| `plot_circos()` | Adjacency-like structure |
+| `plot_km()` | Cluster labels plus clinical |
+
+## Example Data
+
+```{r example-data}
+names(tcga_brca)
+dim(tcga_brca$gene)
+dim(tcga_brca$methy)
+dim(tcga_brca$mirna)
+```
+
+## Basic Clustering Workflow
+
+```{r fit-main, cache=TRUE}
+fit <- mrf3(
+  tcga_brca,
+  k = 4,
+  ntree = 100,
+  filter_mode = "none",
+  run_imd = TRUE,
+  seed = 529
+)
+```
+
+```{r inspect-fit}
+summary(fit)
+table(get_clusters(fit))
+names(get_weights(fit))
+get_top_vars(fit, n = 10)
+```
+
+### Comparing clustering backends
+
+```{r clustering-backends, cache=TRUE}
+fit_proximity <- mrf3(
+  tcga_brca, k = 4,
+  main_clustering = "proximity",
+  ntree = 100, seed = 529
+)
+
+fit_enhanced <- mrf3(
+  tcga_brca, k = 4,
+  main_clustering = "enhanced_proximity",
+  ntree = 100, seed = 529
+)
+```
+
+### Compare against PAM50
+
+```{r pam50-compare}
+common_ids <- intersect(
+  names(get_clusters(fit)),
+  tcga_brca_clinical$sampleID
+)
+pam50 <- tcga_brca_clinical$BRCA_Subtype_PAM50[
+  match(common_ids, tcga_brca_clinical$sampleID)
+]
+
+cluster_metric_matrix(
+  list(
+    similarity         = get_clusters(fit)[common_ids],
+    proximity          = get_clusters(fit_proximity)[common_ids],
+    enhanced_proximity = get_clusters(fit_enhanced)[common_ids],
+    PAM50              = pam50
+  ),
+  metric = "ari"
+)
+```
+
+## Variable Selection
+
+```{r vs-workflow, cache=TRUE}
+fit_vs <- mrf3_fit(
+  dat.list = tcga_brca,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
+  run_imd = TRUE,
+  run_variable_selection = TRUE,
+  variable_selection_args = list(
+    method = "mixture",
+    level = 0.05,
+    normalized = TRUE
+  ),
+  seed = 529
+)
+```
+
+```{r vs-inspect}
+get_selected_vars(fit_vs)
+get_vs_summary(fit_vs)
+```
+
+```{r vs-methods, cache=TRUE}
+vs_test <- mrf3_vs(
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "test", re_fit = FALSE, level = 0.05
+)
+vs_mixture <- mrf3_vs(
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "mixture", re_fit = FALSE, level = 0.05
+)
+
+lapply(
+  list(test = vs_test, mixture = vs_mixture),
+  get_selected_vars
+)
+```
+
+## Robust Clustering
+
+```{r robust-workflow, cache=TRUE}
+fit_robust <- mrf3_fit(
+  dat.list = tcga_brca,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
+  run_imd = TRUE,
+  run_variable_selection = TRUE,
+  run_cluster_imd = FALSE,
+  run_robust_clustering = TRUE,
+  variable_selection_args = list(method = "mixture"),
+  seed = 529
+)
+```
+
+```{r robust-inspect}
+table(get_clusters(fit_robust, which = "robust"))
+summary(fit_robust)
+```
+
+### Pairwise IMD
+
+```{r pairwise-imd}
+pw <- pairwise_imd(fit_robust)
+str(pw, max.level = 1)
+```
+
+```{r plot-feature-network, fig.width=7, fig.height=7}
+plot_network(pw, label = TRUE, vertex.size = 3, vertex.label.cex = 0.4)
+```
+
+## Plotting
+
+```{r plot-tsne, fig.width=6, fig.height=5}
+plot_tsne(
+  mod = fit,
+  group = get_clusters(fit),
+  source = "specific_shared",
+  main = "t-SNE: shared/specific branch"
+)
+```
+
+```{r plot-network, fig.width=6, fig.height=6}
+plot_network(
+  dat = fit,
+  group = get_clusters(fit),
+  source = "specific_shared",
+  cutoff = 0.01
+)
+```
+
+```{r plot-weights, fig.width=10, fig.height=4}
+plot_weights(fit_vs, weight_source = "imd", top = 15)
+```
+
+```{r plot-km, fig.width=8, fig.height=6}
+clinical_ids <- tcga_brca_clinical$sampleID
+clusters <- get_clusters(fit)
+if (is.null(names(clusters))) {
+  names(clusters) <- rownames(tcga_brca[[1]])
+}
+km_ids <- intersect(names(clusters), clinical_ids)
+clinical_sub <- tcga_brca_clinical[match(km_ids, clinical_ids), , drop = FALSE]
+keep <- !is.na(clinical_sub$OS.time) & !is.na(clinical_sub$OS)
+
+plot_km(
+  test_var = factor(clusters[km_ids][keep]),
+  time_var = "OS.time",
+  event_var = "OS",
+  pheno_mat = clinical_sub[keep, , drop = FALSE]
+)
+```
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

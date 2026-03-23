@@ -1,0 +1,62 @@
+Package: multiRF
+Type: Package
+Title: MRF-Based Multi-Omics Integration and Clustering
+Version: 0.2.1
+Author: Wei Zhang
+Maintainer: Wei Zhang <wzhang0739@gmail.com>
+Authors@R: 
+    person("Wei", "Zhang", email = "wzhang0739@gmail.com", role = c("aut", "cre"))
+Description: Integrates matched multi-omics datasets using multivariate
+    random forests with inverse minimal depth (IMD) importance. Provides
+    workflows for model fitting, variable selection, clustering, and
+    visualization.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    circlize,
+    cluster,
+    doParallel,
+    dplyr,
+    foreach,
+    ggrepel,
+    ggplot2,
+    ggpubr,
+    ggsci,
+    graphics,
+    grDevices,
+    igraph,
+    magrittr,
+    Matrix,
+    matrixStats,
+    maxstat,
+    plyr,
+    purrr,
+    RColorBrewer,
+    Rcpp (>= 1.0.0),
+    Rtsne,
+    stats,
+    stringr,
+    survival,
+    survminer,
+    tibble,
+    tidyr,
+    truncnorm,
+    umap,
+    utils
+Depends:
+    R (>= 4.3)
+LazyData: true
+LinkingTo: Rcpp
+Suggests: 
+    InterSIM,
+    janitor,
+    knitr,
+    mclust,
+    pkgload,
+    randomForestSRC,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr, rmarkdown
+Config/testthat/edition: 3

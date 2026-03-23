@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>multiRF: Multi-Omics Integration with Random Forests</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body, {delimiters:[{left:'$$',right:'$$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="site-header-inner">
+      <div class="site-title">multiRF <span>v0.2.0</span></div>
+      <ul class="site-nav">
+        <li><a href="#installation">Install</a></li>
+        <li><a href="#workflow">Workflow</a></li>
+        <li><a href="#plots">Plots</a></li>
+        <li><a href="#api">Reference</a></li>
+        <li><a href="https://github.com/noblegasss/multiRF">GitHub</a></li>
+      </ul>
+    </div>
+  </header>
+
+  <div class="page">
+
+    <div class="title-block">
+      <h1>multiRF: fast multivariate random forests for multi-omics integration</h1>
+      <p class="subtitle">
+        An R package for integrating matched multi-omics datasets through
+        multivariate random forests.
+      </p>
+      <div class="note">
+        Zhang, W. et al. (2025).
+        <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728">
+        An integrative multi-omics random forest framework for robust biomarker discovery</a>.
+        <em>GigaScience</em>, 14, giaf148.
+      </div>
+      <div class="meta-row">
+        <div><strong>Author:</strong> Wei Zhang</div>
+        <div><strong>License:</strong> MIT</div>
+        <div><strong>Requires:</strong> R &ge; 4.3</div>
+        <div><strong>Source:</strong> <a href="https://github.com/noblegasss/multiRF">github.com/noblegasss/multiRF</a></div>
+      </div>
+    </div>
+
+    <div class="layout">
+
+      <aside class="toc">
+        <div class="toc-label">Contents</div>
+        <ul>
+          <li><a href="#introduction">1. Introduction</a></li>
+          <li><a href="#splitting">2. Multivariate splitting</a></li>
+          <li><a href="#installation">3. Installation</a></li>
+          <li><a href="#data">4. Toy data</a></li>
+          <li><a href="#workflow">5. Clustering</a></li>
+          <li><a href="#vs">6. Variable selection</a></li>
+          <li><a href="#robust">7. Robust clustering</a></li>
+          <li><a href="#plots">8. Plots</a></li>
+          <li><a href="#api">9. API reference</a></li>
+          <li><a href="#references">10. References</a></li>
+        </ul>
+      </aside>
+
+      <main class="content">
+
+        <!-- 1. Introduction -->
+        <section class="section" id="introduction">
+          <h2>1. Introduction</h2>
+
+          <p>High-throughput molecular profiling now routinely produces
+          matched measurements across genomics, epigenomics,
+          transcriptomics, and proteomics for the same set of samples.
+          Jointly analyzing these data layers can reveal biological
+          structure that no single omics platform captures alone, but
+          doing so requires methods that handle heterogeneous feature
+          spaces, mixed signal-to-noise ratios, and block-wise
+          correlation without strong distributional assumptions.</p>
+
+          <p><code>multiRF</code> addresses this through multivariate
+          random forests. Each tree splits on predictors from one omics
+          block while optimizing a composite criterion over responses
+          from another, yielding forest-weight and proximity matrices
+          that encode cross-platform sample similarity. Rather than
+          relying on a predefined distance metric, the forest learns
+          a sample-by-sample similarity structure directly from the
+          data: two samples are similar when trees consistently route
+          them to the same terminal node. The package then decomposes
+          this learned similarity into shared (cross-omics) and
+          specific (within-omics) components and clusters samples in
+          each space separately, producing both a global integrative
+          clustering and per-platform subtype assignments. An enhanced
+          proximity mode further refines these similarities by
+          incorporating sibling-leaf relationships (pairs of
+          leaves that share the same parent split), weighted by
+          the correlation of their sample profiles. Variable
+          importance is quantified via inverse minimal depth (IMD),
+          which measures how early each feature enters the tree
+          ensemble and how much it contributes to the multivariate
+          split criterion.</p>
+
+          <p>The computational backend is a purpose-built C++ engine
+          (via Rcpp) that constructs multivariate regression and
+          unsupervised forests with OpenMP thread-level parallelism.
+          Forest weights, proximity matrices, and optionally enhanced
+          proximity with sibling-leaf corrections are all computed
+          during tree construction in a single pass, avoiding the
+          overhead of post-hoc R-level tree traversal. On typical
+          multi-omics datasets (500-1000 samples, 3 platforms,
+          300 trees), the native engine runs 20-30% faster than
+          an equivalent <code>randomForestSRC</code> pipeline while
+          producing statistically equivalent output.</p>
+        </section>
+
+        <!-- 2. Multivariate splitting -->
+        <section class="section" id="splitting">
+          <h2>2. Multivariate splitting</h2>
+
+          <p>To model each cross-modal connection, <code>multiRF</code>
+          fits a multivariate random forest with one omics block as
+          the predictor matrix and another as the multivariate
+          response. Unlike a univariate regression forest, each tree
+          is grown by a composite splitting rule that considers
+          multiple response dimensions jointly. The splitting rule
+          implemented here is a variation of the multivariate random
+          forest framework of
+          Li and Xiao (2011) and the normalized composite
+          criterion in <code>randomForestSRC</code>
+          (Tang and Ishwaran, 2017;
+          <a href="https://www.randomforestsrc.org/articles/mvsplit.html">rfsrc
+          mvsplit vignette</a>), re-implemented in C++ for speed.</p>
+
+          <p>At each candidate split in node \(t\), a random subset
+          \(\mathcal{J} \subset \{1,\dots,p_a\}\) of
+          \(q_{\mathrm{try}}\) response columns is drawn (analogous
+          to the predictor-side <code>mtry</code> but applied to
+          responses), and the selected responses are standardised to
+          unit within-node variance. The split score is</p>
+
+          $$ G_q(s,t) = \sum_{j \in \mathcal{J}} G_j(s,t), \qquad
+          G_j(s,t) = \frac{1}{\hat\sigma_j^2}\biggl[
+            \frac{1}{n_{t_L}}
+            \Bigl(\sum_{i \in t_L} Y_{ij}^{*}\Bigr)^{\!2}
+          + \frac{1}{n_{t_R}}
+            \Bigl(\sum_{i \in t_R} Y_{ij}^{*}\Bigr)^{\!2}\biggr] $$
+
+          <p>where \(Y_{ij}^{*}\) is the centred value of response
+          variable \(j\) for sample \(i\),
+          \(\hat\sigma_j^2\) is the within-node variance of
+          column \(j\), and \(t_L, t_R\) denote the left and right
+          daughter nodes with sizes \(n_{t_L}, n_{t_R}\).
+          Normalizing each \(G_j\) by its own variance ensures all
+          response columns contribute on a comparable scale regardless
+          of their marginal dispersion. The partition that maximizes
+          \(G_q\) is selected.</p>
+
+          <p>The default
+          \(q_{\mathrm{try}} = \lceil p_a / 3 \rceil\) balances
+          information content per split against response-level
+          diversity across nodes: each split focuses on a random
+          subspace of \(p_a\), so different splits within the same
+          tree,and different trees within the
+          forest,learn complementary aspects of the joint
+          response structure. When \(p_a \gg n\), restricting the
+          split evaluation to \(q_{\mathrm{try}} \ll p_a\) random
+          response columns regularises the criterion, reducing its
+          effective variance while preserving the multivariate
+          character of the tree.</p>
+
+          <p>At every node, <code>mtry</code> predictor columns and
+          <code>ytry</code> response columns are sampled independently.
+          When <code>nsplit &gt; 0</code> (default 10), candidate
+          cutpoints are drawn at random from the set of distinct
+          predictor values; setting <code>nsplit = 0</code>
+          evaluates all distinct cutpoints (deterministic splitting).
+          Nodesize is enforced at the parent level: a node is eligible
+          for splitting only when it contains at least
+          \(2 \times \texttt{nodesize}\) samples, and individual
+          cutpoints require only that both children are non-empty.
+          The entire split search, tree construction, and matrix
+          accumulation are implemented in C++ with OpenMP parallelism,
+          avoiding the overhead of R-level tree traversal that would
+          otherwise dominate runtime for forests with hundreds of
+          trees.</p>
+        </section>
+
+        <!-- 3. Installation -->
+        <section class="section" id="installation">
+          <h2>3. Installation</h2>
+          <div class="install-cmd"><span class="prompt">&gt; </span>remotes::install_github("noblegasss/multiRF")</div>
+          <p>The native C++ engine compiles from source during installation and
+          requires a C++17 compiler (<code>Rtools</code> on Windows,
+          <code>Xcode</code> CLI on macOS, <code>g++</code> or
+          <code>clang++</code> on Linux). OpenMP support is optional but
+          recommended for parallel tree construction.
+          <code>randomForestSRC</code> is not required; the package uses its own
+          forest implementation by default.</p>
+        </section>
+
+        <!-- 2. Toy Data -->
+        <section class="section" id="data">
+          <h2>4. Toy data</h2>
+          <p>A subsampled TCGA BRCA dataset is bundled for demonstration. It
+          contains three matched omics blocks (gene expression, methylation,
+          miRNA) and clinical annotations including PAM50 subtypes.</p>
+<pre><code>library(multiRF)
+data("tcga_brca_data")
+
+names(tcga_brca)
+dim(tcga_brca$gene)
+dim(tcga_brca$methy)
+dim(tcga_brca$mirna)</code></pre>
+<pre class="r-output">#&gt; [1] "gene"  "methy" "mirna"
+#&gt; [1] 674 200
+#&gt; [1] 674 200
+#&gt; [1] 674 100</pre>
+        </section>
+
+        <!-- 3. Clustering -->
+        <section class="section" id="workflow">
+          <h2>5. Clustering workflow</h2>
+
+<pre><code>fit &lt;- mrf3(
+  tcga_brca,
+  k = 4,
+  ntree = 100,
+  filter_mode = "none",
+  run_imd = TRUE,
+  seed = 529
+)
+
+summary(fit)
+table(get_clusters(fit))
+get_top_vars(fit, n = 10)</code></pre>
+
+          <h3>Comparing backends</h3>
+<pre><code>fit_proximity &lt;- mrf3(
+  tcga_brca, k = 4,
+  main_clustering = "proximity",
+  ntree = 100, seed = 529
+)
+
+fit_enhanced &lt;- mrf3(
+  tcga_brca, k = 4,
+  main_clustering = "enhanced_proximity",
+  ntree = 100, seed = 529
+)</code></pre>
+
+          <h3>Compare against PAM50</h3>
+<pre><code>common_ids &lt;- intersect(
+  names(get_clusters(fit)),
+  tcga_brca_clinical$sampleID
+)
+pam50 &lt;- tcga_brca_clinical$BRCA_Subtype_PAM50[
+  match(common_ids, tcga_brca_clinical$sampleID)
+]
+
+cluster_metric_matrix(
+  list(
+    similarity         = get_clusters(fit)[common_ids],
+    proximity          = get_clusters(fit_proximity)[common_ids],
+    enhanced_proximity = get_clusters(fit_enhanced)[common_ids],
+    PAM50              = pam50
+  ),
+  metric = "ari"
+)</code></pre>
+        </section>
+
+        <!-- 4. Variable Selection -->
+        <section class="section" id="vs">
+          <h2>6. Variable selection</h2>
+
+<pre><code>fit_vs &lt;- mrf3_fit(
+  dat.list = tcga_brca,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
+  run_imd = TRUE,
+  run_variable_selection = TRUE,
+  variable_selection_args = list(
+    method = "mixture",
+    level = 0.05,
+    normalized = TRUE
+  ),
+  seed = 529
+)
+
+get_selected_vars(fit_vs)
+get_vs_summary(fit_vs)</code></pre>
+
+          <h3>Compare methods</h3>
+<pre><code>vs_test &lt;- mrf3_vs(
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "test", re_fit = FALSE, level = 0.05
+)
+vs_mixture &lt;- mrf3_vs(
+  mod = fit_vs, dat.list = tcga_brca,
+  method = "mixture", re_fit = FALSE, level = 0.05
+)
+
+lapply(
+  list(test = vs_test, mixture = vs_mixture),
+  get_selected_vars
+)</code></pre>
+        </section>
+
+        <!-- 5. Robust Clustering -->
+        <section class="section" id="robust">
+          <h2>7. Robust clustering</h2>
+
+<pre><code>fit_robust &lt;- mrf3_fit(
+  dat.list = tcga_brca,
+  clustering_args = list(shared_k = 4, specific_k = 4),
+  ntree = 100,
+  run_imd = TRUE,
+  run_variable_selection = TRUE,
+  run_cluster_imd = FALSE,
+  run_robust_clustering = TRUE,
+  variable_selection_args = list(method = "mixture"),
+  seed = 529
+)
+
+table(get_clusters(fit_robust, which = "robust"))
+summary(fit_robust)</code></pre>
+
+          <h3>Pairwise IMD</h3>
+<pre><code>pw &lt;- pairwise_imd(fit_robust)
+plot_network(pw, label = TRUE, vertex.size = 3, vertex.label.cex = 0.4)</code></pre>
+          <figure class="plot-figure">
+            <img src="assets/img/plot-feature-network-1.png" alt="Feature pairwise IMD network">
+            <figcaption>Feature network from pairwise IMD, colored by omics block.</figcaption>
+          </figure>
+        </section>
+
+        <!-- 6. Plots -->
+        <section class="section" id="plots">
+          <h2>8. Plots</h2>
+
+          <h3>t-SNE</h3>
+<pre><code>plot_tsne(
+  mod = fit,
+  group = get_clusters(fit),
+  source = "specific_shared",
+  main = "t-SNE: shared/specific branch"
+)</code></pre>
+          <figure class="plot-figure">
+            <img src="assets/img/plot-tsne-1.png" alt="t-SNE embedding">
+            <figcaption>t-SNE embedding colored by cluster assignments.</figcaption>
+          </figure>
+
+          <h3>Sample network</h3>
+<pre><code>plot_network(
+  dat = fit,
+  group = get_clusters(fit),
+  source = "specific_shared",
+  cutoff = 0.01
+)</code></pre>
+          <figure class="plot-figure">
+            <img src="assets/img/plot-network-1.png" alt="Sample similarity network">
+            <figcaption>Sample similarity network colored by cluster.</figcaption>
+          </figure>
+
+          <h3>Feature importance</h3>
+<pre><code>plot_weights(fit_vs, weight_source = "imd", top = 15)</code></pre>
+          <figure class="plot-figure">
+            <img src="assets/img/plot-weights-1.png" alt="IMD weights">
+            <figcaption>Top 15 features by IMD weight for each omics block.</figcaption>
+          </figure>
+
+          <h3>Survival</h3>
+<pre><code>clinical_ids &lt;- tcga_brca_clinical$sampleID
+clusters &lt;- get_clusters(fit)
+if (is.null(names(clusters))) {
+  names(clusters) &lt;- rownames(tcga_brca[[1]])
+}
+km_ids &lt;- intersect(names(clusters), clinical_ids)
+clinical_sub &lt;- tcga_brca_clinical[match(km_ids, clinical_ids), , drop = FALSE]
+keep &lt;- !is.na(clinical_sub$OS.time) &amp; !is.na(clinical_sub$OS)
+
+plot_km(
+  test_var = factor(clusters[km_ids][keep]),
+  time_var = "OS.time",
+  event_var = "OS",
+  pheno_mat = clinical_sub[keep, , drop = FALSE]
+)</code></pre>
+          <figure class="plot-figure">
+            <img src="assets/img/plot-km-1.png" alt="Kaplan-Meier curves">
+            <figcaption>Kaplan-Meier survival curves stratified by cluster.</figcaption>
+          </figure>
+        </section>
+
+        <!-- 7. API Reference -->
+        <section class="section" id="api">
+          <h2>9. API reference</h2>
+
+          <h3>Core workflow</h3>
+          <table class="ref-table">
+            <thead><tr><th>Function</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>mrf3()</code></td><td>Compact end-to-end workflow (fit + cluster).</td></tr>
+              <tr><td><code>mrf3_fit()</code></td><td>Staged workflow with full parameter surface.</td></tr>
+              <tr><td><code>mrf3_vs()</code></td><td>Variable selection on existing fit.</td></tr>
+              <tr><td><code>mrf3_stability()</code></td><td>Resampling-based stability assessment.</td></tr>
+              <tr><td><code>pairwise_imd()</code></td><td>Variable-level pairwise co-occurrence network.</td></tr>
+              <tr><td><code>filter_omics()</code></td><td>Pre-fitting feature filtering.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Accessors</h3>
+          <table class="ref-table">
+            <thead><tr><th>Function</th><th>Returns</th></tr></thead>
+            <tbody>
+              <tr><td><code>get_clusters()</code></td><td>Cluster assignments.</td></tr>
+              <tr><td><code>get_weights()</code></td><td>Per-block feature importance weights.</td></tr>
+              <tr><td><code>get_top_vars()</code></td><td>Top-<em>n</em> variables by IMD weight.</td></tr>
+              <tr><td><code>get_selected_vars()</code></td><td>Selected variable names from VS.</td></tr>
+              <tr><td><code>get_vs_summary()</code></td><td>Variable-selection summary table.</td></tr>
+              <tr><td><code>get_connection()</code></td><td>Block pairing structure.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Plotting</h3>
+          <table class="ref-table">
+            <thead><tr><th>Function</th><th>Input</th></tr></thead>
+            <tbody>
+              <tr><td><code>plot_tsne()</code></td><td>Similarity or reconstruction</td></tr>
+              <tr><td><code>plot_umap()</code></td><td>Similarity or reconstruction</td></tr>
+              <tr><td><code>plot_network()</code></td><td>Similarity graph or pairwise IMD</td></tr>
+              <tr><td><code>plot_weights()</code></td><td>IMD weights</td></tr>
+              <tr><td><code>plot_km()</code></td><td>Clusters + clinical</td></tr>
+              <tr><td><code>plot_circos()</code></td><td>Adjacency structure</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Metrics</h3>
+          <table class="ref-table">
+            <thead><tr><th>Function</th><th>Returns</th></tr></thead>
+            <tbody>
+              <tr><td><code>cluster_metrics()</code></td><td>ARI, Jaccard, NMI, purity.</td></tr>
+              <tr><td><code>cluster_metric_matrix()</code></td><td>Pairwise metric matrix.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- References -->
+        <section class="section" id="references">
+          <h2>10. References</h2>
+          <ol>
+            <li>Zhang, W. et al. (2025).
+              An integrative multi-omics random forest framework for
+              robust biomarker discovery.
+              <em>GigaScience</em>, 14, giaf148.
+              <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728">doi:10.1093/gigascience/giaf148</a>
+            </li>
+            <li>Li, M. and Xiao, Y. (2011).
+              Multivariate random forests.
+              <em>Wiley Interdisciplinary Reviews: Data Mining and
+              Knowledge Discovery</em>, 1(1), 80-87.
+            </li>
+            <li>Ishwaran, H. et al. (2008).
+              Random survival forests.
+              <em>Annals of Applied Statistics</em>, 2(3), 841-860.
+            </li>
+            <li>Tang, F. and Ishwaran, H. (2017).
+              Random forest missing data algorithms.
+              <em>Statistical Analysis and Data Mining</em>, 10(6), 363-377.
+            </li>
+            <li>Ishwaran, H. and Kogalur, U.B.
+              <code>randomForestSRC</code>: multivariate splitting rule.
+              <a href="https://www.randomforestsrc.org/articles/mvsplit.html">https://www.randomforestsrc.org/articles/mvsplit.html</a>
+            </li>
+          </ol>
+        </section>
+
+        <footer class="site-footer">
+          <strong>multiRF</strong> ,
+          <a href="https://github.com/noblegasss/multiRF">GitHub</a> &middot;
+          MIT License &middot; Wei Zhang
+        </footer>
+
+      </main>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+*.tar.gz
+*.o
+*.so
+*.dll
+*.a
+*.Rcheck/
+src/symbols.rds
+/doc/
+/Meta/
