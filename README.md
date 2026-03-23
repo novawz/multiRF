@@ -1,74 +1,29 @@
 # multiRF
 
-**Fast multivariate random forests for multi-omics integration**
-
-`multiRF` integrates matched multi-omics datasets by fitting multivariate
-random forests across pairs of data blocks, learning sample-by-sample
-similarity structures directly from the data.  Two samples are considered
-similar when trees consistently route them to the same terminal node,
-yielding forest-weight and proximity matrices that capture cross-platform
-relationships without predefined distance metrics.  These learned
-similarities are decomposed into shared (cross-omics) and specific
-(within-omics) components for downstream clustering, variable selection,
-and visualization.
-
-The computational backend is a native C++ engine (via Rcpp) that builds
-multivariate regression and unsupervised forests with OpenMP thread-level
-parallelism.  Forest weights, proximity matrices, and enhanced proximity
-(with sibling-leaf corrections) are computed during tree construction in a
-single pass.  On typical multi-omics datasets (500-1000 samples, 3
-platforms, 300 trees), the native engine runs 20-30% faster than an
-equivalent `randomForestSRC` pipeline while producing statistically
-equivalent output.
-
-## Multivariate splitting
-
-Standard random forests split each node by minimizing impurity on a single
-response.  `multiRF` uses a composite criterion over a vector-valued
-response (Li and Xiao, 2011).  At each candidate split, the algorithm
-evaluates a normalized between-group sum of squares across a random subset
-of `ytry` response columns:
-
-For a node with *n* samples and a candidate partition into left (*L*) and
-right (*R*) children, define the centered left-child sum for response
-column *j*:
-
-    S_{L,j} = sum_{i in L} (Y_{ij} - Y_bar_j)
-
-The node-level variance is sigma_j^2 = (1/n) sum_i (Y_{ij} - Y_bar_j)^2.
-The standardized split statistic for column *j* is:
-
-    Delta_j = S_{L,j}^2 / (n_L * sigma_j^2)  +  S_{R,j}^2 / (n_R * sigma_j^2)
-
-The composite statistic averages over all informative columns (those with
-nonzero variance):
-
-    Delta = (1 / |J|) * sum_{j in J} Delta_j
-
-The partition maximizing Delta is selected.  Normalizing each column by its
-own variance ensures all responses contribute on a comparable scale.  This
-matches the normalized composite splitting rule in `randomForestSRC`
-(Ishwaran et al., 2008; Tang and Ishwaran, 2017).
+`multiRF` provides methods for multi-omics data integration using random forests
+and MRF-style weighting across modalities.
 
 ## Installation
 
 ```r
+# after publishing to GitHub
 remotes::install_github("noblegasss/multiRF")
+
+# or install from a local checkout
+pak::pak(".")
 ```
 
-The native C++ engine compiles from source and requires a C++17 compiler
-(`Rtools` on Windows, `Xcode` CLI on macOS, `g++`/`clang++` on Linux).
-OpenMP is optional but recommended.  `randomForestSRC` is not required.
-
-## Quick start
+## Quick Start
 
 ```r
 library(multiRF)
-data("tcga_brca_data")
+data("tcga_brca_data")  # loads tcga_brca and tcga_brca_clinical
 
+# tcga_brca is a named list of matched omics matrices
 names(tcga_brca)
 #> [1] "gene"  "methy" "mirna"
 
+# run the main workflow on the bundled TCGA BRCA example
 fit <- mrf3(
   tcga_brca,
   k = 4,
@@ -78,27 +33,17 @@ fit <- mrf3(
   seed = 529
 )
 
+# inspect the fitted object
 summary(fit)
-table(get_clusters(fit))
-get_top_vars(fit, n = 10)
+table(fit$clusters)
+
+# extract top IMD variables from each omics block
+lapply(get_top_vars(fit, n = 10), head)
 ```
 
-`mrf3()` is the recommended entry point.  It wraps `mrf3_fit()` with
-simpler defaults while accepting advanced arguments through `...`.
-
-### Clustering backends
-
-```r
-# proximity-based clustering
-fit_prox <- mrf3(tcga_brca, k = 4, main_clustering = "proximity",
-                 ntree = 100, seed = 529)
-
-# enhanced proximity (sibling-leaf corrections, computed in C++)
-fit_enh <- mrf3(tcga_brca, k = 4, main_clustering = "enhanced_proximity",
-                ntree = 100, seed = 529)
-```
-
-### Full workflow with variable selection
+`mrf3()` is the recommended user-facing entry point. It is a thin wrapper
+around `mrf3_fit()`, so advanced workflow arguments can still be passed through
+`...` when needed.
 
 ```r
 fit_full <- mrf3(
@@ -115,41 +60,38 @@ fit_full <- mrf3(
 )
 ```
 
-## Main functions
-
-| Function | Purpose |
-|----------|---------|
-| `mrf3()` | End-to-end workflow (fit + cluster) |
-| `mrf3_fit()` | Staged workflow with full parameter surface |
-| `mrf3_vs()` | Variable selection using IMD weights |
-| `mrf3_stability()` | Resampling-based stability assessment |
-| `pairwise_imd()` | Variable-level co-occurrence network |
-| `filter_omics()` | Pre-fitting feature filtering |
-
-## Bundled data
-
-- `tcga_brca`: TCGA BRCA multi-omics example with `gene`, `methy`, and
-  `mirna` blocks.
-- `tcga_brca_clinical`: matched clinical metadata including PAM50 subtypes
-  and survival endpoints.
-
 ## Citation
 
 If you use multiRF in your research, please cite:
 
-> Zhang, W. et al. (2025). An integrative multi-omics random forest
-> framework for robust biomarker discovery. *GigaScience*, 14, giaf148.
-> [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
+> Zhang, W. et al. (2025). multiRF: An integrative framework for multi-omics data using random forests. *GigaScience*, 14, giaf148. [DOI:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
-## References
+## Main Functions
 
-- Li, M. and Xiao, Y. (2011). Multivariate random forests. *Wiley
-  Interdisciplinary Reviews: Data Mining and Knowledge Discovery*, 1(1),
-  80-87.
-- Ishwaran, H. et al. (2008). Random survival forests. *Annals of Applied
-  Statistics*, 2(3), 841-860.
-- Tang, F. and Ishwaran, H. (2017). Random forest missing data algorithms.
-  *Statistical Analysis and Data Mining*, 10(6), 363-377.
-- Ishwaran, H. and Kogalur, U.B. randomForestSRC: multivariate splitting
-  rule.
-  [https://www.randomforestsrc.org/articles/mvsplit.html](https://www.randomforestsrc.org/articles/mvsplit.html)
+- `mrf3()`: recommended end-to-end user entry point. It wraps `mrf3_fit()` with simpler defaults for clustering, while still accepting advanced workflow arguments through `...`.
+- `mrf3_fit()`: full stage-based workflow when you want the complete parameter surface exposed explicitly.
+- `mrf3_vs()`: variable-selection stage that uses IMD weights to keep informative features, with optional model refitting.
+
+## Survival Example
+
+```r
+# align clinical rows to fitted cluster labels via sample IDs
+clinical_ids <- tcga_brca_clinical$sampleID
+clusters <- get_clusters(fit)
+common_ids <- intersect(names(clusters), clinical_ids)
+clinical_sub <- tcga_brca_clinical[match(common_ids, clinical_ids), , drop = FALSE]
+
+km <- plot_km(
+  test_var = clusters[common_ids],
+  time_var = "OS.time",
+  event_var = "OS",
+  pheno_mat = clinical_sub
+)
+
+km
+```
+
+## Bundled Data
+
+- `tcga_brca`: TCGA BRCA multi-omics example data with `gene`, `methy`, and `mirna` blocks.
+- `tcga_brca_clinical`: matched clinical metadata for the BRCA cohort.
