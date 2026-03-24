@@ -94,7 +94,7 @@ find_connection <- function(mod.list,
     FUN.VALUE = character(1)
   )
 
-  # Step 3: select one per pair (pick highest quality_score per pair)
+  # Step 2: select one per pair (pick highest quality_score per pair)
   idx_selected <- which(quality_tbl$selected)
   if (length(idx_selected) == 0L) {
     warning("No connections passed selection. Selecting the single best connection.")
