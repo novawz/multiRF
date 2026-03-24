@@ -88,11 +88,21 @@ get_shared_specific_weights <- function(dat.list,
     }
 
     if (is.null(X_hat)) {
-      W_shared <- as.matrix(recon$W$W_all)
-      if (nrow(W_shared) != nrow(X) || ncol(W_shared) != nrow(X)) {
-        stop("Dimension mismatch for `", d, "`: shared weight must be n x n with n = nrow(dat.list[[d]]).")
+      # Check if this omic has any selected cross-omic connections.
+      # If not (e.g., all connections filtered by quality gate), set X_hat = 0
+      # so that R = X and the specific component captures all within-omic structure.
+      has_connection <- !is.null(recon$fused_mat) && (d %in% names(recon$fused_mat))
+      if (!has_connection) {
+        message("Block `", d, "` has no selected cross-omic connections. ",
+                "Using full data as residual (specific-only).")
+        X_hat <- matrix(0, nrow = nrow(X), ncol = ncol(X))
+      } else {
+        W_shared <- as.matrix(recon$W$W_all)
+        if (nrow(W_shared) != nrow(X) || ncol(W_shared) != nrow(X)) {
+          stop("Dimension mismatch for `", d, "`: shared weight must be n x n with n = nrow(dat.list[[d]]).")
+        }
+        X_hat <- W_shared %*% X
       }
-      X_hat <- W_shared %*% X
     }
 
     R <- X - X_hat
