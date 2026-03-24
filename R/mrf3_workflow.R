@@ -57,8 +57,8 @@
 #' @param score_power Exponent applied to connection scores for weighted reconstruction.
 #' @param score_floor Non-negative floor applied to connection scores before weighting.
 #' @param fallback_uniform Logical; whether weighted reconstruction falls back to uniform averaging when scores are unavailable.
-#' @param fused_top_v Row-wise top-v truncation for fused weights. Default `Inf`
-#' = no truncation. Set to `NULL` to auto-tune, `FALSE` to skip entirely.
+#' @param fused_top_v Row-wise top-v truncation for fused weights. Default `FALSE`
+#' = skip fused truncation entirely. Set to `NULL` to auto-tune, `Inf` for no truncation.
 #' @param fused_row_normalize Logical; whether to row-normalize fused weights after optional truncation.
 #' @param fused_keep_ties Logical; whether fused top-v truncation keeps ties at cutoff.
 #' @param top_v_method Strategy used when auto-selecting `top_v`.
@@ -112,7 +112,7 @@ mrf3_fit <- function(dat.list,
                           score_power = 1,
                           score_floor = 0,
                           fallback_uniform = TRUE,
-                          fused_top_v = NULL,
+                          fused_top_v = FALSE,
                           fused_row_normalize = TRUE,
                           fused_keep_ties = TRUE,
                           top_v_method = c("entropy_elbow", "neff"),
