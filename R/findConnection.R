@@ -1,26 +1,23 @@
 #' Find optimal directional connections from fitted RF models
 #'
 #' Scores each directional RF model using modularity of the raw forest weight
-#' matrix (and optionally OOB normalized MSE).  Three-step selection:
-#' (1) k-means (k=2) on the scoring metric keeps only the good cluster when
-#' a clear gap exists; (2) an absolute modularity threshold removes remaining
-#' weak connections; (3) \code{select_one_per_pair} keeps at most one
-#' direction per omics pair.
+#' matrix (and optionally OOB normalized MSE).  Two-step selection:
+#' (1) an absolute modularity threshold removes weak connections;
+#' (2) \code{select_one_per_pair} keeps at most one direction per omics pair
+#' (highest quality score).
 #'
 #' @param mod.list A named list of fitted RF models. Model names must follow
 #' `response_predictor` convention.
 #' @param return_score Logical; whether to return the directional score matrix.
 #' @param select_one_per_pair Logical; whether to keep at most one direction per
 #' omics pair among selected models.
-#' @param gap_threshold Numeric; minimum gap / pooled_SD ratio required for
-#' k-means to separate good and bad clusters.  Default is \code{1.0}.
 #' @param min_modularity Numeric; absolute modularity threshold.  Connections
 #' with modularity below this value are dropped.  Default is \code{0.3}.
 #' @param compute_oob Logical; whether to compute OOB normalized MSE in
-#' addition to modularity.  When \code{TRUE}, k-means uses
-#' \code{quality_score = modularity - oob_nmse}; when \code{FALSE}, k-means
-#' uses modularity alone and OOB columns are \code{NA}.  Default is
-#' \code{FALSE}.
+#' addition to modularity.  When \code{TRUE},
+#' \code{quality_score = modularity - oob_nmse}; when \code{FALSE},
+#' \code{quality_score = modularity} and OOB columns are \code{NA}.
+#' Default is \code{FALSE}.
 #' @param ... Additional arguments (currently ignored).
 #'
 #' @return A character vector of selected model names (`response_predictor`).
@@ -32,7 +29,6 @@
 find_connection <- function(mod.list,
                             return_score = FALSE,
                             select_one_per_pair = TRUE,
-                            gap_threshold = 1.0,
                             min_modularity = 0.3,
                             compute_oob = FALSE,
                             ...){
@@ -78,47 +74,10 @@ find_connection <- function(mod.list,
 
   n_models <- nrow(quality_tbl)
 
-  # --- Three-step connection selection ---
-  # Step 1: k-means(k=2) on quality_score — keep good cluster if gap is clear.
-  # Step 2: modularity filter — drop connections with modularity < min_modularity.
-  # Step 3: select_one_per_pair — pick best direction per omics pair.
-  quality_tbl$selected <- FALSE
-
-  if (n_models >= 4L) {
-    qs <- quality_tbl$quality_score
-    km_separated <- FALSE
-    if (length(unique(qs)) >= 2L) {
-      km <- stats::kmeans(qs, centers = 2L, nstart = 10L)
-      good_cluster <- which.max(km$centers[, 1])
-      bad_cluster  <- which.min(km$centers[, 1])
-      gap <- km$centers[good_cluster, 1] - km$centers[bad_cluster, 1]
-
-      wss_good <- sum((qs[km$cluster == good_cluster] - km$centers[good_cluster, 1])^2)
-      wss_bad  <- sum((qs[km$cluster == bad_cluster]  - km$centers[bad_cluster, 1])^2)
-      n_good <- sum(km$cluster == good_cluster)
-      n_bad  <- sum(km$cluster == bad_cluster)
-      pooled_sd <- sqrt((wss_good + wss_bad) / max(1, n_good + n_bad - 2L))
-
-      quality_tbl$km_cluster <- km$cluster
-      quality_tbl$km_good    <- (km$cluster == good_cluster)
-
-      if ((pooled_sd == 0 && gap > 0) ||
-          (pooled_sd > 0  && gap / pooled_sd > gap_threshold)) {
-        quality_tbl$selected <- (km$cluster == good_cluster)
-        km_separated <- TRUE
-      }
-    }
-    # Fallback: k-means cannot separate → keep all for now
-    if (!km_separated) {
-      quality_tbl$selected <- TRUE
-    }
-  } else {
-    # < 4 models: keep all for now
-    quality_tbl$selected <- TRUE
-  }
-
-  # Step 2: modularity filter — drop connections with modularity < min_modularity
-  quality_tbl$selected <- quality_tbl$selected & (quality_tbl$modularity >= min_modularity)
+  # --- Two-step connection selection ---
+  # Step 1: modularity filter — drop connections with modularity < min_modularity.
+  # Step 2: select_one_per_pair — pick best direction per omics pair.
+  quality_tbl$selected <- (quality_tbl$modularity >= min_modularity)
 
   # Parse model names into response / predictor
   split_names <- stringr::str_split(model_names, "_")

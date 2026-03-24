@@ -27,6 +27,9 @@
 #'   `frac_predictor` (default 0.2), `ntree_per_sub` (default 25),
 #'   `min_response_for_sub` (default 500; blocks smaller than this use all features),
 #'   `min_predictor_for_sub` (default 500), `ytry` (default 0.5).
+#' @param compute_oob Logical; whether to compute OOB normalized MSE during
+#'   connection selection. When `TRUE`, quality score = modularity - oob_nmse;
+#'   when `FALSE` (default), quality score = modularity only, which is faster.
 #' @param verbose Logical; whether to print progress messages.
 #' @param seed Random seed.
 #' @param ... Additional arguments passed to forest fitting helpers.
@@ -67,6 +70,8 @@ mrf3_init <- function(dat.list,
                  # Sub-MRF ensemble
                  sub_mrf = FALSE,
                  sub_mrf_args = list(),
+                 # Connection selection
+                 compute_oob = FALSE,
                  verbose = TRUE,
                  seed = 529,
                  ...){
@@ -174,7 +179,8 @@ mrf3_init <- function(dat.list,
         m$forest.wt <- m$forest.wt.oob
         m
       })
-      conn_out <- find_connection(mod_all_oob, return_score = TRUE)
+      conn_out <- find_connection(mod_all_oob, return_score = TRUE,
+                                       compute_oob = compute_oob)
       connect_list <- conn_out$connect_list
       connection_score <- conn_out$score
       connection_top_v_used <- conn_out$top_v_used
@@ -212,7 +218,8 @@ mrf3_init <- function(dat.list,
       )
 
       if (verbose) message("  Finding connections..")
-      conn_out <- find_connection(mod_all, return_score = TRUE)
+      conn_out <- find_connection(mod_all, return_score = TRUE,
+                                       compute_oob = compute_oob)
       connect_list <- conn_out$connect_list
       connection_score <- conn_out$score
       connection_top_v_used <- conn_out$top_v_used
