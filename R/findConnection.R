@@ -242,6 +242,51 @@ get_r_sq <- function(mod){
   
 }
 
+#' Compute OOB forest weight matrix
+#'
+#' For each sample, only trees where it was out-of-bag contribute to the
+#' weight row.  Within each OOB tree, co-leaf samples contribute weight
+#' proportional to their bootstrap frequency, normalized by the total
+#' bootstrap mass in the leaf.
+#'
+#' @param mod A fitted model object from \code{fit_forest} (must contain
+#'   \code{$membership} and \code{$inbag}).
+#' @return An n x n numeric matrix of OOB forest weights.
+#' @export
+compute_oob_forest_wt <- function(mod) {
+  if (is.null(mod$membership) || is.null(mod$inbag)) {
+    stop("Model must contain $membership and $inbag matrices.")
+  }
+  W <- compute_oob_forest_wt_cpp(mod$membership, mod$inbag)
+  diag(W) <- 0
+  W
+}
+
+#' OOB normalized MSE for a fitted forest model
+#'
+#' Uses OOB forest weights to predict both xvar and yvar, then computes
+#' the mean column-wise normalized MSE.  Lower is better.
+#'
+#' @param mod A fitted model from \code{fit_forest}.
+#' @return A single numeric value (normalized MSE).
+#' @export
+get_oob_nmse <- function(mod) {
+  W <- compute_oob_forest_wt(mod)
+  X <- as.matrix(mod$xvar)
+  pred_x <- W %*% X
+  col_var_x <- apply(X, 2, var)
+  col_var_x[col_var_x < 1e-12] <- 1e-12
+  ex <- mean(colMeans((pred_x - X)^2) / col_var_x)
+
+  if (is.null(mod$yvar)) return(ex)
+  Y <- as.matrix(mod$yvar)
+  pred_y <- W %*% Y
+  col_var_y <- apply(Y, 2, var)
+  col_var_y[col_var_y < 1e-12] <- 1e-12
+  ey <- mean(colMeans((pred_y - Y)^2) / col_var_y)
+  ex + ey
+}
+
 calc_weight_concentration <- function(W, eps = 1e-12) {
   W <- as.matrix(W)
   W[!is.finite(W)] <- 0
