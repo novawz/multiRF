@@ -232,6 +232,11 @@ mrf3_fit <- function(dat.list,
     }
   }
 
+  # Inject seed into shared_specific_args so residual RF is deterministic
+  if (is.null(shared_specific_args$specific_seed)) {
+    shared_specific_args$specific_seed <- as.integer(seed)
+  }
+
   init_args <- c(
     list(
       dat.list = dat.list,
