@@ -36,6 +36,7 @@
 #' @details `fit_forest()` now defaults to the package-native engine for
 #' classification, multivariate regression, and unsupervised fitting.
 #' `randomForestSRC` is optional and is only used when `engine != "native"`.
+#' @export
 fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
                        ntree = 200, forest.wt = "inbag", proximity = "all",
                        mtry = NULL, ytry = NULL, nsplit = 10,
@@ -186,7 +187,7 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
 #'   Default `NULL` means the native engine uses `ceiling(qy/3)`.
 #'   Set to a specific integer to override (e.g., `ytry = ncol(Y) / 2`).
 #' @rdname fit_forest
-#'
+#' @export
 fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob = 1, ytry = NULL, seed = -10, ...){
 
   if(is.null(connect_list)){
