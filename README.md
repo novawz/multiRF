@@ -14,12 +14,12 @@ proximity with sibling-leaf corrections. In practice, this gives a simpler
 installation path and a faster workflow than the old `randomForestSRC`-based
 pipeline while keeping the same overall modeling logic.
 
-Project website: [https://noblegasss.github.io/multiRF/](https://noblegasss.github.io/multiRF/)
+Project website: [https://novawz.github.io/multiRF/](https://novawz.github.io/multiRF/)
 
 ## Installation
 
 ```r
-remotes::install_github("noblegasss/multiRF")
+remotes::install_github("novawz/multiRF")
 ```
 
 The package compiles from source and requires a C++17 toolchain:
