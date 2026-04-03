@@ -2,6 +2,17 @@
 #'
 #' @param dat.list A named list of omics matrices (samples in rows, features in columns).
 #' @param recon Reconstruction output from `get_reconstr_matrix()`.
+#' @param per_response_recon Logical; when \code{TRUE} (default), the shared
+#' reconstruction for each block \code{k} uses only the forest weight matrices
+#' from connections where block \code{k} is the \emph{response}.
+#' Specifically, \code{W^{(k)} = \sum \alpha_m W_m} (modularity-weighted) over
+#' models \code{m} whose response is block \code{k}, and then
+#' \code{\hat{X}^{(k)} = W^{(k)} X^{(k)}}.
+#' This ensures that each block's residual captures genuinely block-specific
+#' variation rather than reconstruction artefacts from connections where
+#' the block served as predictor.
+#' When \code{FALSE}, reverts to the legacy behaviour that uses the global
+#' fused reconstruction (\code{recon$fused_mat}) or \code{W_{all} \%*\% X}.
 #' @param specific_top_v Optional integer. If set, each row of fused specific
 #' residual-forest weights keeps top-v entries.
 #' @param specific_keep_ties Logical; whether specific top-v truncation keeps ties at cutoff.
@@ -23,11 +34,13 @@
 #' @param ... Deprecated/ignored arguments kept for compatibility.
 #'
 #' @return A list with `shared` and `specific` components:
-#' - `shared$W_all`: shared fused weights.
+#' - `shared$W_all`: shared fused weights (global, for shared clustering).
+#' - `shared$W_per_response`: named list of per-response fused weight matrices
+#'   (only present when `per_response_recon = TRUE`).
 #' - `specific$residual`: residual omics matrices
 #'   `R = X - X_pred`.
 #' - `specific$predicted`: predicted omics matrices
-#'   `X_pred` from shared reconstruction.
+#'   `X_pred` from per-response (or global) reconstruction.
 #' - `specific$residual_mod`: unsupervised RF models fitted on residual matrices.
 #' - `specific$W`: specific residual weights from residual RF models
 #'   after adjusted/truncate/row-sum-normalize.
@@ -35,6 +48,7 @@
 #'   (named numeric vectors) from unsupervised RF on residuals.
 get_shared_specific_weights <- function(dat.list,
                                         recon,
+                                        per_response_recon = TRUE,
                                         specific_top_v = NULL,
                                         specific_keep_ties = TRUE,
                                         specific_row_normalize = TRUE,
@@ -79,11 +93,78 @@ get_shared_specific_weights <- function(dat.list,
   residual_mod <- vector("list", length(dat_names))
   names(specific_W) <- names(specific_imd) <- names(residual_mod) <- dat_names
 
+  # --- Build per-response weight matrices W^(k) ----------------------------
+  # For each block k, W^(k) is the modularity-weighted average of W_m's
+  # from connections where k is the response.  This ensures that the shared
+  # reconstruction X_hat^(k) = W^(k) X^(k) only uses weights optimised for
+  # predicting block k, so the residual is a clean specific signal.
+  W_per_response <- NULL
+  if (per_response_recon) {
+    W_models <- recon$W$W_models
+    model_names <- names(W_models)
+    model_score <- recon$model_score
+    if (is.null(model_score)) {
+      model_score <- setNames(rep(1.0, length(model_names)), model_names)
+    }
+
+    W_per_response <- vector("list", length(dat_names))
+    names(W_per_response) <- dat_names
+
+    for (d in dat_names) {
+      # Find models where d is the response (first element of model name)
+      resp_idx <- vapply(model_names, function(m) {
+        pair <- parse_model_pair(m)
+        identical(pair[1], d)
+      }, logical(1))
+
+      resp_models <- model_names[resp_idx]
+
+      if (length(resp_models) == 0L) {
+        # Fallback: no connection has d as response — use global W_all
+        warning(
+          "No connection has block `", d, "` as response. ",
+          "Falling back to global W_all for reconstruction.",
+          call. = FALSE
+        )
+        W_per_response[[d]] <- recon$W$W_all
+      } else {
+        # Modularity-weighted average of response-side W_m's
+        resp_scores <- model_score[resp_models]
+        resp_scores[!is.finite(resp_scores)] <- 1.0
+        resp_scores <- pmax(resp_scores, 0)
+        alpha_sum <- sum(resp_scores)
+        if (alpha_sum <= 0) {
+          resp_alpha <- rep(1.0 / length(resp_models), length(resp_models))
+        } else {
+          resp_alpha <- resp_scores / alpha_sum
+        }
+        names(resp_alpha) <- resp_models
+
+        W_per_response[[d]] <- fuse_matrix_list(
+          W_models[resp_models], resp_alpha
+        )
+        # Row-normalize the per-response fused weight
+        rs <- rowSums(W_per_response[[d]])
+        rs[rs <= 0 | !is.finite(rs)] <- 1
+        W_per_response[[d]] <- W_per_response[[d]] / rs
+      }
+    }
+  }
+
   for (d in dat_names) {
     X <- as.matrix(dat.list[[d]])
     X_hat <- NULL
 
-    if (!is.null(recon$fused_mat) && !is.null(recon$fused_mat[[d]])) {
+    if (per_response_recon && !is.null(W_per_response[[d]])) {
+      # Per-response reconstruction: X_hat = W^(d) %*% X
+      W_d <- as.matrix(W_per_response[[d]])
+      if (nrow(W_d) != nrow(X) || ncol(W_d) != nrow(X)) {
+        stop("Dimension mismatch for per-response W of block `", d,
+             "`: expected n x n with n = ", nrow(X), ".")
+      }
+      X_hat <- W_d %*% X
+    } else if (!is.null(recon$fused_mat) && !is.null(recon$fused_mat[[d]])) {
+      # Legacy: use global fused reconstruction
       X_hat <- as.matrix(recon$fused_mat[[d]])
 
       if (!is.null(rownames(X)) && !is.null(rownames(X_hat)) &&
@@ -106,7 +187,7 @@ get_shared_specific_weights <- function(dat.list,
     }
 
     if (is.null(X_hat)) {
-      # Fallback: use shared fused weight matrix to predict X
+      # Final fallback: use shared fused weight matrix to predict X
       W_shared <- as.matrix(recon$W$W_all)
       if (nrow(W_shared) != nrow(X) || ncol(W_shared) != nrow(X)) {
         stop("Dimension mismatch for `", d, "`: shared weight must be n x n with n = nrow(dat.list[[d]]).")
@@ -217,11 +298,16 @@ get_shared_specific_weights <- function(dat.list,
     }
   }
 
+  shared_out <- list(
+    source = if (per_response_recon) "per_response" else "W_all",
+    W_all = recon$W$W_all
+  )
+  if (!is.null(W_per_response)) {
+    shared_out$W_per_response <- W_per_response
+  }
+
   list(
-    shared = list(
-      source = "W_all",
-      W_all = recon$W$W_all
-    ),
+    shared = shared_out,
     specific = list(
       residual = residual,
       predicted = predicted,

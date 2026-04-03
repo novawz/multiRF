@@ -10,7 +10,7 @@
 #' @return A sample-by-sample similarity matrix.
 build_similarity_from_weights <- function(W,
                                           similarity_type = c("second", "first"),
-                                          zero_diag = TRUE,
+                                          zero_diag = FALSE,
                                           symm = TRUE) {
   W <- validate_weight_matrix(W)
 
@@ -171,7 +171,7 @@ cluster_shared_similarity <- function(recon,
   S <- build_similarity_from_weights(
     W = W,
     similarity_type = similarity_type,
-    zero_diag = TRUE,
+    zero_diag = FALSE,
     symm = TRUE
   )
   cl_out <- cluster_similarity_matrix(
@@ -310,7 +310,7 @@ cluster_specific_similarity <- function(shared_specific,
       S <- build_similarity_from_weights(
         W = W_spec[[d]],
         similarity_type = similarity_type,
-        zero_diag = TRUE,
+        zero_diag = FALSE,
         symm = TRUE
       )
       cl_out <- cluster_similarity_matrix(

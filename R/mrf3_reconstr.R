@@ -116,7 +116,6 @@ mrf3_reconstr <- function(recon = NULL,
       dat_ls <- recon$W
       dat <- dat_ls$W_all
       dat <- dat %*% t(dat)
-      diag(dat) <- 0
       method <- "Spectral"
       dat_used_actual <- "ALL"
     }

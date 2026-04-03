@@ -71,6 +71,7 @@ mrf3_init <- function(dat.list,
                  sub_mrf = FALSE,
                  sub_mrf_args = list(),
                  # Connection selection
+                 select_connection = FALSE,
                  compute_oob = FALSE,
                  verbose = TRUE,
                  seed = 529,
@@ -172,23 +173,53 @@ mrf3_init <- function(dat.list,
       sub_args$connect_list <- all_connections
       mod_all <- do.call(fit_sub_multi_rfsrc, sub_args)
 
-      ## Select best directions using OOB forest.wt for quality scores
-      ## find_connection reads $forest.wt, so temporarily swap in the OOB version
-      if (verbose) message("  Finding connections (OOB)..")
-      mod_all_oob <- lapply(mod_all, function(m) {
-        m$forest.wt <- m$forest.wt.oob
-        m
-      })
-      conn_out <- find_connection(mod_all_oob, return_score = TRUE,
-                                       compute_oob = compute_oob)
-      connect_list <- conn_out$connect_list
-      connection_score <- conn_out$score
-      connection_top_v_used <- conn_out$top_v_used
+      if (select_connection) {
+        ## Legacy: score + select a subset of connections
+        ## find_connection reads $forest.wt, so temporarily swap in the OOB version
+        if (verbose) message("  Finding connections (OOB)..")
+        mod_all_oob <- lapply(mod_all, function(m) {
+          m$forest.wt <- m$forest.wt.oob
+          m
+        })
+        conn_out <- find_connection(mod_all_oob, return_score = TRUE,
+                                         compute_oob = compute_oob)
+        connect_list <- conn_out$connect_list
+        connection_score <- conn_out$score
+        connection_top_v_used <- conn_out$top_v_used
 
-      ## Reuse already-fitted models for the selected connections
-      selected_names <- vapply(connect_list, paste0, collapse = "_",
-                               FUN.VALUE = character(1))
-      mod_list <- mod_all[selected_names]
+        ## Reuse already-fitted models for the selected connections
+        selected_names <- vapply(connect_list, paste0, collapse = "_",
+                                 FUN.VALUE = character(1))
+        mod_list <- mod_all[selected_names]
+      } else {
+        ## New default: keep ALL connections, compute modularity for weighting
+        if (verbose) message("  Computing modularity scores (no selection)..")
+        mod_list <- mod_all
+        model_names <- names(mod_list)
+
+        mod_score <- vapply(mod_list, function(m) {
+          fw <- if (!is.null(m$forest.wt.oob)) m$forest.wt.oob else m$forest.wt
+          calc_modularity(fw)
+        }, numeric(1))
+        names(mod_score) <- model_names
+
+        connect_list <- lapply(model_names, function(m) parse_model_pair(m))
+
+        dat_nms <- names(new_dat)
+        connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
+        dimnames(connection_score) <- list(dat_nms, dat_nms)
+        for (i in seq_along(model_names)) {
+          pair <- parse_model_pair(model_names[i])
+          if (length(pair) >= 2L) {
+            ri <- match(pair[1], dat_nms)
+            ci <- match(pair[2], dat_nms)
+            if (!is.na(ri) && !is.na(ci)) {
+              connection_score[ri, ci] <- mod_score[i]
+            }
+          }
+        }
+        diag(connection_score) <- NA_real_
+      }
 
     } else {
       ## connect_list provided — fit selected connections only
@@ -217,17 +248,50 @@ mrf3_init <- function(dat.list,
         ...
       )
 
-      if (verbose) message("  Finding connections..")
-      conn_out <- find_connection(mod_all, return_score = TRUE,
-                                       compute_oob = compute_oob)
-      connect_list <- conn_out$connect_list
-      connection_score <- conn_out$score
-      connection_top_v_used <- conn_out$top_v_used
+      if (select_connection) {
+        ## Legacy: score + select a subset of connections
+        if (verbose) message("  Finding connections..")
+        conn_out <- find_connection(mod_all, return_score = TRUE,
+                                         compute_oob = compute_oob)
+        connect_list <- conn_out$connect_list
+        connection_score <- conn_out$score
+        connection_top_v_used <- conn_out$top_v_used
 
-      ## Reuse already-fitted models — no refit
-      selected_names <- vapply(connect_list, paste0, collapse = "_",
-                               FUN.VALUE = character(1))
-      mod_list <- mod_all[selected_names]
+        ## Reuse already-fitted models — no refit
+        selected_names <- vapply(connect_list, paste0, collapse = "_",
+                                 FUN.VALUE = character(1))
+        mod_list <- mod_all[selected_names]
+      } else {
+        ## New default: keep ALL connections, compute modularity for weighting only
+        if (verbose) message("  Computing modularity scores (no selection)..")
+        mod_list <- mod_all
+        model_names <- names(mod_list)
+
+        ## Build connection_score matrix and connect_list from all models
+        mod_score <- vapply(mod_list, function(m) calc_modularity(m$forest.wt), numeric(1))
+        names(mod_score) <- model_names
+
+        ## Parse model names to build connect_list
+        connect_list <- lapply(model_names, function(m) {
+          parse_model_pair(m)
+        })
+
+        ## Build score matrix
+        dat_nms <- names(new_dat)
+        connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
+        dimnames(connection_score) <- list(dat_nms, dat_nms)
+        for (i in seq_along(model_names)) {
+          pair <- parse_model_pair(model_names[i])
+          if (length(pair) >= 2L) {
+            ri <- match(pair[1], dat_nms)
+            ci <- match(pair[2], dat_nms)
+            if (!is.na(ri) && !is.na(ci)) {
+              connection_score[ri, ci] <- mod_score[i]
+            }
+          }
+        }
+        diag(connection_score) <- NA_real_
+      }
     } else {
       mod_list <- fit_multi_forest(
         new_dat,
