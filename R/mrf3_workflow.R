@@ -518,8 +518,8 @@ mrf3_fit <- function(dat.list,
       }
 
       mod_vs <- list(
-        weights = stage_imd$weight_list,
-        weights_ls = stage_imd$weight_list_init,
+        imd = stage_imd$weight_list,
+        imd_ls = stage_imd$weight_list_init,
         connection = connect_for_downstream,
         ytry = ytry,
         ntree = ntree,

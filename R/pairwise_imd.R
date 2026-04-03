@@ -86,19 +86,19 @@ pairwise_imd <- function(x,
   } else {
 
     ## ---- Slow path: post-hoc tree traversal ----
-    if (is.null(mod$net) || is.null(mod$connection) || is.null(mod$weights)) {
-      stop("`pairwise_imd()` requires `net`, `connection`, and `weights`, ",
+    if (is.null(mod$net) || is.null(mod$connection) || is.null(mod$imd)) {
+      stop("`pairwise_imd()` requires `net`, `connection`, and `imd`, ",
            "or models with pre-computed `pairwise_xy` (native engine).",
            call. = FALSE)
     }
 
-    dat_names <- names(mod$weights)
+    dat_names <- names(mod$imd)
     if (is.null(dat_names) || any(dat_names == "")) {
-      stop("`weights` must be a named list.")
+      stop("`imd` must be a named list.")
     }
 
     var_use <- pairwise_imd_feature_set(x, mod, feature_source = feature_source)
-    var_names_all <- lapply(mod$weights, names)
+    var_names_all <- lapply(mod$imd, names)
 
     nt <- mod$ntree
     if (is.null(nt) || !is.finite(nt) || nt <= 0) nt <- 1L
@@ -233,10 +233,10 @@ pairwise_imd_feature_set <- function(x, mod, feature_source = "selected") {
   }
 
   if (identical(feature_source, "weights_nonzero")) {
-    return(lapply(mod$weights, function(w) names(w)[is.finite(w) & (w != 0)]))
+    return(lapply(mod$imd, function(w) names(w)[is.finite(w) & (w != 0)]))
   }
 
-  lapply(mod$weights, names)
+  lapply(mod$imd, names)
 }
 
 

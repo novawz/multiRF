@@ -1,7 +1,7 @@
 #' MRF variable selection
 #'
 #' @param mod A fitted `mrf3_fit` object, or an `mrf3`-like object that already
-#' contains IMD weights in `mod$imd` (or legacy `mod$weights`).
+#' contains IMD weights in `mod$imd`.
 #' @param dat.list A list of omics matrices used for feature selection/refit.
 #' @param method Feature-selection rule: `"filter"`, `"test"`, `"mixture"`, or `"thres"`.
 #' @param se Multiplier on standard deviation for thresholding in `"thres"` mode.
@@ -79,10 +79,10 @@ mrf3_vs <- function(mod,
     stop("`dat.list` must be provided.")
   }
   
-  weights <- mod$weights
+  weights <- mod$imd
   if (is.null(weights)) {
     stop(
-      "`mrf3_vs()` requires IMD weights in `mod$weights`. ",
+      "`mrf3_vs()` requires IMD weights in `mod$imd`. ",
       "`mrf3_init()` no longer computes IMD weights; run `mrf3_fit(..., run_imd = TRUE)` ",
       "or construct `mod` with weights from `get_multi_weights()`."
     )
@@ -149,7 +149,7 @@ mrf3_vs <- function(mod,
   if(method == "thres") {
 
     thres <- chooss_thres3(
-      mod$weights,
+      mod$imd,
       se = se
     )
     
@@ -158,7 +158,7 @@ mrf3_vs <- function(mod,
   
   if(method == 'test'|tscore) {
 
-    if (is.null(mod$weights_ls)) {
+    if (is.null(mod$imd_ls)) {
       warning(
         "`method = 'test'` requires per-tree weight distributions (unavailable ",
         "with native engine pre-computed IMD). Falling back to `method = 'mixture'`.",
@@ -167,7 +167,7 @@ mrf3_vs <- function(mod,
       method <- "mixture"
     } else {
       thres <- test_fn(
-        wl = mod$weights_ls,
+        wl = mod$imd_ls,
         connection = connect_list,
         dat_names = dat_names,
         sig.thres = level)
@@ -259,7 +259,7 @@ mrf3_vs <- function(mod,
   )
 
   names(weights_new) <- dat_names
-  mod$weights <- weights_new
+  mod$imd <- weights_new
   if (isTRUE(re_fit)) {
     message("Refit model..")
   }
