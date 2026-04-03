@@ -52,6 +52,12 @@ cluster_similarity_matrix <- function(S,
     stop("`S` must be a square numeric matrix.")
   }
 
+  # Zero diagonal for clustering: self-loops inflate degree without carrying
+
+  # cluster information (Ng-Jordan-Weiss 2001; von Luxburg 2007).
+  # The stored S retains its diagonal for kernel-PCA / embedding use.
+  diag(S) <- 0
+
   if (is.null(k)) {
     clm <- tune_k_clusters(
       S,

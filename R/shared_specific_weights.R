@@ -19,11 +19,11 @@
 #' @param specific_row_normalize Logical; whether to row-normalize fused specific
 #' weights after optional truncation.
 #' @param specific_seed Integer seed for the residual unsupervised forests.
-#' When positive, guarantees deterministic specific signal across runs.
-#' When negative (default \code{-10}), each call uses a random device seed,
-#' which causes non-reproducible specific weights.
-#' The recommended practice is to pass the same seed used for the main
-#' pipeline (e.g., \code{specific_seed = seed}).
+#' When \code{NULL} (default), falls back to 529 with a warning.
+#' \code{mrf3_fit()} automatically injects the pipeline seed here, so
+#' users calling \code{mrf3()} or \code{mrf3_fit()} need not set this.
+#' Direct callers of \code{get_shared_specific_weights()} should pass
+#' an explicit positive seed for reproducibility.
 #' @param specific_n_consensus Integer; number of consensus runs for the
 #' residual unsupervised forests. When \code{> 1}, fits the residual RF
 #' \code{specific_n_consensus} times with seeds
@@ -52,7 +52,7 @@ get_shared_specific_weights <- function(dat.list,
                                         specific_top_v = NULL,
                                         specific_keep_ties = TRUE,
                                         specific_row_normalize = TRUE,
-                                        specific_seed = -10L,
+                                        specific_seed = NULL,
                                         specific_n_consensus = 1L,
                                         ...) {
 
@@ -82,6 +82,14 @@ get_shared_specific_weights <- function(dat.list,
 
   dat_names <- names(dat.list)
   n_cons <- max(as.integer(specific_n_consensus), 1L)
+  if (is.null(specific_seed)) {
+    specific_seed <- 529L
+    warning(
+      "`specific_seed` not set; defaulting to 529. ",
+      "Pass `specific_seed` explicitly for reproducible specific weights.",
+      call. = FALSE
+    )
+  }
   spec_seed <- as.integer(specific_seed)
 
   predicted <- vector("list", length(dat_names))
@@ -242,8 +250,7 @@ get_shared_specific_weights <- function(dat.list,
 
       for (ci in seq_len(n_cons)) {
         # Use sequential seeds: spec_seed, spec_seed+1, ...
-        # If spec_seed < 0, use ci as positive seed to ensure reproducibility
-        ci_seed <- if (spec_seed > 0L) (spec_seed + ci - 1L) else ci
+        ci_seed <- spec_seed + ci - 1L
         r_mod_ci <- do.call(fit_forest, c(
           list(
             X = as.data.frame(R, check.names = FALSE),
