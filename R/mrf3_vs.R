@@ -63,8 +63,8 @@ mrf3_vs <- function(mod,
       )
     }
     mod <- list(
-      weights = wf_weights,
-      weights_ls = wf_weights_ls,
+      imd = wf_weights,
+      imd_ls = wf_weights_ls,
       connection = wf$connection,
       ytry = wf$config$ytry,
       ntree = wf$config$ntree,
