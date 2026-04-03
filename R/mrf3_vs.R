@@ -7,7 +7,10 @@
 #' @param se Multiplier on standard deviation for thresholding in `"thres"` mode.
 #' @param c1 Distribution family for component 1 in mixture mode.
 #' @param c2 Distribution family for component 2 in mixture mode.
-#' @param level Significance level for test/mixture selection.
+#' @param level Significance level for test/mixture selection. Can be:
+#'   `"auto"` — adaptive Bayesian FDR control (recommended for mixture);
+#'   a single numeric (applied to all blocks); or a named vector/list for
+#'   per-block thresholds, e.g. `c(mri = 0.2, dnam = 0.01)`.
 #' @param tscore Logical; whether to use test scores in mixture mode.
 #' @param use_distribution Logical; whether to use distributional approximation in thresholding.
 #' @param re_weights Logical; whether to pass selected weights into refitting.
@@ -234,7 +237,38 @@ mrf3_vs <- function(mod,
         }
       } else {
         if(method == "mixture") {
-          t <- ifelse(thres[[i]][,1] < level,1,0)
+          lfdr <- thres[[i]][,1]  # local FDR = P(noise | data)
+          if (identical(level, "auto")) {
+            ## Bayesian FDR control: sort by local FDR, find largest
+            ## set where cumulative mean lfdr <= target_fdr
+            target_fdr <- 0.05
+            nonzero <- which(lfdr < 1 - 1e-8)  # skip exact-zero features
+            if (length(nonzero) > 0) {
+              ord <- order(lfdr[nonzero])
+              cum_fdr <- cumsum(lfdr[nonzero][ord]) / seq_along(ord)
+              n_sel <- max(0L, sum(cum_fdr <= target_fdr))
+              lvl_i <- if (n_sel > 0) lfdr[nonzero][ord][n_sel] + 1e-12 else 0
+            } else {
+              lvl_i <- 0
+            }
+            if (n_sel == 0L) {
+              message(sprintf("  [mixture auto] %s: no features at FDR<=%.2f; ",
+                              i, target_fdr),
+                      "selecting top feature by lowest local FDR")
+              best <- which.min(lfdr)
+              t <- rep(0L, length(lfdr))
+              t[best] <- 1L
+            } else {
+              message(sprintf("  [mixture auto] %s: %d features at FDR<=%.2f (lfdr cutoff=%.4f)",
+                              i, n_sel, target_fdr, lvl_i))
+              t <- ifelse(lfdr < lvl_i, 1, 0)
+            }
+          } else {
+            lvl_i <- if (is.null(names(level))) level[1] else {
+              if (i %in% names(level)) level[[i]] else level[1]
+            }
+            t <- ifelse(lfdr < lvl_i, 1, 0)
+          }
         } else {
           t <- thres$keep_idx[[i]]
           
