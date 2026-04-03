@@ -33,6 +33,7 @@ find_connection <- function(mod.list,
                             drop_bottom_q = 0.2,
                             select_one_per_pair = TRUE,
                             compute_oob = FALSE,
+                            seed = 529L,
                             ...){
 
   if (inherits(mod.list, "mrf3")) {
@@ -61,7 +62,7 @@ find_connection <- function(mod.list,
     if (is.null(fw)) {
       stop("Model `", model_names[i], "` does not contain `forest.wt`.")
     }
-    quality_tbl$modularity[i] <- calc_modularity(fw)
+    quality_tbl$modularity[i] <- calc_modularity(fw, seed = seed)
     if (compute_oob) {
       quality_tbl$oob_nmse[i] <- get_oob_nmse(mod_i)
     }
@@ -323,7 +324,7 @@ calc_gcc_ratio <- function(W, edge_threshold = 0, symm = TRUE) {
 #' @param fw A raw forest weight matrix (n x n).
 #' @return A single numeric modularity value (typically 0 to ~0.8).
 #' @keywords internal
-calc_modularity <- function(fw) {
+calc_modularity <- function(fw, seed = 529L) {
   W <- as.matrix(fw)
   W[!is.finite(W)] <- 0
   W <- pmax(W, 0)
@@ -333,6 +334,11 @@ calc_modularity <- function(fw) {
   if (n <= 1L) return(0)
   g <- igraph::graph_from_adjacency_matrix(W, mode = "undirected",
                                             weighted = TRUE, diag = FALSE)
+  # Louvain uses randomised node ordering internally; fix RNG state so the
+  # modularity score is reproducible across runs.
+  old_seed <- .Random.seed
+  on.exit({ .Random.seed <<- old_seed }, add = TRUE)
+  set.seed(seed)
   cl <- igraph::cluster_louvain(g)
   igraph::modularity(cl)
 }

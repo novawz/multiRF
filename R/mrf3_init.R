@@ -199,7 +199,7 @@ mrf3_init <- function(dat.list,
 
         mod_score <- vapply(mod_list, function(m) {
           fw <- if (!is.null(m$forest.wt.oob)) m$forest.wt.oob else m$forest.wt
-          calc_modularity(fw)
+          calc_modularity(fw, seed = seed)
         }, numeric(1))
         names(mod_score) <- model_names
 
@@ -268,7 +268,7 @@ mrf3_init <- function(dat.list,
         model_names <- names(mod_list)
 
         ## Build connection_score matrix and connect_list from all models
-        mod_score <- vapply(mod_list, function(m) calc_modularity(m$forest.wt), numeric(1))
+        mod_score <- vapply(mod_list, function(m) calc_modularity(m$forest.wt, seed = seed), numeric(1))
         names(mod_score) <- model_names
 
         ## Parse model names to build connect_list
