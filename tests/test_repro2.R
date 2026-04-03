@@ -63,10 +63,25 @@ if (!is.null(sc1$S) && !is.null(sc2$S)) {
 
 # ── Layer 6: Shared clusters ──
 cl1 <- m1$clusters; cl2 <- m2$clusters
-cat("6. Shared clusters identical:", identical(as.integer(cl1), as.integer(cl2)), "\n")
-if (!identical(as.integer(cl1), as.integer(cl2))) {
-  cat("   cl1:", head(cl1, 20), "\n")
-  cat("   cl2:", head(cl2, 20), "\n")
+if (is.list(cl1) && !is.null(names(cl1))) {
+  # New list structure: shared + per-block specific
+  cat("6a. Shared clusters identical:",
+      identical(as.integer(cl1$shared), as.integer(cl2$shared)), "\n")
+  if (!identical(as.integer(cl1$shared), as.integer(cl2$shared))) {
+    cat("   cl1$shared:", head(cl1$shared, 20), "\n")
+    cat("   cl2$shared:", head(cl2$shared, 20), "\n")
+  }
+  for (nm in setdiff(names(cl1), "shared")) {
+    cat("6b. Specific cluster[", nm, "] identical:",
+        identical(as.integer(cl1[[nm]]), as.integer(cl2[[nm]])), "\n")
+  }
+} else {
+  # Legacy vector structure
+  cat("6. Shared clusters identical:", identical(as.integer(cl1), as.integer(cl2)), "\n")
+  if (!identical(as.integer(cl1), as.integer(cl2))) {
+    cat("   cl1:", head(cl1, 20), "\n")
+    cat("   cl2:", head(cl2, 20), "\n")
+  }
 }
 
 # ── Layer 7: Specific weights ──
@@ -90,10 +105,16 @@ spc1 <- m1$specific$clustering
 spc2 <- m2$specific$clustering
 if (!is.null(spc1) && !is.null(spc2)) {
   for (nm in names(spc1)) {
-    if (!is.null(spc1[[nm]]$cl) && !is.null(spc2[[nm]]$cl)) {
-      cat("8. Specific cluster[", nm, "] identical:",
-          identical(as.integer(spc1[[nm]]$cl), as.integer(spc2[[nm]]$cl)), "\n")
-    }
+    c1 <- spc1[[nm]]; c2 <- spc2[[nm]]
+    # Extract $cl if present
+    if (is.list(c1) && !is.null(c1$cl)) c1 <- c1$cl
+    if (is.list(c2) && !is.null(c2$cl)) c2 <- c2$cl
+    # Only compare numeric/integer vectors (skip metadata like method, similarity_type)
+    if (is.null(c1) || is.null(c2) || is.list(c1) || is.list(c2)) next
+    if (!is.atomic(c1) || !is.atomic(c2)) next
+    if (is.character(c1) || is.character(c2)) next
+    cat("8. Specific cluster[", nm, "] identical:",
+        identical(as.integer(c1), as.integer(c2)), "\n")
   }
 }
 
