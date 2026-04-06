@@ -188,7 +188,10 @@ fit_forest <-  function(X, Y = NULL, type = "regression", nodedepth = NULL,
 #'   Set to a specific integer to override (e.g., `ytry = ncol(Y) / 2`).
 #' @rdname fit_forest
 #' @export
-fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob = 1, ytry = NULL, seed = -10, ...){
+fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
+                             yprob = 1, ytry = NULL, seed = -10,
+                             parallel_connections = FALSE,
+                             cores_connections = NULL, ...){
 
   if(is.null(connect_list)){
     # Pass ytry as-is; resolve_param in fit_mv_forest handles string/integer/NULL
@@ -196,29 +199,33 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL, yprob
 
   } else {
 
-    mod_l <- plyr::llply(
-      connect_list,
-      .fun = function(d){
-
-        dat_fit <- dat.list[d]
-        if(!is.null(var.wt)) {
-          varwt <- var.wt[d]
-        } else {
-          varwt <- NULL
-        }
-
-        if(length(dat_fit) == 1){
-
-          mod <- fit_forest(dat_fit[[1]], xvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
-        } else {
-
-          mod <- fit_forest(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
-        }
-
-
-        return(mod)
+    fit_one <- function(d){
+      dat_fit <- dat.list[d]
+      if(!is.null(var.wt)) {
+        varwt <- var.wt[d]
+      } else {
+        varwt <- NULL
       }
-    )
+
+      if(length(dat_fit) == 1){
+        mod <- fit_forest(dat_fit[[1]], xvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
+      } else {
+        mod <- fit_forest(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
+      }
+      return(mod)
+    }
+
+    n_conn <- length(connect_list)
+    if (parallel_connections && n_conn > 1L) {
+      n_par <- sanitize_mc_cores(
+        cores = if (!is.null(cores_connections)) cores_connections else parallel::detectCores(),
+        fallback = 1L
+      )
+      n_par <- min(n_conn, n_par)
+      mod_l <- parallel::mclapply(connect_list, fit_one, mc.cores = n_par)
+    } else {
+      mod_l <- lapply(connect_list, fit_one)
+    }
 
     names(mod_l) <- purrr::map(connect_list, ~paste0(., collapse = "_"))
   }

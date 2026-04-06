@@ -66,11 +66,14 @@ adjust_weight_matrix <- function(W, zero_diag = TRUE, eps = 1e-8) {
 #' @param top_v Optional integer. If set, each row keeps only the top-v entries.
 #' @param keep_ties Logical; whether top-v truncation keeps ties at the cutoff.
 #' @return Top-v truncated matrix (row-wise).
-truncate_top_v_rows <- function(W, top_v = NULL, keep_ties = TRUE) {
+truncate_top_v_rows <- function(W, top_v = NULL, keep_ties = TRUE,
+                                sparse = FALSE) {
   W <- validate_weight_matrix(W)
   n <- nrow(W)
+  p <- ncol(W)
 
   if (is.null(top_v)) {
+    if (sparse) return(Matrix::Matrix(W, sparse = TRUE))
     return(W)
   }
   top_v <- as.integer(top_v)
@@ -78,13 +81,47 @@ truncate_top_v_rows <- function(W, top_v = NULL, keep_ties = TRUE) {
     stop("`top_v` must be a single finite integer or NULL.")
   }
   if (top_v <= 0L) {
-    out <- matrix(0, nrow = n, ncol = ncol(W), dimnames = dimnames(W))
+    if (sparse) return(Matrix::sparseMatrix(i = integer(0), j = integer(0),
+                                            x = numeric(0), dims = c(n, p),
+                                            dimnames = dimnames(W)))
+    out <- matrix(0, nrow = n, ncol = p, dimnames = dimnames(W))
     return(out)
   }
-  if (top_v >= ncol(W)) {
+  if (top_v >= p) {
+    if (sparse) return(Matrix::Matrix(W, sparse = TRUE))
     return(W)
   }
 
+  ## ── Build sparse triplets directly ────────────────────────
+
+  ## When sparse = TRUE, collect (i, j, x) triplets instead of
+
+  ## zeroing out a dense copy.  For v << n this is dramatically
+  ## more memory-efficient (e.g. v=50, n=5000 → 99% zeros avoided).
+  if (sparse) {
+    ii <- integer(0)
+    jj <- integer(0)
+    xx <- numeric(0)
+    for (i in seq_len(n)) {
+      row <- W[i, ]
+      row[!is.finite(row)] <- -Inf
+      if (keep_ties) {
+        thr <- sort(row, decreasing = TRUE)[top_v]
+        keep <- which(row >= thr)
+      } else {
+        keep <- order(row, decreasing = TRUE)[seq_len(top_v)]
+      }
+      ii <- c(ii, rep(i, length(keep)))
+      jj <- c(jj, keep)
+      xx <- c(xx, W[i, keep])
+    }
+    out <- Matrix::sparseMatrix(i = ii, j = jj, x = xx,
+                                dims = c(n, p),
+                                dimnames = dimnames(W))
+    return(out)
+  }
+
+  ## ── Dense path (original behaviour) ───────────────────────
   out <- W
   for (i in seq_len(n)) {
     row <- W[i, ]
@@ -95,7 +132,7 @@ truncate_top_v_rows <- function(W, top_v = NULL, keep_ties = TRUE) {
     } else {
       keep <- order(row, decreasing = TRUE)[seq_len(top_v)]
     }
-    drop <- setdiff(seq_len(ncol(W)), keep)
+    drop <- setdiff(seq_len(p), keep)
     if (length(drop) > 0) {
       out[i, drop] <- 0
     }

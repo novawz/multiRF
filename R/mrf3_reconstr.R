@@ -259,54 +259,65 @@ get_reconstr_matrix <- function(rfit,
   )
   names(global_alpha) <- model_names
 
-  fused_info <- plyr::llply(
-    model_names,
-    .fun = function(m){
-      mod <- rfit[[m]]
-      fw <- mod$forest.wt
-      if (is.null(fw)) {
-        stop("Model `", m, "` does not contain `forest.wt`.")
-      }
+  ## ── Sequential fusion: accumulate W_all on the fly ──────────
 
-      W <- prepare_weight_matrix(
-        W = fw,
-        adjust = TRUE,
-        top_v = model_top_v,
-        row_normalize = TRUE,
-        zero_diag = TRUE,
-        keep_ties = TRUE
-      )
+  ## This avoids holding all K(K-1) dense n×n W matrices in memory
 
-      xvar <- mod$xvar
-      yvar <- mod$yvar
-      mod_names <- parse_model_pair(m)
-
-      if (!is.null(yvar)) {
-        out <- list(
-          W %*% as.matrix(xvar),
-          W %*% as.matrix(yvar)
-        )
-        if (length(mod_names) >= 2L) {
-          names(out) <- rev(mod_names[1:2])
-        } else {
-          names(out) <- c("X", "Y")
-        }
-      } else {
-        out <- list(W %*% as.matrix(xvar))
-        names(out) <- mod_names[1]
-      }
-
-      list(
-        model = m,
-        mat = out,
-        W = W
-      )
-    }
-  )
-
-  W_models <- purrr::map(fused_info, "W")
+  ## simultaneously.  Each W_m is computed, weighted, added to the
+  ## running sum, then only the reconstruction products are kept.
+  W_all <- NULL
+  fused_info <- vector("list", length(model_names))
+  names(fused_info) <- model_names
+  W_models <- vector("list", length(model_names))
   names(W_models) <- model_names
-  W_all <- fuse_matrix_list(W_models, global_alpha)
+
+  for (mi in seq_along(model_names)) {
+    m <- model_names[mi]
+    mod <- rfit[[m]]
+    fw <- mod$forest.wt
+    if (is.null(fw)) {
+      stop("Model `", m, "` does not contain `forest.wt`.")
+    }
+
+    W <- prepare_weight_matrix(
+      W = fw,
+      adjust = TRUE,
+      top_v = model_top_v,
+      row_normalize = TRUE,
+      zero_diag = TRUE,
+      keep_ties = TRUE
+    )
+
+    ## Accumulate global fused weight matrix
+    if (is.null(W_all)) {
+      W_all <- W * global_alpha[[mi]]
+    } else {
+      W_all <- W_all + W * global_alpha[[mi]]
+    }
+
+    ## Compute reconstruction products (keep these, they are smaller)
+    xvar <- mod$xvar
+    yvar <- mod$yvar
+    mod_names <- parse_model_pair(m)
+
+    if (!is.null(yvar)) {
+      out <- list(
+        W %*% as.matrix(xvar),
+        W %*% as.matrix(yvar)
+      )
+      if (length(mod_names) >= 2L) {
+        names(out) <- rev(mod_names[1:2])
+      } else {
+        names(out) <- c("X", "Y")
+      }
+    } else {
+      out <- list(W %*% as.matrix(xvar))
+      names(out) <- mod_names[1]
+    }
+
+    W_models[[m]] <- W
+    fused_info[[m]] <- list(model = m, mat = out, W = W)
+  }
   W_all <- postprocess_fused_weight(
     W = W_all,
     top_v = fused_top_v,
@@ -389,7 +400,16 @@ fuse_matrix_list <- function(mat_list, alpha) {
   if (length(alpha) != length(mat_list)) {
     stop("`alpha` length must match `mat_list` length.")
   }
-  Reduce("+", Map(function(m, a) m * a, mat_list, alpha))
+  ## Sequential accumulation: only 2 matrices in memory at a time
+  ## (the running sum + the current matrix being weighted).
+  ## Previous implementation used Reduce("+", Map(...)) which
+
+  ## materialised all weighted matrices simultaneously.
+  out <- mat_list[[1]] * alpha[[1]]
+  for (k in seq_along(mat_list)[-1]) {
+    out <- out + mat_list[[k]] * alpha[[k]]
+  }
+  out
 }
 
 normalize_fusion_weights <- function(score, fallback_uniform = TRUE) {

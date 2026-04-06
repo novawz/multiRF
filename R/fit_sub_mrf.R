@@ -410,12 +410,37 @@ fit_sub_multi_rfsrc <- function(dat.list,
                                 seed = 529L,
                                 parallel = FALSE,
                                 cores = 2L,
+                                parallel_connections = FALSE,
+                                cores_connections = NULL,
                                 verbose = TRUE,
                                 ...) {
 
-  mod_l <- plyr::llply(
-    connect_list,
-    .fun = function(d) {
+  ## ── Cross-connection parallelism ─────────────────────────────
+
+  ## When parallel_connections = TRUE, fit directed forests in
+
+  ## parallel across connections.  The total core budget is split:
+  ## outer (connections) × inner (per-forest sub-MRF / OpenMP).
+  n_conn <- length(connect_list)
+  if (parallel_connections && n_conn > 1L) {
+    total <- sanitize_mc_cores(
+      cores = if (!is.null(cores_connections)) cores_connections else parallel::detectCores(),
+      fallback = 1L
+    )
+    n_par_conn    <- min(n_conn, max(1L, total %/% 2L))
+    cores_per     <- max(1L, total %/% n_par_conn)
+    parallel_inner <- parallel && (cores_per > 1L)
+    if (verbose) message(sprintf(
+      "Parallel connections: %d workers x %d cores/forest (total %d)",
+      n_par_conn, cores_per, total
+    ))
+  } else {
+    n_par_conn     <- 1L
+    cores_per      <- cores
+    parallel_inner <- parallel
+  }
+
+  fit_one_connection <- function(d) {
       resp_name <- d[1]
       pred_name <- d[2]
 
@@ -481,13 +506,23 @@ fit_sub_multi_rfsrc <- function(dat.list,
         compute_imd = compute_imd,
         imd_args = imd_args,
         seed = seed,
-        parallel = parallel,
-        cores = cores,
+        parallel = parallel_inner,
+        cores = cores_per,
         verbose = verbose,
         ...
       )
     }
-  )
+
+  ## ── Dispatch: parallel or sequential ───────────────────────
+  if (n_par_conn > 1L) {
+    mod_l <- parallel::mclapply(
+      connect_list,
+      fit_one_connection,
+      mc.cores = n_par_conn
+    )
+  } else {
+    mod_l <- lapply(connect_list, fit_one_connection)
+  }
 
   names(mod_l) <- purrr::map_chr(connect_list, ~paste0(., collapse = "_"))
   mod_l
