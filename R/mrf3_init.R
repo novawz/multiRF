@@ -228,6 +228,29 @@ mrf3_init <- function(dat.list,
       sub_args$dat.list <- new_dat
       sub_args$connect_list <- connect_list
       mod_list <- do.call(fit_sub_multi_rfsrc, sub_args)
+
+      ## Compute modularity scores for weighting
+      model_names <- names(mod_list)
+      mod_score <- vapply(mod_list, function(m) {
+        fw <- if (!is.null(m$forest.wt.oob)) m$forest.wt.oob else m$forest.wt
+        calc_modularity(fw, seed = seed)
+      }, numeric(1))
+      names(mod_score) <- model_names
+
+      dat_nms <- names(new_dat)
+      connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
+      dimnames(connection_score) <- list(dat_nms, dat_nms)
+      for (i in seq_along(model_names)) {
+        pair <- parse_model_pair(model_names[i])
+        if (length(pair) >= 2L) {
+          ri <- match(pair[1], dat_nms)
+          ci <- match(pair[2], dat_nms)
+          if (!is.na(ri) && !is.na(ci)) {
+            connection_score[ri, ci] <- mod_score[i]
+          }
+        }
+      }
+      diag(connection_score) <- NA_real_
     }
 
     oob_err <- NULL
@@ -293,6 +316,7 @@ mrf3_init <- function(dat.list,
         diag(connection_score) <- NA_real_
       }
     } else {
+      ## User-provided connect_list — fit selected connections only
       mod_list <- fit_multi_forest(
         new_dat,
         connect_list = connect_list,
@@ -304,6 +328,26 @@ mrf3_init <- function(dat.list,
         forest.wt = "all",
         ...
       )
+
+      ## Compute modularity scores for weighting (same as select_connection=FALSE)
+      model_names <- names(mod_list)
+      mod_score <- vapply(mod_list, function(m) calc_modularity(m$forest.wt, seed = seed), numeric(1))
+      names(mod_score) <- model_names
+
+      dat_nms <- names(new_dat)
+      connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
+      dimnames(connection_score) <- list(dat_nms, dat_nms)
+      for (i in seq_along(model_names)) {
+        pair <- parse_model_pair(model_names[i])
+        if (length(pair) >= 2L) {
+          ri <- match(pair[1], dat_nms)
+          ci <- match(pair[2], dat_nms)
+          if (!is.na(ri) && !is.na(ci)) {
+            connection_score[ri, ci] <- mod_score[i]
+          }
+        }
+      }
+      diag(connection_score) <- NA_real_
     }
 
     oob_err <- purrr::map(mod_list, ~get_r_sq(.))

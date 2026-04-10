@@ -249,9 +249,7 @@ get_reconstr_matrix <- function(rfit,
     model_score <- match_model_scores(model_names = model_names, connection_score = connection_score)
     model_score <- pmax(model_score, score_floor)^score_power
     weighted_sum <- sum(model_score, na.rm = TRUE)
-    if (!is.finite(weighted_sum) || weighted_sum <= 0) {
-      message("`recon_fusion = 'weighted'` but no valid `connection_score` found. Falling back to uniform fusion.")
-    }
+    ## normalize_fusion_weights() handles fallback to uniform when scores are invalid
   } else {
     model_score[] <- 1
     weighted_sum <- sum(model_score)
