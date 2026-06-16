@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Minimal reproducibility test for multiRF
-# Run: Rscript tests/test_reproducibility.R
+# Run: Rscript tools/manual-tests/test_reproducibility.R
 
 library(multiRF)
 

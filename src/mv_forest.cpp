@@ -1362,10 +1362,10 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   int px = X.ncol();
   int qy = Y.ncol();
 
-  // Defaults: ceiling(p/3) for mtry, min(qy, ceiling(p/3)) for ytry,
+  // Defaults: ceiling(px/3) for mtry and ceiling(qy/3) for ytry,
   // and nsplit = 10 to match randomForestSRC's default randomized cut search.
   if (mtry <= 0) mtry = std::max(1, (int)std::ceil((double)px / 3.0));
-  if (ytry <= 0) ytry = std::min(qy, std::max(1, (int)std::ceil((double)px / 3.0)));
+  if (ytry <= 0) ytry = std::max(1, (int)std::ceil((double)qy / 3.0));
   if (nsplit < 0) nsplit = 10;
   // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
@@ -1892,6 +1892,8 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     Named("imd_y_per_tree") = imd_y_per_tree,
     Named("pairwise_xy") = pairwise_xy,
     Named("ntree") = ntree,
+    Named("mtry") = mtry,
+    Named("ytry") = ytry,
     Named("n") = n,
     Named("px") = px,
     Named("qy") = qy,

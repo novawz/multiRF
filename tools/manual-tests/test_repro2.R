@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Pinpoint where mrf3_fit diverges — layer by layer
+# Manual diagnostic: pinpoint where mrf3_fit diverges, layer by layer.
 library(multiRF)
 
 fit_mv_forest_cpp       <- multiRF:::fit_mv_forest_cpp
