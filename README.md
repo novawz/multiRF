@@ -119,6 +119,6 @@ fit_full <- mrf3(
 
 If you use `multiRF` in your research, please cite:
 
-> Zhang, W., Wang, L., Franzmann, E. J., and Chen, X. S. (2026). Multivariate Random Forests for Cross-Modal Multi-Omics Integration. *openRxiv*. [doi:10.64898/2026.06.17.732933](https://doi.org/10.64898/2026.06.17.732933)
+> Zhang, W., Wang, L., Franzmann, E. J., and Chen, X. S. (2026). Multivariate Random Forests for Cross-Modal Multi-Omics Integration. *bioRxiv*. [doi:10.64898/2026.06.17.732933](https://doi.org/10.64898/2026.06.17.732933)
 
 > Zhang, W. et al. (2025). An integrative multi-omics random forest framework for robust biomarker discovery. *GigaScience*, 14, giaf148. [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
