@@ -1,9 +1,6 @@
 # multiRF 0.2.1
 
-- **Fix**: Changed default `ytry` for supervised multivariate regression from
-  `min(qy, ceiling(px/3))` to `ceiling(qy/3)`. The previous default
-  incorrectly used `px` (X columns) instead of `qy` (Y columns) to size the
-  random Y subset, which could produce noisier splits when `px ≠ qy`.
+- **Fix**: Corrected the default `ytry` for supervised multivariate regression.
 
 # multiRF 0.2.0
 
