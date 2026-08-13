@@ -11,12 +11,15 @@ fit_mv_forest(
   mtry = NULL,
   ytry = NULL,
   nsplit = 10L,
+  forest.wt = "all",
   proximity = c("all", "inbag", "oob", "none"),
   nodesize = 5L,
   max_depth = 0L,
-  seed = -1L,
+  seed = 529L,
   samptype = c("swor", "swr"),
   nthread = getOption("multiRF.nthread", 0L),
+  xvar.wt = NULL,
+  yvar.wt = NULL,
   enhanced_prox = FALSE,
   sibling_gamma = 0.5,
   leaf_embed_dim = 10L
@@ -40,6 +43,8 @@ a formula string (\code{"sqrt(p)"}, \code{"p/3"}), or \code{NULL} for the defaul
 
 \item{nsplit}{Number of candidate numeric cutpoints per split variable.}
 
+\item{forest.wt}{Forest-weight mode: \code{"all"}, \code{"inbag"}, or \code{"oob"}.}
+
 \item{proximity}{Proximity output mode.}
 
 \item{nodesize}{Minimum terminal node size. Default: 5.}
@@ -51,6 +56,10 @@ a formula string (\code{"sqrt(p)"}, \code{"p/3"}), or \code{NULL} for the defaul
 \item{samptype}{Sampling scheme: \code{"swor"} or \code{"swr"}.}
 
 \item{nthread}{Number of OpenMP threads used by the native engine.}
+
+\item{xvar.wt}{Optional non-negative predictor sampling weights.}
+
+\item{yvar.wt}{Optional non-negative response sampling weights.}
 
 \item{enhanced_prox}{Logical; whether to compute enhanced proximity.}
 

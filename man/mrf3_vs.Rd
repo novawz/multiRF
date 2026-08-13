@@ -8,6 +8,7 @@ mrf3_vs(
   mod,
   dat.list = NULL,
   method = "filter",
+  signal = c("shared", "specific", "all"),
   se = 1,
   c1 = "normal",
   c2 = "normal",
@@ -16,58 +17,83 @@ mrf3_vs(
   use_distribution = TRUE,
   re_weights = FALSE,
   re_fit = TRUE,
-  ntree = 300,
+  ntree = NULL,
   scale = FALSE,
   k = 3,
   tol = 0.01,
   iter = 1000,
   eps = 1e-05,
-  normalized = TRUE,
+  normalized = FALSE,
   select = "ALL",
   ...
 )
 }
 \arguments{
 \item{mod}{A fitted \code{mrf3_fit} object, or an \code{mrf3}-like object that already
-contains IMD weights in \code{mod$weights}.}
+contains raw forest IMD in \code{mod$imd}.}
 
-\item{dat.list}{A list of omics matrices used for feature selection/refit.}
+\item{dat.list}{A named list of omics matrices used for feature selection
+and optional refitting.}
 
-\item{method}{Feature-selection rule: \code{"filter"}, \code{"test"}, \code{"mixture"}, or \code{"thres"}.}
+\item{method}{Feature-selection rule. \code{"filter"} adaptively tunes the
+cutoff \code{tau * sd(IMD)} using OOB error; \code{"mixture"} fits a
+point-mass/two-component model; and \code{"test"} (alias
+\code{"transformation"}) implements the Eq. 16 Student-t transformation.
+\code{"thres"} applies a fixed \code{se * sd(IMD)} cutoff.}
 
-\item{se}{Multiplier on standard deviation for thresholding in \code{"thres"} mode.}
+\item{signal}{Which signal component to select on: \code{"shared"} (cross-modal),
+\code{"specific"} (per-block residual), or \code{"all"} (the union of both).}
 
-\item{c1}{Distribution family for component 1 in mixture mode.}
+\item{se}{The fixed value of tau used by \code{method = "thres"}.}
 
-\item{c2}{Distribution family for component 2 in mixture mode.}
+\item{c1}{Distribution family for the lower-IMD (noise) component in
+mixture mode: \code{"normal"} or \code{"truncn"}.}
 
-\item{level}{Significance level for test/mixture selection.}
+\item{c2}{Distribution family for the higher-IMD component in mixture mode:
+\code{"normal"} or \code{"gamma"}.}
 
-\item{tscore}{Logical; whether to use test scores in mixture mode.}
+\item{level}{One-sided significance level for the transformation, or the
+maximum posterior noise probability for mixture selection. A single
+numeric value is applied to every block; a named vector/list supplies
+block-specific values. \code{"auto"} retains the optional Bayesian-FDR rule in
+mixture mode.}
 
-\item{use_distribution}{Logical; whether to use distributional approximation in thresholding.}
+\item{tscore}{Deprecated compatibility switch. Use
+\code{method = "transformation"} instead.}
 
-\item{re_weights}{Logical; whether to pass selected weights into refitting.}
+\item{use_distribution}{Deprecated compatibility argument.}
+
+\item{re_weights}{Logical; whether selected IMD values are supplied as
+variable-sampling weights during the final refit.}
 
 \item{re_fit}{Logical; whether to refit forests after feature selection.}
 
-\item{ntree}{Number of trees used in optional refit.}
+\item{ntree}{Number of trees used in the optional final refit. \code{NULL} reuses
+the fitted object's tree count, falling back to 300.}
 
-\item{scale}{Logical; whether to standardize data before refit.}
+\item{scale}{Logical; whether to standardize selected data before refitting.}
 
-\item{k}{Number of folds/repeats used by filtering heuristics.}
+\item{k}{Number of repeated forest fits at each candidate filtering cutoff.}
 
-\item{tol}{Improvement tolerance in adaptive threshold search.}
+\item{tol}{Tolerable adjacent change in mean OOB normalized MSE used to
+choose the filtering cutoff.}
 
-\item{iter}{Maximum EM iterations for mixture mode.}
+\item{iter}{Maximum EM iterations in mixture mode.}
 
-\item{eps}{EM convergence tolerance for mixture mode.}
+\item{eps}{EM convergence tolerance in mixture mode.}
 
-\item{normalized}{Logical; whether to renormalize selected weights.}
+\item{normalized}{Logical; whether to L2-normalize the retained weights
+after selection. These methods are always evaluated on raw IMD;
+therefore the default is \code{FALSE}.}
 
-\item{select}{Data block(s) to apply selection to; default \code{"ALL"}.}
+\item{select}{Data block(s) to which selection is applied; default \code{"ALL"}.}
 
-\item{...}{Additional arguments passed to underlying fitting functions.}
+\item{...}{Additional arguments passed to forest fitting.}
+}
+\value{
+An object inheriting from \code{mrf3} and \code{vs}. For \code{signal = "all"},
+\code{dat.list} and \code{imd} contain the union selection and the two component
+results are retained in \code{signal_results}.
 }
 \description{
 MRF variable selection

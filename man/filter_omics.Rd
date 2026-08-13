@@ -46,3 +46,10 @@ Otherwise returns a list with \code{dat_filtered} and \code{filter_summary}.
 \description{
 Filter multi-omics feature blocks before RF fitting
 }
+\details{
+Before feature ranking, all blocks are checked to have the same
+samples in the same order, unique sample names, numeric finite values, and
+at least two samples. Zero-variance features are removed before optional
+scaling or RF fitting because they cannot define a split and would become
+non-finite under z-standardization. Column names are preserved verbatim.
+}

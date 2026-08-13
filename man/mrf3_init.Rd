@@ -19,6 +19,8 @@ mrf3_init(
   return_data = FALSE,
   sub_mrf = FALSE,
   sub_mrf_args = list(),
+  select_connection = FALSE,
+  compute_oob = FALSE,
   verbose = TRUE,
   seed = 529,
   ...
@@ -36,9 +38,10 @@ delegates to the engine default.}
 
 \item{samptype}{Sampling scheme passed to forest fitting: \code{"swor"} or \code{"swr"}.}
 
-\item{connect_list}{Optional pre-defined connection list. If \code{NULL}, the
-function fits all directed pairwise models first, then uses \code{find_connection()}
-to select one direction per omics pair.}
+\item{connect_list}{Optional pre-defined connection list. If \code{NULL}, all
+directed pairwise models are retained. Their modularity scores are used as
+soft fusion weights; set \code{select_connection = TRUE} only to request the
+legacy direction-selection step.}
 
 \item{filter_mode}{Feature filtering mode passed to \code{filter_omics()}:
 \code{"auto"}, \code{"none"}, or \code{"manual"}.}
@@ -62,9 +65,20 @@ resulting n x n matrices.  Useful when p is large.  Default is \code{FALSE}.}
 \item{sub_mrf_args}{Named list of arguments forwarded to
 \code{fit_sub_multi_rfsrc()} when \code{sub_mrf = TRUE}.  Common options:
 \code{n_sub} (number of replicates, default 15), \code{frac_response} (default 0.2),
-\code{frac_predictor} (default 0.2), \code{ntree_per_sub} (default 25),
+\code{frac_predictor} (default 0.2), \code{ntree_per_sub} (by default
+\code{ceiling(ntree / n_sub)}),
 \code{min_response_for_sub} (default 500; blocks smaller than this use all features),
-\code{min_predictor_for_sub} (default 500), \code{ytry} (default 0.5).}
+\code{min_predictor_for_sub} (default 500), and \code{ytry} (the main-model value).
+Unless explicitly overridden, sub-MRF fits also inherit the main forest's
+\code{samptype}, \code{mtry}, engine, split count, thread count, node size, and depth.}
+
+\item{select_connection}{Logical; whether to apply the legacy quality-based
+connection-selection step. The default is \code{FALSE}, retaining all
+connections for modularity-weighted fusion.}
+
+\item{compute_oob}{Logical; whether to compute OOB normalized MSE during
+connection selection. When \code{TRUE}, quality score = modularity - oob_nmse;
+when \code{FALSE} (default), quality score = modularity only, which is faster.}
 
 \item{verbose}{Logical; whether to print progress messages.}
 
@@ -80,7 +94,7 @@ Fit an initial MRF model
 }
 \details{
 \code{mrf3_init()} now performs initialization only (filtering, forest fitting,
-and connection selection). IMD weights are computed downstream via
+and optional connection selection). IMD weights are computed downstream via
 \code{get_multi_weights()} (for example inside \code{mrf3_fit(..., run_imd = TRUE)}).
 
 When \code{sub_mrf = TRUE}, the final model fit uses a sub-sampling ensemble
@@ -88,7 +102,8 @@ strategy: for each connection, features are randomly sub-sampled from both
 response and predictor blocks, smaller MRFs are fitted, and the n x n
 forest-weight and proximity matrices are averaged.  This trades a small
 amount of matrix approximation accuracy for substantial speed gains when
-p is large (e.g., 6-8x faster at p = 2000).  Connection selection (when
-\code{connect_list = NULL}) still uses full MRF with OOB to ensure proper
-direction determination.
+p is large (e.g., 6-8x faster at p = 2000). When \code{connect_list = NULL}, all
+directed connections are retained by default and modularity is used only as
+a fusion weight. Legacy direction selection is opt-in through
+\code{select_connection = TRUE}.
 }

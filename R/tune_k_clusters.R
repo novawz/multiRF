@@ -22,7 +22,12 @@ tune_k_clusters <- function(x,...){
 tune_k_clusters.default <- function(x, return_cluster = FALSE, plot_k = FALSE,
                                     method = "Spectral", tune_method = "silhouette", gap_w = "uniform", prox = FALSE,...){
 
-  k_tune <- seq(2,12,by = 1)
+  n_obs <- if (is.matrix(x) || is.data.frame(x)) nrow(x) else length(x)
+  k_max <- min(12L, as.integer(n_obs) - 1L)
+  if (!is.finite(k_max) || k_max < 2L) {
+    stop("At least three samples are required to tune the number of clusters.")
+  }
+  k_tune <- seq.int(2L, k_max)
 
   if(method == "Spectral"){
     cl <- spectral_cl(x, k_tune = k_tune, gap_w = gap_w,  ...)
@@ -84,7 +89,12 @@ tune_k_clusters.mrf3 <- function(x, return_cluster = FALSE, plot_k = FALSE, meth
     stop("Must be a mrf cl object")
   }
 
-  k_tune <- seq(2,9,by = 1)
+  n_obs <- nrow(x)
+  k_max <- min(12L, as.integer(n_obs) - 1L)
+  if (!is.finite(k_max) || k_max < 2L) {
+    stop("At least three samples are required to tune the number of clusters.")
+  }
+  k_tune <- seq.int(2L, k_max)
 
   if(method == "Spectral"){
     cl <- spectral_cl(x, k_tune = k_tune, gap_w = gap_w, ...)
@@ -146,6 +156,12 @@ spectral_cl <- function(x, k_tune = seq(2,12,by = 1), gap_w = "uniform", d = NUL
   x[!is.finite(x)] <- 0
   x <- (x + t(x)) / 2
   x[x < 0] <- 0
+  n <- nrow(x)
+  k_grid <- unique(as.integer(k_tune[is.finite(k_tune)]))
+  k_grid <- k_grid[k_grid >= 2L & k_grid < n]
+  if (length(k_grid) == 0L) {
+    stop("`k_tune` must contain at least one integer in [2, n - 1].")
+  }
 
   if (is.null(d)) {
     d <- rowSums(x)
@@ -164,12 +180,6 @@ spectral_cl <- function(x, k_tune = seq(2,12,by = 1), gap_w = "uniform", d = NUL
 
   e <- tryCatch(eigen(l, symmetric = TRUE), error = function(e) NULL)
   if (is.null(e)) {
-    k_grid <- as.integer(k_tune)
-    k_grid <- k_grid[is.finite(k_grid)]
-    k_grid <- unique(k_grid[k_grid >= 2 & k_grid <= max(2, nrow(x) - 1)])
-    if (length(k_grid) == 0L) {
-      k_grid <- as.integer(min(2, max(1, nrow(x) - 1)))
-    }
     pam_fit <- pam_cl(1 - x, k_tune = k_grid, diss = TRUE, tune_method = "silhouette", ...)
     return(list(
       best_k = pam_fit$best_k,
@@ -182,38 +192,20 @@ spectral_cl <- function(x, k_tune = seq(2,12,by = 1), gap_w = "uniform", d = NUL
     ))
   }
   eigenvectors <- e$vectors
-        
-  if(length(k_tune) > 1){
-    
-    eigenvalues <- rev(e$values)[2:(length(k_tune) + 2)]
-    
-    if(gap_w == "log"){
-      w <- log(k_tune)
-    }
-    if(gap_w == "uniform"){
-      w <- rep(1, length(k_tune))
-    }
-    
-    diff_e <- diff(eigenvalues) * w
-    k <- which.max(diff_e) + 1
-
-  } else  {
-    k <- k_tune
-
-    eigenvalues <- rev(e$values)[2:(k + 1)]
-    diff_e <- diff(eigenvalues)[k-1]
-  }
-
-  n <- nrow(x)
+  lambda <- rev(e$values)
+  gap_w <- match.arg(gap_w, c("uniform", "log"))
+  w <- if (identical(gap_w, "log")) log(k_grid) else rep(1, length(k_grid))
+  raw_gap <- lambda[k_grid + 1L] - lambda[k_grid]
+  diff_e <- raw_gap * w
+  k <- k_grid[which.max(diff_e)]
+  eigenvalues <- lambda[seq_len(min(n, max(k_grid) + 1L))]
   
   mat <- as.matrix(eigenvectors[,(n-k+1):(n)])
-  mat_norm <- mat/sqrt(rowSums(mat^2))
+  mat_norm <- mat / pmax(sqrt(rowSums(mat^2)), .Machine$double.eps)
  
   cl <- cluster::pam(mat, k = k, ...)
 
-  embed <- as.matrix(eigenvectors[,(n-k):(n-1)])
-  ei <- rev(e$values)[2:(k+1)]
-  embed <- embed[,2:k]
+  embed <- mat_norm
   
   return(list(
     best_k = k, cl = cl$cluster, diff_e = diff_e, ev = eigenvalues, embed = embed, obj = cl$objective[2], sil = cl$silinfo$avg.width
@@ -223,15 +215,26 @@ spectral_cl <- function(x, k_tune = seq(2,12,by = 1), gap_w = "uniform", d = NUL
 #' @rdname tune_k_clusters
 #' @export
 pam_cl <- function(x, k_tune = seq(2,9,by = 1), diss = TRUE, tune_method = "silhouette", ...){
-  
+  tune_method <- match.arg(tune_method, c("silhouette", "ratio"))
+  n <- if (is.matrix(x) || is.data.frame(x)) nrow(x) else attr(x, "Size")
+  if (is.null(n) || !is.finite(n)) n <- length(x)
+  k_tune <- unique(as.integer(k_tune[is.finite(k_tune)]))
+  k_tune <- k_tune[k_tune >= 2L & k_tune < n]
+  if (length(k_tune) == 0L) {
+    stop("`k_tune` must contain at least one integer in [2, n - 1].")
+  }
+
   sil <- numeric(0)
+  diss_use <- isTRUE(diss)
   if(length(k_tune) > 1){
-    if(!diss){
+    if(!diss_use){
       x <- as.matrix(dist(x))
-    } 
+      diss_use <- TRUE
+    }
     
     if(tune_method == "ratio"){
-      k_eval <- c(k_tune, max(k_tune) + 1)
+      extra_k <- max(k_tune) + 1L
+      k_eval <- if (extra_k < n) c(k_tune, extra_k) else k_tune
       m <- 1-x
       dist_all <- mean(m)
     } else {
@@ -240,7 +243,7 @@ pam_cl <- function(x, k_tune = seq(2,9,by = 1), diss = TRUE, tune_method = "silh
     sil <- numeric(length(k_eval))
     for (ii in seq_along(k_eval)){
       k <- k_eval[ii]
-      cl <- cluster::pam(x, k = k, diss = TRUE, ...)
+      cl <- cluster::pam(x, k = k, diss = diss_use, ...)
       if(tune_method == "silhouette"){
         sil[ii] <- cl$objective[1] - cl$objective[2]
       }
@@ -256,21 +259,23 @@ pam_cl <- function(x, k_tune = seq(2,9,by = 1), diss = TRUE, tune_method = "silh
      
     }
     if(tune_method == "silhouette"){
-      k <- which.max(sil) + 1
+      k <- k_eval[which.max(sil)]
       diff_S <- NULL
     }
     if(tune_method == "ratio"){
-
-      diff_S <- abs(diff(sil))*log(k_eval[1:(max(k_eval) - 2)])
-
-      k <- which.max(diff_S) + 1
+      diff_S <- abs(diff(sil)) * log(k_eval[-length(k_eval)])
+      if (length(diff_S) == 0L || !any(is.finite(diff_S))) {
+        k <- k_tune[1L]
+      } else {
+        k <- k_eval[which.max(diff_S)]
+      }
     }
   } else {
-    k <- k_tune
+    k <- k_tune[1L]
     diff_S <- NULL
   }
   
-  cl <- cluster::pam(x, k = k, diss = diss, ...)
+  cl <- cluster::pam(x, k = k, diss = diss_use, ...)
   
   return(
     list(best_k = k, cl = cl$cluster, sil = sil, diff = diff_S, obj = cl$objective[2])

@@ -9,13 +9,9 @@ find_connection(
   mod.list,
   return_score = FALSE,
   drop_bottom_q = 0.2,
-  top_v = NULL,
-  adjust_weights = TRUE,
-  row_normalize = TRUE,
-  keep_ties = TRUE,
   select_one_per_pair = TRUE,
-  edge_threshold = 0,
-  gcc_symm = TRUE,
+  compute_oob = FALSE,
+  seed = 529L,
   ...
 )
 
@@ -30,24 +26,17 @@ full_connect(dat.list, ...)
 \item{drop_bottom_q}{Proportion of models to drop based on quality rank-sum.
 Must be in \verb{[0, 1)}. Default is \code{0.2}.}
 
-\item{top_v}{Optional integer; if set, each row of forest weights keeps top-v
-entries before scoring. If \code{NULL}, uses fixed defaults by sample size:
-\code{n < 200 -> 15}, \verb{200 <= n <= 800 -> 30}, \code{n > 800 -> 50}.}
-
-\item{adjust_weights}{Logical; whether to apply adjusted-weight scaling.}
-
-\item{row_normalize}{Logical; whether to row-normalize preprocessed weights.}
-
-\item{keep_ties}{Logical; whether top-v truncation keeps ties at cutoff.}
-
 \item{select_one_per_pair}{Logical; whether to keep at most one direction per
 omics pair among quality-filtered models.}
 
-\item{edge_threshold}{Non-negative threshold for binarizing weights when
-computing GCC.}
+\item{compute_oob}{Logical; whether to compute OOB normalized MSE in
+addition to modularity.  When \code{TRUE},
+\code{quality_score = modularity - oob_nmse} and rank-sum uses both ranks;
+when \code{FALSE}, \code{quality_score = modularity} and
+\code{rank_sum = rank(-modularity)}.
+Default is \code{FALSE}.}
 
-\item{gcc_symm}{Logical; whether to symmetrize adjacency by \code{pmax(W, t(W))}
-before GCC.}
+\item{seed}{Random seed used by Louvain modularity scoring.}
 
 \item{...}{Additional arguments (currently ignored).}
 
@@ -57,8 +46,14 @@ features in columns.}
 \value{
 A character vector of selected model names (\code{response_predictor}).
 If \code{return_score = TRUE}, returns a list with \code{model_connection},
-\code{connect_list}, \code{score}, \code{top_v_used}, and model-level quality metrics.
+\code{connect_list}, \code{score}, and model-level quality metrics.
 }
 \description{
-Find optimal directional connections from fitted RF models
+Scores each directional RF model using modularity of the diagonal-adjusted
+forest weight
+matrix (and optionally OOB normalized MSE).  Two-step selection:
+(1) drop the bottom \code{drop_bottom_q} fraction of connections by
+rank-sum of quality metrics;
+(2) \code{select_one_per_pair} keeps at most one direction per omics pair
+(lowest rank-sum).
 }

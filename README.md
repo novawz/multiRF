@@ -54,7 +54,16 @@ get_top_vars(fit, n = 10)
 ```
 
 `mrf3()` is the main user-facing entry point. It wraps the staged workflow in
-`mrf3_fit()` and forwards advanced arguments through `...`.
+`mrf3_fit()` and forwards advanced arguments through `...`. Both entry points
+use automatic feature filtering by default; set `filter_mode = "none"` when
+working with an already curated feature set, as in the example above.
+
+The default similarity workflow retains all directed forests. It removes
+their diagonal weights, row-normalizes after model top-v truncation, normalizes
+modularity scores within each response block, and uniformly averages the
+per-response matrices (Eqs. 6–8). A top-v value at least 80% of the sample size
+is treated as no truncation. Shared and omics-specific similarities use
+`S = W W^T` with a zero diagonal and spectral clustering by default.
 
 ## What it provides
 
@@ -109,6 +118,13 @@ fit_full <- mrf3(
   seed = 529
 )
 ```
+
+Variable selection uses raw forest IMD on `[0, 1]`; `filter` tunes
+`tau * sd(IMD)` using true OOB normalized
+MSE across predictor and response coordinates; `mixture` includes a point mass
+at zero; and `transformation` uses Eq. 16 with a Student-t reference
+(`df = ntree - 1`). The newer connection-selection strategy is independent of
+these feature-selection rules.
 
 ## Bundled data
 

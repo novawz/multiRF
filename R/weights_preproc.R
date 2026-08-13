@@ -65,6 +65,8 @@ adjust_weight_matrix <- function(W, zero_diag = TRUE, eps = 1e-8) {
 #' @rdname prepare_weight_matrix
 #' @param top_v Optional integer. If set, each row keeps only the top-v entries.
 #' @param keep_ties Logical; whether top-v truncation keeps ties at the cutoff.
+#' @param sparse Logical; whether `truncate_top_v_rows()` should return a sparse
+#'   matrix.
 #' @return Top-v truncated matrix (row-wise).
 truncate_top_v_rows <- function(W, top_v = NULL, keep_ties = TRUE,
                                 sparse = FALSE) {

@@ -2,8 +2,8 @@
 #' @param dat.list A list of omics matrices used for clustering.
 #' @param mod A fitted `mrf3` model object.
 #' @param tmin Minimum model-level top-v cutoff to evaluate.
-#' The effective upper bound is fixed to `ceiling(0.2 * n)` where `n` is
-#' sample size.
+#' The effective upper bound is the sample size, allowing the
+#' `v >= 0.8 * n` no-truncation rule to be evaluated.
 #' @param by Base step size for model-level top-v grid construction.
 #' @param k Optional fixed number of clusters.
 #' @param sample_n Optional integer. If set, tune on a random subset of samples.
@@ -23,7 +23,7 @@
 #' @rdname tune_model_top_v
 tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
                              sample_n = NULL, sample_frac = NULL,
-                             auto_sample_n = TRUE,
+                             auto_sample_n = FALSE,
                              max_candidates = 20,
                              reuse_tuned_k = TRUE,
                              parallel = TRUE,
@@ -66,20 +66,22 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
   tune_ctx <- resolve_tune_mod_inputs(mod)
   rfit <- tune_ctx$rfit
   model_names <- names(rfit)
-  alpha <- compute_tune_model_alpha(
-    model_names = model_names,
-    connection_score = tune_ctx$connection_score
-  )
   cache_list <- build_model_weight_cache_list(
     rfit = rfit,
     vmax = max(c(t_grid, baseline_v))
   )
 
   eval_one <- function(tv, k_use = NULL) {
-    W_all_raw <- build_fused_weight_from_cache(
+    W_all_raw <- build_response_fused_weight_from_cache(
       cache_list = cache_list,
       top_v = tv,
-      alpha = alpha,
+      connection_score = tune_ctx$connection_score,
+      model_list = rfit,
+      response_blocks = names(dat.list),
+      recon_fusion = tune_ctx$recon_fusion,
+      score_power = tune_ctx$score_power,
+      score_floor = tune_ctx$score_floor,
+      fallback_uniform = tune_ctx$fallback_uniform,
       keep_ties = TRUE
     )
     W_all <- postprocess_fused_weight(
@@ -160,7 +162,8 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
 #' @param vmin Minimum `fused_top_v` cutoff to evaluate.
 #' @param by Base step size for the `fused_top_v` grid.
 #' @param vmax Maximum `fused_top_v` cutoff to evaluate.
-#' If `NULL`, an adaptive small-v upper bound is used.
+#' If `NULL`, the full sample size is used so the
+#' `v >= 0.8 * n` no-truncation rule is represented in the grid.
 #' @param model_top_v Fixed model-level top-v cutoff used while tuning
 #' `fused_top_v`.
 #' @param k Optional fixed number of clusters.
@@ -193,7 +196,7 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
                              model_top_v = 10,
                              k = NULL,
                              sample_n = NULL, sample_frac = NULL,
-                             auto_sample_n = TRUE,
+                             auto_sample_n = FALSE,
                              max_candidates = 20,
                              reuse_tuned_k = TRUE,
                              parallel = TRUE,
@@ -274,18 +277,20 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
   tune_ctx <- resolve_tune_mod_inputs(mod)
   rfit <- tune_ctx$rfit
   model_names <- names(rfit)
-  alpha <- compute_tune_model_alpha(
-    model_names = model_names,
-    connection_score = tune_ctx$connection_score
-  )
   model_cache <- build_model_weight_cache_list(
     rfit = rfit,
     vmax = model_top_v
   )
-  W_all_raw <- build_fused_weight_from_cache(
+  W_all_raw <- build_response_fused_weight_from_cache(
     cache_list = model_cache,
     top_v = model_top_v,
-    alpha = alpha,
+    connection_score = tune_ctx$connection_score,
+    model_list = rfit,
+    response_blocks = names(dat.list),
+    recon_fusion = tune_ctx$recon_fusion,
+    score_power = tune_ctx$score_power,
+    score_floor = tune_ctx$score_floor,
+    fallback_uniform = tune_ctx$fallback_uniform,
     keep_ties = TRUE
   )
 
@@ -342,7 +347,7 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
     max_candidates = max_candidates
   )
   v_grid <- v_grid[v_grid > 0]
-  v_grid <- v_grid[v_grid < ncol(W_all_raw)]
+  v_grid <- v_grid[v_grid <= ncol(W_all_raw)]
   if (length(v_grid) == 0L) {
     warning(
       "No valid finite `fused_top_v` candidates remain after filtering; returning no-trunc baseline only.",
@@ -439,6 +444,11 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
 }
 
 resolve_tune_mod_inputs <- function(mod) {
+  recon_fusion <- "weighted"
+  score_power <- 1
+  score_floor <- 0
+  fallback_uniform <- TRUE
+  response_blocks <- NULL
   if (inherits(mod, "mrf3")) {
     rfit <- mod$mod
     connection_score <- mod$connection_score
@@ -450,28 +460,112 @@ resolve_tune_mod_inputs <- function(mod) {
     connection_score <- NULL
   }
 
+  if (is.list(mod)) {
+    if (!is.null(mod$recon_fusion)) recon_fusion <- mod$recon_fusion
+    if (!is.null(mod$score_power)) score_power <- mod$score_power
+    if (!is.null(mod$score_floor)) score_floor <- mod$score_floor
+    if (!is.null(mod$fallback_uniform)) fallback_uniform <- mod$fallback_uniform
+    if (!is.null(mod$response_blocks)) response_blocks <- mod$response_blocks
+  }
+
   if (!is.list(rfit) || length(rfit) == 0L) {
     stop("`mod` must contain a non-empty model list.")
   }
   if (is.null(names(rfit)) || any(names(rfit) == "")) {
     stop("Model list in `mod` must be named as `response_predictor`.")
   }
+  if (!is.numeric(score_power) || length(score_power) != 1L ||
+      !is.finite(score_power) || score_power <= 0) {
+    stop("`score_power` must be a single positive numeric.")
+  }
+  if (!is.numeric(score_floor) || length(score_floor) != 1L ||
+      !is.finite(score_floor) || score_floor < 0) {
+    stop("`score_floor` must be a single non-negative numeric.")
+  }
 
   list(
     rfit = rfit,
-    connection_score = connection_score
+    connection_score = connection_score,
+    recon_fusion = match.arg(as.character(recon_fusion)[1L], c("weighted", "uniform")),
+    score_power = as.numeric(score_power)[1L],
+    score_floor = as.numeric(score_floor)[1L],
+    fallback_uniform = isTRUE(fallback_uniform),
+    response_blocks = response_blocks
   )
 }
 
-compute_tune_model_alpha <- function(model_names, connection_score = NULL) {
+compute_tune_model_alpha <- function(model_names, connection_score = NULL,
+                                     model_list = NULL) {
   score <- match_model_scores(
     model_names = model_names,
-    connection_score = connection_score
+    connection_score = connection_score,
+    model_list = model_list
   )
   score <- pmax(score, 0)
   alpha <- normalize_fusion_weights(score, fallback_uniform = TRUE)
   names(alpha) <- model_names
   alpha
+}
+
+# Build the Eq. 6-8 matrix used by response-stratified reconstruction. Scores
+# are normalized within response blocks, and the response-level matrices are
+# then averaged uniformly. A single global normalization over all directed
+# connections would overweight response blocks having more models or larger
+# raw modularity values.
+build_response_fused_weight_from_cache <- function(cache_list, top_v,
+                                                connection_score = NULL,
+                                                model_list = NULL,
+                                                response_blocks = NULL,
+                                                recon_fusion = c("weighted", "uniform"),
+                                                score_power = 1,
+                                                score_floor = 0,
+                                                fallback_uniform = TRUE,
+                                                keep_ties = TRUE) {
+  recon_fusion <- match.arg(recon_fusion)
+  model_names <- names(cache_list)
+  if (is.null(model_list)) model_list <- cache_list
+  if (is.null(names(model_list))) names(model_list) <- model_names
+
+  scores <- match_model_scores(
+    model_names = model_names,
+    connection_score = connection_score,
+    model_list = model_list
+  )
+  if (identical(recon_fusion, "uniform")) {
+    scores[] <- 1
+  } else {
+    scores <- pmax(scores, score_floor)^score_power
+  }
+  names(scores) <- model_names
+
+  pairs <- lapply(seq_along(model_names), function(i) {
+    parse_model_pair(model_names[[i]], model = model_list[[model_names[[i]]]])
+  })
+  responses <- vapply(pairs, function(pair) pair[[1L]], character(1))
+  if (is.null(response_blocks)) response_blocks <- unique(responses)
+  missing_response <- setdiff(response_blocks, responses)
+  if (length(missing_response)) {
+    stop(
+      "Cannot construct Eq. 6-8 fusion: no fitted connection has response block(s): ",
+      paste(missing_response, collapse = ", "), "."
+    )
+  }
+
+  W_by_response <- lapply(response_blocks, function(response) {
+    response_models <- model_names[responses == response]
+    alpha <- normalize_fusion_weights(
+      scores[response_models], fallback_uniform = fallback_uniform
+    )
+    names(alpha) <- response_models
+    matrices <- lapply(response_models, function(model_name) {
+      materialize_weight_from_cache(
+        cache_list[[model_name]], v = top_v, keep_ties = keep_ties
+      )
+    })
+    names(matrices) <- response_models
+    fuse_matrix_list(matrices, alpha)
+  })
+  Reduce("+", W_by_response) / length(W_by_response)
 }
 
 build_model_weight_cache_list <- function(rfit, vmax = NULL) {
@@ -548,7 +642,7 @@ materialize_weight_from_cache <- function(cache, v, keep_ties = TRUE) {
     idx <- cache$ord[, seq_len(v_use), drop = FALSE]
     row_idx <- rep(seq_len(nrow(cache$W)), times = ncol(idx))
     out[cbind(row_idx, as.vector(idx))] <- cache$W[cbind(row_idx, as.vector(idx))]
-    return(out)
+    return(row_normalize_weights(out))
   }
 
   for (i in seq_len(nrow(cache$W))) {
@@ -558,7 +652,7 @@ materialize_weight_from_cache <- function(cache, v, keep_ties = TRUE) {
       out[i, keep] <- cache$W[i, keep]
     }
   }
-  out
+  row_normalize_weights(out)
 }
 
 build_fused_weight_from_cache <- function(cache_list, top_v, alpha, keep_ties = TRUE) {
@@ -1118,7 +1212,7 @@ detect_entropy_elbow <- function(v, entropy,
 }
 
 infer_fused_tune_vmax <- function(n,
-                                  frac = 0.2) {
+                                  frac = 1.0) {
   if (!is.numeric(n) || length(n) != 1L || !is.finite(n) || n <= 0) {
     stop("`n` must be a single positive numeric value.")
   }

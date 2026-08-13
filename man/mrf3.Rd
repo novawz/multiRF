@@ -11,7 +11,7 @@ mrf3(
   top_v = NULL,
   samptype = c("swor", "swr"),
   main_clustering = c("similarity", "proximity", "enhanced_proximity"),
-  filter_mode = c("none", "auto", "manual"),
+  filter_mode = c("auto", "none", "manual"),
   seed = 529,
   ...
 )

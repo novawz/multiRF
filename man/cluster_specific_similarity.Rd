@@ -7,7 +7,7 @@
 cluster_specific_similarity(
   shared_specific,
   k = NULL,
-  method = c("PAM", "Spectral", "Proximity", "Enhanced_Proximity"),
+  method = c("Spectral", "PAM", "Proximity", "Enhanced_Proximity"),
   prox_method_cl = c("PAM", "Spectral"),
   tune_method = "silhouette",
   gap_w = "uniform",

@@ -13,7 +13,9 @@ mrf3_reconstr(
   dat_use_to_cluster = "ALL",
   model_top_v = 10,
   recon_fusion = c("weighted", "uniform"),
+  global_fusion = c("average", "pmin"),
   connection_score = NULL,
+  response_blocks = NULL,
   score_power = 1,
   score_floor = 0,
   fallback_uniform = TRUE,
@@ -36,7 +38,9 @@ get_reconstr_matrix(
   rfit,
   model_top_v = 10,
   recon_fusion = c("weighted", "uniform"),
+  global_fusion = c("average", "pmin"),
   connection_score = NULL,
+  response_blocks = NULL,
   score_power = 1,
   score_floor = 0,
   fallback_uniform = TRUE,
@@ -65,7 +69,15 @@ forest weight matrix before fusion.}
 \item{recon_fusion}{Reconstruction fusion mode.
 \code{"weighted"} (default) uses \code{connection_score}; \code{"uniform"} uses equal weights.}
 
+\item{global_fusion}{Fusion across per-response matrices. \code{"average"}
+implements the uniform Eq. 8 average; \code{"pmin"} is an optional element-wise
+intersection extension.}
+
 \item{connection_score}{Optional directional score matrix from \code{find_connection(return_score = TRUE)}.}
+
+\item{response_blocks}{Optional character vector containing every data block
+that must have a response-side forest. The workflow supplies all input
+block names so an entirely omitted block cannot be silently ignored.}
 
 \item{score_power}{Exponent applied to raw connection scores before normalization.}
 

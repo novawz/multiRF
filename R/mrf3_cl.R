@@ -49,8 +49,8 @@ run_cluster_pipeline <- function(recon,
   args$ytry <- NULL
 
   if (identical(cluster_method, "similarity")) {
-    if (is.null(args$shared_method)) args$shared_method <- "PAM"
-    if (is.null(args$specific_method)) args$specific_method <- "PAM"
+    if (is.null(args$shared_method)) args$shared_method <- "Spectral"
+    if (is.null(args$specific_method)) args$specific_method <- "Spectral"
     return(do.call(mrf3_specific_clustering, args))
   }
 
@@ -164,7 +164,7 @@ merge_cluster_outputs <- function(shared_specific, specific_clustering) {
 
   # Build clusters list: shared + per-block specific
   clusters <- list(shared = shared_cl)
-  spec_cl_src <- specific_clustering$specific
+  spec_cl_src <- specific_clustering$specific$by_omics
   if (is.list(spec_cl_src)) {
     for (nm in names(spec_cl_src)) {
       cl_vec <- NULL
@@ -195,7 +195,8 @@ run_branch_pipeline <- function(dat_input,
   recon_defaults <- list(
     rfit = mod_input,
     model_top_v = model_top_v_use,
-    connection_score = connection_score
+    connection_score = connection_score,
+    response_blocks = names(dat_input)
   )
   final_recon_args <- utils::modifyList(recon_defaults, recon_args)
   final_recon_args$fused_top_v <- fused_top_v_use

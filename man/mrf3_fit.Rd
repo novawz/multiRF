@@ -30,6 +30,7 @@ mrf3_fit(
   top_v = NULL,
   model_top_v = NULL,
   recon_fusion = c("weighted", "uniform"),
+  global_fusion = c("average", "pmin"),
   score_power = 1,
   score_floor = 0,
   fallback_uniform = TRUE,
@@ -40,6 +41,7 @@ mrf3_fit(
   neff_quantile = 0.5,
   model_top_v_tune_args = list(),
   fused_top_v_tune_args = list(),
+  select_connection = FALSE,
   return_data = FALSE,
   compact_output = FALSE,
   verbose = TRUE,
@@ -60,8 +62,8 @@ to the engine default.}
 \item{samptype}{Sampling scheme passed to forest fitting: \code{"swor"} or \code{"swr"}.}
 
 \item{connect_list}{Optional predefined connections (\code{list(c(response, predictor), ...)}).
-If \code{NULL}, directional connections are selected automatically by \code{find_connection()}
-from fitted forests.}
+If \code{NULL}, all directed pairwise connections are retained and their
+modularity scores are used as soft fusion weights.}
 
 \item{filter_mode}{Feature filtering mode passed to \code{filter_omics()}.}
 
@@ -82,7 +84,9 @@ shared, specific, and robust branches: \code{"similarity"} (default),
 shared fraction (\verb{1 - ||R||_F^2 / ||X||_F^2}) is also computed by
 \code{get_shared_frac()} and attached as \code{shared_frac}.
 By default, this function passes \code{specific_top_v = selected_fused_top_v}
-into this branch.}
+into this branch. Residual unsupervised forests inherit the main \code{ntree},
+\code{samptype}, \code{ytry}, \code{proximity}, \code{nsplit}, \code{nthread}, \code{nodesize}, and maximum
+depth settings unless a corresponding \verb{specific_*} value is supplied here.}
 
 \item{clustering_args}{A named list of additional arguments passed to
 the shared/specific clustering stage.}
@@ -90,9 +94,8 @@ the shared/specific clustering stage.}
 \item{run_imd}{Logical; whether to run \code{get_multi_weights()} as a pipeline stage.}
 
 \item{run_cluster_imd}{Logical; whether to run \code{cluster_imd()} after global
-IMD when \code{run_imd = TRUE}. If \code{NULL} (default), inherits from \code{run_imd}.
-Set to \code{FALSE} to compute global IMD weights only without the per-cluster
-refit, which can be very memory-intensive for sub-MRF models.}
+IMD when \code{run_imd = TRUE}. The default is \code{FALSE}; set it explicitly to
+\code{TRUE} to request the cluster-specific stage.}
 
 \item{imd_args}{A named list of additional arguments passed to \code{get_multi_weights()}.
 By default, this function sets \code{parallel = TRUE} for IMD unless overridden here.}
@@ -101,8 +104,9 @@ By default, this function sets \code{parallel = TRUE} for IMD unless overridden 
 using \code{mrf3_vs()} after IMD weights are available.}
 
 \item{variable_selection_args}{A named list of additional arguments passed to
-\code{mrf3_vs()}. \code{re_fit} is managed by workflow and ignored if provided:
-it is forced to \code{TRUE} when \code{run_robust_clustering = TRUE}, otherwise \code{FALSE}.}
+\code{mrf3_vs()}. The workflow defaults to raw-IMD filtering.
+An explicit \code{re_fit} is honored unless \code{run_robust_clustering = TRUE}, which
+requires and therefore forces refitting.}
 
 \item{run_robust_clustering}{Logical; whether to run a robust clustering
 branch that first selects variables from IMD weights and then re-clusters.}
@@ -121,11 +125,16 @@ By default, this function reuses cluster labels from
 and \code{fused_top_v}.}
 
 \item{model_top_v}{Model-level top-v cutoff used on each single-model
-forest weight matrix before fusion. Default \code{Inf} = no truncation (use all
-weights). Set to \code{NULL} to auto-tune via \code{tune_model_top_v()}.}
+forest weight matrix before fusion. The default \code{NULL} auto-tunes via
+\code{tune_model_top_v()}; use \code{Inf} for no truncation. A
+selected or fixed value at least \code{0.8 * n} is treated as no truncation.}
 
 \item{recon_fusion}{Reconstruction fusion mode passed to \code{get_reconstr_matrix()}:
 \code{"weighted"} (default) or \code{"uniform"}.}
+
+\item{global_fusion}{Global fusion across response blocks. \code{"average"}
+implements Eq. 8; \code{"pmin"} is an optional intersection extension and disables
+fused top-v tuning.}
 
 \item{score_power}{Exponent applied to connection scores for weighted reconstruction.}
 
@@ -133,14 +142,16 @@ weights). Set to \code{NULL} to auto-tune via \code{tune_model_top_v()}.}
 
 \item{fallback_uniform}{Logical; whether weighted reconstruction falls back to uniform averaging when scores are unavailable.}
 
-\item{fused_top_v}{Row-wise top-v truncation for fused weights. Default \code{Inf}
-= no truncation. Set to \code{NULL} to auto-tune, \code{FALSE} to skip entirely.}
+\item{fused_top_v}{Row-wise top-v truncation for fused weights. Default \code{NULL}
+= auto-tune via \code{tune_fused_top_v()}. Set to \code{Inf} for no truncation or
+\code{FALSE} to skip it. Values at least \code{0.8 * n} are treated as no truncation.}
 
 \item{fused_row_normalize}{Logical; whether to row-normalize fused weights after optional truncation.}
 
 \item{fused_keep_ties}{Logical; whether fused top-v truncation keeps ties at cutoff.}
 
-\item{top_v_method}{Strategy used when auto-selecting \code{top_v}.}
+\item{top_v_method}{Strategy used when auto-selecting \code{top_v}:
+\code{"entropy_elbow"} (default workflow) or \code{"neff"}.}
 
 \item{neff_quantile}{Quantile of effective neighborhood size used by the
 \code{"neff"} top-v rule.}
@@ -152,6 +163,10 @@ Workflow always uses \code{object = "entropy_elbow"}.}
 \item{fused_top_v_tune_args}{A named list of additional arguments passed to
 \code{tune_fused_top_v()} (e.g., \code{vmin}, \code{by}, \code{vmax}, \code{k}).
 Workflow always uses \code{object = "entropy_elbow"}.}
+
+\item{select_connection}{Logical; whether to opt into the legacy
+quality-based direction-selection step. The default \code{FALSE} preserves all
+directed connections for modularity-weighted fusion.}
 
 \item{return_data}{Logical; whether to include filtered/scaled data in output objects.}
 
@@ -167,10 +182,12 @@ clustering and full \code{vs_fit} object). Useful when keeping multiple
 \item{...}{Additional arguments passed to \code{mrf3_init()}.}
 }
 \value{
-A compact \code{mrf3_fit} object with top-level components:
-\code{config}, \code{init}, \code{tuning}, \code{reconstruction}, \code{clusters},
-\code{shared}, \code{specific}, \code{imd}, \code{cluster_imd},
-\code{variable_selection}, \code{robust_clustering}, and optional \code{data}.
+An \code{mrf3_fit} list with flat top-level components. Core fields are
+\code{config}, \code{models}, \code{connection}, \code{connection_score}, \code{model_top_v},
+\code{fused_top_v}, \code{tuning_detail}, \code{reconstruction}, \code{clusters}, \code{shared}, and
+\code{specific}. Optional stages populate \code{imd}, \code{cluster_imd}, \code{selected_vars},
+\code{selected_weights}, \code{selected_data}, \code{vs_detail}, \code{robust_clusters}, and
+\code{robust_detail}; \code{data} is included when \code{return_data = TRUE}.
 }
 \description{
 Stage-based multiRF fitting pipeline

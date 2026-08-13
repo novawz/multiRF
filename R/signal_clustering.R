@@ -10,7 +10,7 @@
 #' @return A sample-by-sample similarity matrix.
 build_similarity_from_weights <- function(W,
                                           similarity_type = c("second", "first"),
-                                          zero_diag = FALSE,
+                                          zero_diag = TRUE,
                                           symm = TRUE) {
   W <- validate_weight_matrix(W)
 
@@ -42,7 +42,7 @@ build_similarity_from_weights <- function(W,
 #' @return A list with `cl`, `cl_mod`, `k`, `method`, and `embed`.
 cluster_similarity_matrix <- function(S,
                                       k = NULL,
-                                      method = c("PAM", "Spectral"),
+                                      method = c("Spectral", "PAM"),
                                       tune_method = "silhouette",
                                       gap_w = "uniform",
                                       ...) {
@@ -53,9 +53,8 @@ cluster_similarity_matrix <- function(S,
   }
 
   # Zero diagonal for clustering: self-loops inflate degree without carrying
-
-  # cluster information (Ng-Jordan-Weiss 2001; von Luxburg 2007).
-  # The stored S retains its diagonal for kernel-PCA / embedding use.
+  # cluster information. These similarity objects are already hollow;
+  # repeat the operation here as a safe API boundary.
   diag(S) <- 0
 
   if (is.null(k)) {
@@ -73,6 +72,9 @@ cluster_similarity_matrix <- function(S,
       stop("`k` must be NULL or a single integer >= 2.")
     }
     k <- as.integer(k)
+    if (k >= nrow(S)) {
+      stop("`k` must be smaller than the number of samples (", nrow(S), ").")
+    }
     if (identical(method, "Spectral")) {
       clm <- spectral_cl(S, k_tune = k, ...)
     } else {
@@ -116,7 +118,7 @@ cluster_shared_similarity <- function(recon,
                                       mode = c("average", "ao_reg"),
                                       dat_use = "ALL",
                                       k = NULL,
-                                      method = c("PAM", "Spectral"),
+                                      method = c("Spectral", "PAM"),
                                       tune_method = "silhouette",
                                       gap_w = "uniform",
                                       similarity_type = c("second", "first"),
@@ -177,7 +179,7 @@ cluster_shared_similarity <- function(recon,
   S <- build_similarity_from_weights(
     W = W,
     similarity_type = similarity_type,
-    zero_diag = FALSE,
+    zero_diag = TRUE,
     symm = TRUE
   )
   cl_out <- cluster_similarity_matrix(
@@ -255,7 +257,7 @@ resolve_specific_k <- function(k, dat_names) {
 #' @return A list with per-omics specific similarities and clustering outputs.
 cluster_specific_similarity <- function(shared_specific,
                                         k = NULL,
-                                        method = c("PAM", "Spectral", "Proximity", "Enhanced_Proximity"),
+                                        method = c("Spectral", "PAM", "Proximity", "Enhanced_Proximity"),
                                         prox_method_cl = c("PAM", "Spectral"),
                                         tune_method = "silhouette",
                                         gap_w = "uniform",
@@ -316,7 +318,7 @@ cluster_specific_similarity <- function(shared_specific,
       S <- build_similarity_from_weights(
         W = W_spec[[d]],
         similarity_type = similarity_type,
-        zero_diag = FALSE,
+        zero_diag = TRUE,
         symm = TRUE
       )
       cl_out <- cluster_similarity_matrix(
@@ -383,10 +385,10 @@ mrf3_specific_clustering <- function(recon,
                                    shared_mode = c("average", "ao_reg"),
                                    shared_dat_use = "ALL",
                                    shared_k = NULL,
-                                   shared_method = c("PAM", "Spectral"),
+                                   shared_method = c("Spectral", "PAM"),
                                    shared_similarity_type = c("second", "first"),
                                    specific_k = NULL,
-                                   specific_method = c("PAM", "Spectral", "Proximity", "Enhanced_Proximity"),
+                                   specific_method = c("Spectral", "PAM", "Proximity", "Enhanced_Proximity"),
                                    specific_prox_method_cl = c("PAM", "Spectral"),
                                    specific_similarity_type = c("second", "first"),
                                    tune_method = "silhouette",

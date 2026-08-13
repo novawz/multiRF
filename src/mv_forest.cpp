@@ -21,7 +21,6 @@
 #include <cmath>
 #include <random>
 #include <array>
-#include <unordered_map>
 #include <map>
 
 #ifdef _OPENMP
@@ -46,6 +45,10 @@ struct Node {
   // imd_y_stats[j] = (sum_L_j^2/nL + sum_R_j^2/nR) for full Y
   // Only populated for internal nodes; empty for leaves.
   std::vector<double> imd_y_stats;
+  // Multivariate splitting response variable (MSRV): the response with the
+  // largest component split statistic at this node.  A leaf (or an
+  // unsupervised node) has no MSRV and keeps the sentinel -1.
+  int msrv = -1;
   // IMD: which X variable was used to split (same as split_var but
   // stored here for clarity; the importance goes to this X var)
   double imd_x_score = 0.0;  // total split score at this node
@@ -63,7 +66,9 @@ struct MatrixView {
 
   inline int nrow() const { return nrow_; }
   inline int ncol() const { return ncol_; }
-  inline double operator()(int i, int j) const { return data[i + j * nrow_]; }
+  inline double operator()(int i, int j) const {
+    return data[(std::size_t)i + (std::size_t)j * nrow_];
+  }
 };
 
 // rfsrc-style SWOR sampling:
@@ -170,6 +175,51 @@ static std::vector<int> sample_from_pool_rfsrc_style(const std::vector<int>& poo
   return out;
 }
 
+// Weighted sampling without replacement for candidate variables.  Variables
+// with zero weight are not eligible while positive mass exists.  The uniform
+// helper above remains the exact path when no weights are supplied, preserving
+// the established positive-seed stream for ordinary fits.
+template <typename RNG>
+static std::vector<int> sample_from_pool_weighted(
+    const std::vector<int>& pool_in,
+    const std::vector<double>& weights,
+    int sample_size,
+    RNG& rng)
+{
+  std::vector<int> pool;
+  std::vector<double> wt;
+  pool.reserve(pool_in.size());
+  wt.reserve(pool_in.size());
+  for (int idx : pool_in) {
+    double w = (idx >= 0 && idx < (int)weights.size()) ? weights[idx] : 0.0;
+    if (std::isfinite(w) && w > 0.0) {
+      pool.push_back(idx);
+      wt.push_back(w);
+    }
+  }
+  if (pool.empty()) {
+    return sample_from_pool_rfsrc_style(pool_in, sample_size, rng);
+  }
+
+  sample_size = std::max(1, std::min(sample_size, (int)pool.size()));
+  std::vector<int> out;
+  out.reserve(sample_size);
+  for (int draw = 0; draw < sample_size; draw++) {
+    double total = std::accumulate(wt.begin(), wt.end(), 0.0);
+    double target = random_unit(rng) * total;
+    double cumulative = 0.0;
+    int pick = (int)pool.size() - 1;
+    for (int k = 0; k < (int)pool.size(); k++) {
+      cumulative += wt[k];
+      if (target < cumulative) { pick = k; break; }
+    }
+    out.push_back(pool[pick]);
+    pool.erase(pool.begin() + pick);
+    wt.erase(wt.begin() + pick);
+  }
+  return out;
+}
+
 template <typename RNG>
 static std::vector<int> sample_cutpoint_positions(const std::vector<int>& candidates,
                                                   int nsplit,
@@ -214,10 +264,12 @@ static bool find_best_split_part(
     const std::vector<std::vector<int>>& node_sorted,   // [px][n_node] pre-sorted per var
     std::vector<int>& sample_pos,                       // reusable scratch [n_total]
     int mtry, int ytry, int nodesize_min, int nsplit,
+    const std::vector<double>* xvar_wt,
+    const std::vector<double>* yvar_wt,
     RNG& rng,
     int& best_var, double& best_val, double& best_score,
     std::vector<int>& left_samples, std::vector<int>& right_samples,
-    std::vector<double>& best_y_stats)
+    std::vector<double>& best_y_stats, int& best_msrv)
 {
   int n_node = (int)samples.size();
   int px = X.ncol();
@@ -228,14 +280,18 @@ static bool find_best_split_part(
   // Random subset of X columns (mtry)
   std::vector<int> x_pool(px);
   std::iota(x_pool.begin(), x_pool.end(), 0);
-  int n_x_try = std::min(mtry, px);
-  std::vector<int> x_candidates = sample_from_pool_rfsrc_style(x_pool, n_x_try, rng);
+  std::vector<int> x_candidates = xvar_wt
+    ? sample_from_pool_weighted(x_pool, *xvar_wt, std::min(mtry, px), rng)
+    : sample_from_pool_rfsrc_style(x_pool, std::min(mtry, px), rng);
+  int n_x_try = (int)x_candidates.size();
 
   // Random subset of Y columns (ytry)
   std::vector<int> y_pool(qy);
   std::iota(y_pool.begin(), y_pool.end(), 0);
-  int n_y_try = std::min(ytry, qy);
-  std::vector<int> y_candidates = sample_from_pool_rfsrc_style(y_pool, n_y_try, rng);
+  std::vector<int> y_candidates = yvar_wt
+    ? sample_from_pool_weighted(y_pool, *yvar_wt, std::min(ytry, qy), rng)
+    : sample_from_pool_rfsrc_style(y_pool, std::min(ytry, qy), rng);
+  int n_y_try = (int)y_candidates.size();
 
   // Pre-standardize selected Y columns within this node
   std::vector<double> y_means(n_y_try, 0.0);
@@ -253,13 +309,14 @@ static bool find_best_split_part(
       double d = Y(samples[k], j) - y_means[jj];
       ss += d * d;
     }
-    double var = (n_node > 1) ? ss / n_node : 1.0;
-    y_sds[jj] = (var > 1e-6) ? std::sqrt(var) : 0.0;
+    double var = (n_node > 1) ? ss / n_node : 0.0;
+    y_sds[jj] = (var > 0.0) ? std::sqrt(var) : 0.0;
   }
 
   best_score = -1.0;
   best_var = -1;
   best_val = 0.0;
+  best_msrv = -1;
 
   // Pre-compute standardized Y; build sample_id -> local index map
   std::vector<double> y_std_flat(n_y_try * n_node);
@@ -296,7 +353,6 @@ static bool find_best_split_part(
 
     for (int s = 0; s < n_node; s++) {
       int si = order[s];
-      double x_val = X(si, xvar);
       int local_k = sample_pos[si];
 
       // Check split before adding this sample to left
@@ -305,7 +361,7 @@ static bool find_best_split_part(
         double score = 0.0;
         int deltaNorm = 0;
         for (int jj = 0; jj < n_y_try; jj++) {
-          if (y_sds[jj] > 1e-6) {
+          if (y_sds[jj] > 0.0) {
             double sL = sum_L[jj];
             score += (sL * sL) / nL + (sL * sL) / (n_node - nL);
             deltaNorm++;
@@ -317,9 +373,17 @@ static bool find_best_split_part(
           if ((score - best_score) > RF_EPSILON) {
             best_score = score;
             best_y_stats.assign(qy, 0.0);
+            double max_component = -1.0;
             for (int jj = 0; jj < n_y_try; jj++) {
               double sL = sum_L[jj];
-              best_y_stats[y_candidates[jj]] = (sL * sL) / nL + (sL * sL) / (n_node - nL);
+              double component = (sL * sL) / nL +
+                (sL * sL) / (n_node - nL);
+              int yv = y_candidates[jj];
+              best_y_stats[yv] = component;
+              if (y_sds[jj] > 0.0 && component > max_component) {
+                max_component = component;
+                best_msrv = yv;
+              }
             }
             best_var = xvar;
             best_val = prev_x;
@@ -373,6 +437,8 @@ static std::vector<Node> build_tree_part(
     const std::vector<std::vector<int>>& sort_order,  // global pre-sorted [px][n]
     int n_total, int px,
     int mtry, int ytry, int nodesize_min, int max_depth, int nsplit,
+    const std::vector<double>* xvar_wt,
+    const std::vector<double>* yvar_wt,
     RNG& rng)
 {
   std::vector<Node> nodes;
@@ -399,10 +465,11 @@ static std::vector<Node> build_tree_part(
   root.nodesize = (int)bag_samples.size();
   nodes.push_back(root);
 
-  // Build root's sorted indices: filter global sort_order to bag samples
-  // Mark bag membership
-  std::vector<char> in_bag(n_total, 0);
-  for (int si : bag_samples) in_bag[si] = 1;
+  // Build root's sorted indices with one entry per bootstrap draw.  Keeping
+  // multiplicity here is essential for SWR: node.samples contains duplicate
+  // row IDs and every split statistic must count those draws independently.
+  std::vector<int> bag_frequency(n_total, 0);
+  for (int si : bag_samples) bag_frequency[si]++;
 
   SplitTask root_task;
   root_task.node_id = 0;
@@ -410,7 +477,9 @@ static std::vector<Node> build_tree_part(
   for (int j = 0; j < px; j++) {
     root_task.sorted[j].reserve(bag_samples.size());
     for (int si : sort_order[j]) {
-      if (in_bag[si]) root_task.sorted[j].push_back(si);
+      for (int k = 0; k < bag_frequency[si]; k++) {
+        root_task.sorted[j].push_back(si);
+      }
     }
   }
 
@@ -430,11 +499,12 @@ static std::vector<Node> build_tree_part(
       double bval, bscore;
       std::vector<int> lsamp, rsamp;
       std::vector<double> by_stats;
+      int bmsrv = -1;
 
       bool found = find_best_split_part(
         X, Y, node.samples, task.sorted, sample_pos,
-        mtry, ytry, nodesize_min, nsplit, rng,
-        bv, bval, bscore, lsamp, rsamp, by_stats);
+        mtry, ytry, nodesize_min, nsplit, xvar_wt, yvar_wt, rng,
+        bv, bval, bscore, lsamp, rsamp, by_stats, bmsrv);
 
       if (!found) continue;
 
@@ -442,6 +512,7 @@ static std::vector<Node> build_tree_part(
       node.split_val = bval;
       node.imd_y_stats = std::move(by_stats);
       node.imd_x_score = bscore;
+      node.msrv = bmsrv;
 
       // Mark left samples for partitioning
       for (int si : lsamp) left_flag[si] = 1;
@@ -562,8 +633,8 @@ static bool find_best_split_fast(
       double d = Y(samples[k], j) - y_means[jj];
       ss += d * d;
     }
-    double var = (n_node > 1) ? ss / n_node : 1.0;
-    y_sds[jj] = (var > 1e-6) ? std::sqrt(var) : 0.0;
+    double var = (n_node > 1) ? ss / n_node : 0.0;
+    y_sds[jj] = (var > 0.0) ? std::sqrt(var) : 0.0;
   }
 
   best_score = -1.0;
@@ -591,7 +662,6 @@ static bool find_best_split_fast(
 
     std::vector<int> split_positions;
     split_positions.reserve(n_node);
-    int nL_scan = 0;
     double prev_scan = 0.0;
     bool first_scan = true;
     for (int s = 0; s < n_total; s++) {
@@ -602,7 +672,6 @@ static bool find_best_split_fast(
       if (!first_scan && x_val != prev_scan) {
         split_positions.push_back(s);
       }
-      nL_scan++;
       prev_scan = x_val;
       first_scan = false;
     }
@@ -615,7 +684,6 @@ static bool find_best_split_fast(
     std::vector<double> sum_L(n_y_try, 0.0);
     int nL = 0;
     double prev_x = 0.0;
-    bool first = true;
 
     for (int s = 0; s < n_total; s++) {
       int si = order[s];
@@ -630,7 +698,7 @@ static bool find_best_split_fast(
         double score = 0.0;
         int deltaNorm = 0;
         for (int jj = 0; jj < n_y_try; jj++) {
-          if (y_sds[jj] > 1e-6) {
+          if (y_sds[jj] > 0.0) {
             double sL = sum_L[jj];
             score += (sL * sL) / nL + (sL * sL) / nR;
             deltaNorm++;
@@ -662,7 +730,6 @@ static bool find_best_split_fast(
         sum_L[jj] += y_std_flat[jj * n_node + local_k];
       }
       prev_x = x_val;
-      first = false;
     }
   }
 
@@ -840,8 +907,8 @@ static bool find_best_split(
       ss += d * d;
     }
     // Standard deviation with n denominator (population sd within node)
-    double var = (n_node > 1) ? ss / n_node : 1.0;
-    y_sds[jj] = (var > 1e-6) ? std::sqrt(var) : 0.0;
+    double var = (n_node > 1) ? ss / n_node : 0.0;
+    y_sds[jj] = (var > 0.0) ? std::sqrt(var) : 0.0;
   }
 
   best_score = -1.0;
@@ -893,7 +960,7 @@ static bool find_best_split(
       double score = 0.0;
       int deltaNorm = 0;
       for (int jj = 0; jj < n_y_try; jj++) {
-        if (y_sds[jj] > 1e-6) {
+        if (y_sds[jj] > 0.0) {
           double sL = sum_L[jj];
           score += (sL * sL) / nL + (sL * sL) / nR;
           deltaNorm++;
@@ -953,11 +1020,11 @@ template <typename Mat>
 static bool find_best_split_unsup(
     const Mat& D,                     // n x p data (used as both X and Y)
     const std::vector<int>& samples,
-    const std::vector<char>& in_node,
+    const std::vector<int>& node_frequency,
     const std::vector<std::vector<int>>& sort_order,
     std::vector<int>& sample_pos,     // reusable n-length scratch buffer
     int n_total,
-    int mtry, int ytry, int nodesize_min,
+    int mtry, int ytry, int nodesize_min, int nsplit,
     std::mt19937& rng,
     int& best_var, double& best_val, double& best_score,
     std::vector<int>& left_samples, std::vector<int>& right_samples)
@@ -1008,13 +1075,13 @@ static bool find_best_split_unsup(
         double d = D(samples[k], j) - y_means[jj];
         ss += d * d;
       }
-      double var = (n_node > 1) ? ss / n_node : 1.0;
-      y_sds[jj] = (var > 1e-6) ? std::sqrt(var) : 0.0;
+      double var = (n_node > 1) ? ss / n_node : 0.0;
+      y_sds[jj] = (var > 0.0) ? std::sqrt(var) : 0.0;
     }
 
     bool any_informative = false;
     for (int jj = 0; jj < n_y_try; jj++) {
-      if (y_sds[jj] > 1e-6) { any_informative = true; break; }
+      if (y_sds[jj] > 0.0) { any_informative = true; break; }
     }
     if (!any_informative) continue;
 
@@ -1028,8 +1095,27 @@ static bool find_best_split_unsup(
       }
     }
 
-    // Scan pre-sorted indices for this split variable
+    // Identify all distinct-value boundaries in the node.  Positions are
+    // measured in bootstrap draws (not unique row IDs), so SWR multiplicity
+    // contributes to both child sizes and the pseudo-response sums.
     const std::vector<int>& order = sort_order[xvar];
+    std::vector<int> boundary_rows;
+    boundary_rows.reserve(n_node);
+    double boundary_prev_x = 0.0;
+    bool boundary_first = true;
+    for (int s = 0; s < n_total; s++) {
+      int si = order[s];
+      if (node_frequency[si] <= 0) continue;
+      double x_val = D(si, xvar);
+      if (!boundary_first && x_val != boundary_prev_x) boundary_rows.push_back(s);
+      boundary_prev_x = x_val;
+      boundary_first = false;
+    }
+    if (boundary_rows.empty()) continue;
+    std::vector<int> eval_rows = sample_cutpoint_positions(boundary_rows, nsplit, rng);
+    int eval_idx = 0;
+
+    // Scan pre-sorted unique row IDs, adding each row's bootstrap frequency.
     std::vector<double> sum_L(n_y_try, 0.0);
     int nL = 0;
     double prev_x = 0.0;
@@ -1037,18 +1123,20 @@ static bool find_best_split_unsup(
 
     for (int s = 0; s < n_total; s++) {
       int si = order[s];
-      if (!in_node[si]) continue;
+      int multiplicity = node_frequency[si];
+      if (multiplicity <= 0) continue;
 
       double x_val = D(si, xvar);
       int local_k = sample_pos[si];
 
       // nodesize enforced at parent level only; match rfsrc cutpoint check (>0)
-      if (!first && x_val != prev_x) {
+      if (!first && x_val != prev_x &&
+          eval_idx < (int)eval_rows.size() && s == eval_rows[eval_idx]) {
         int nR = n_node - nL;
         double score = 0.0;
         int deltaNorm = 0;
         for (int jj = 0; jj < n_y_try; jj++) {
-          if (y_sds[jj] > 1e-6) {
+          if (y_sds[jj] > 0.0) {
             double sL = sum_L[jj];
             score += (sL * sL) / nL + (sL * sL) / nR;
             deltaNorm++;
@@ -1061,11 +1149,12 @@ static bool find_best_split_unsup(
           best_var = xvar;
           best_val = (prev_x + x_val) / 2.0;
         }
+        eval_idx++;
       }
 
-      nL++;
+      nL += multiplicity;
       for (int jj = 0; jj < n_y_try; jj++) {
-        sum_L[jj] += y_std_flat[jj * n_node + local_k];
+        sum_L[jj] += multiplicity * y_std_flat[jj * n_node + local_k];
       }
       prev_x = x_val;
       first = false;
@@ -1099,13 +1188,13 @@ static std::vector<Node> build_tree_unsup(
     const std::vector<int>& bag_samples,
     const std::vector<std::vector<int>>& sort_order,
     int n_total,
-    int mtry, int ytry, int nodesize_min, int max_depth,
+    int mtry, int ytry, int nodesize_min, int max_depth, int nsplit,
     std::mt19937& rng)
 {
   std::vector<Node> nodes;
   nodes.reserve(256);
 
-  std::vector<char> in_node(n_total, 0);
+  std::vector<int> node_frequency(n_total, 0);
   std::vector<int> sample_pos(n_total, -1);
 
   Node root;
@@ -1134,18 +1223,19 @@ static std::vector<Node> build_tree_unsup(
       double bval, bscore;
       std::vector<int> lsamp, rsamp;
 
-      // Set in_node flags for current node
-      for (int si : node.samples) in_node[si] = true;
+      // Count bootstrap multiplicity for the current node.
+      for (int si : node.samples) node_frequency[si]++;
 
-      if (!find_best_split_unsup(D, node.samples, in_node, sort_order, sample_pos, n_total,
-                                  mtry, ytry, nodesize_min,
+      if (!find_best_split_unsup(D, node.samples, node_frequency, sort_order,
+                                  sample_pos, n_total,
+                                  mtry, ytry, nodesize_min, nsplit,
                                   rng, bv, bval, bscore, lsamp, rsamp)) {
-        for (int si : node.samples) in_node[si] = false;
+        for (int si : node.samples) node_frequency[si] = 0;
         continue;
       }
 
-      // Clear in_node flags after split
-      for (int si : node.samples) in_node[si] = false;
+      // Clear multiplicities after split.
+      for (int si : node.samples) node_frequency[si] = 0;
 
       node.split_var = bv;
       node.split_val = bval;
@@ -1339,6 +1429,19 @@ static double spearman_corr(const double* a, const double* b, int d) {
   return (denom > 1e-12) ? cov / denom : 0.0;
 }
 
+// For supervised enhanced proximity, the legacy R implementation builds
+// predictor and response PCA embeddings separately, computes one Spearman
+// correlation in each coordinate system, then averages the two correlations.
+// `split` is the number of leading predictor-embedding columns. A non-positive
+// split keeps the one-embedding behavior used by unsupervised forests.
+static double grouped_spearman_corr(const double* a, const double* b,
+                                    int d, int split) {
+  if (split <= 0 || split >= d) return spearman_corr(a, b, d);
+  double corr_x = spearman_corr(a, b, split);
+  double corr_y = spearman_corr(a + split, b + split, d - split);
+  return 0.5 * (corr_x + corr_y);
+}
+
 // ──────────────── Forest + matrix accumulation ────────────────
 
 // [[Rcpp::export]]
@@ -1354,19 +1457,53 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
                        int samptype = 0,
                        int prox_mode = 0,
                        Nullable<NumericMatrix> embed = R_NilValue,
+                       int embed_split = 0,
                        double sibling_gamma = 0.5,
-                       int enhanced_prox_mode = 0) {
+                       int enhanced_prox_mode = 0,
+                       int forest_wt_mode = 0,
+                       Nullable<NumericVector> xvar_wt = R_NilValue,
+                       Nullable<NumericVector> yvar_wt = R_NilValue) {
   // enhanced_prox_mode: 0 = off, 1 = compute enhanced proximity
 
   int n = X.nrow();
   int px = X.ncol();
   int qy = Y.ncol();
 
+  if (n < 2 || px < 1) {
+    stop("X must contain at least two rows and one column");
+  }
+  if (Y.nrow() != n || qy < 1) {
+    stop("Y must have nrow(X) rows and at least one column");
+  }
+  if (ntree < 1) stop("ntree must be a positive integer");
+  if (seed == NA_INTEGER) stop("seed must be a finite integer");
+  if (nodesize_min < 1) stop("nodesize_min must be a positive integer");
+  if (max_depth < 0) stop("max_depth must be a non-negative integer");
+  if (nthread < 0) stop("nthread must be a non-negative integer");
+  if (samptype < 0 || samptype > 1) {
+    stop("samptype must be 0 ('swor') or 1 ('swr')");
+  }
+  if (prox_mode < -1 || prox_mode > 2) {
+    stop("prox_mode must be -1 ('none'), 0 ('all'), 1 ('inbag'), or 2 ('oob')");
+  }
+  if (enhanced_prox_mode < 0 || enhanced_prox_mode > 1) {
+    stop("enhanced_prox_mode must be 0 or 1");
+  }
+  if (!std::isfinite(sibling_gamma) || sibling_gamma < 0.0) {
+    stop("sibling_gamma must be finite and non-negative");
+  }
+  if (embed_split < 0) stop("embed_split must be a non-negative integer");
+
   // Defaults: ceiling(px/3) for mtry and ceiling(qy/3) for ytry,
   // and nsplit = 10 to match randomForestSRC's default randomized cut search.
   if (mtry <= 0) mtry = std::max(1, (int)std::ceil((double)px / 3.0));
   if (ytry <= 0) ytry = std::max(1, (int)std::ceil((double)qy / 3.0));
-  if (nsplit < 0) nsplit = 10;
+  mtry = std::min(mtry, px);
+  ytry = std::min(ytry, qy);
+  if (nsplit < 0) stop("nsplit must be a non-negative integer");
+  if (forest_wt_mode < 0 || forest_wt_mode > 2) {
+    stop("forest_wt_mode must be 0 ('all'), 1 ('inbag'), or 2 ('oob')");
+  }
   // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
   #ifdef _OPENMP
@@ -1374,13 +1511,60 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   #endif
 
   // Copy to thread-safe MatrixView (avoid Rcpp operator() inside OpenMP)
-  std::vector<double> X_buf(n * px), Y_buf(n * qy);
+  std::vector<double> X_buf((std::size_t)n * px);
+  std::vector<double> Y_buf((std::size_t)n * qy);
   for (int i = 0; i < n; i++) {
-    for (int j = 0; j < px; j++) X_buf[i + j * n] = X(i, j);
-    for (int j = 0; j < qy; j++) Y_buf[i + j * n] = Y(i, j);
+    for (int j = 0; j < px; j++) {
+      double value = X(i, j);
+      if (!std::isfinite(value)) stop("X must contain only finite values");
+      X_buf[(std::size_t)i + (std::size_t)j * n] = value;
+    }
+    for (int j = 0; j < qy; j++) {
+      double value = Y(i, j);
+      if (!std::isfinite(value)) stop("Y must contain only finite values");
+      Y_buf[(std::size_t)i + (std::size_t)j * n] = value;
+    }
   }
   MatrixView Xv(X_buf.data(), n, px);
   MatrixView Yv(Y_buf.data(), n, qy);
+
+  // Optional variable-selection weights.  Copy before entering OpenMP so no
+  // R API is accessed by worker threads.
+  std::vector<double> xvar_wt_buf, yvar_wt_buf;
+  const std::vector<double>* xvar_wt_ptr = nullptr;
+  const std::vector<double>* yvar_wt_ptr = nullptr;
+  if (xvar_wt.isNotNull()) {
+    NumericVector w(xvar_wt.get());
+    if (w.size() != px) stop("xvar_wt must have length ncol(X)");
+    xvar_wt_buf.assign(w.begin(), w.end());
+    double total = 0.0;
+    for (double value : xvar_wt_buf) {
+      if (!std::isfinite(value) || value < 0.0) {
+        stop("xvar_wt must be finite and non-negative");
+      }
+      total += value;
+    }
+    if (!(total > 0.0) || !std::isfinite(total)) {
+      stop("xvar_wt must contain positive finite mass");
+    }
+    xvar_wt_ptr = &xvar_wt_buf;
+  }
+  if (yvar_wt.isNotNull()) {
+    NumericVector w(yvar_wt.get());
+    if (w.size() != qy) stop("yvar_wt must have length ncol(Y)");
+    yvar_wt_buf.assign(w.begin(), w.end());
+    double total = 0.0;
+    for (double value : yvar_wt_buf) {
+      if (!std::isfinite(value) || value < 0.0) {
+        stop("yvar_wt must be finite and non-negative");
+      }
+      total += value;
+    }
+    if (!(total > 0.0) || !std::isfinite(total)) {
+      stop("yvar_wt must contain positive finite mass");
+    }
+    yvar_wt_ptr = &yvar_wt_buf;
+  }
 
   // Seed
   unsigned int actual_seed = (seed < 0) ? std::random_device{}() : (unsigned int)seed;
@@ -1407,21 +1591,33 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   std::vector<double> embed_buf;
   if (compute_enhanced) {
     NumericMatrix embed_mat(embed.get());
+    if (embed_mat.nrow() != n || embed_mat.ncol() < 1) {
+      stop("embed must have nrow(X) rows and at least one column");
+    }
     embed_dim = embed_mat.ncol();
-    embed_buf.resize(n * embed_dim);
+    if (embed_split >= embed_dim) {
+      stop("embed_split must be smaller than ncol(embed)");
+    }
+    embed_buf.resize((std::size_t)n * embed_dim);
     for (int i = 0; i < n; i++)
-      for (int j = 0; j < embed_dim; j++)
-        embed_buf[i + j * n] = embed_mat(i, j);
+      for (int j = 0; j < embed_dim; j++) {
+        double value = embed_mat(i, j);
+        if (!std::isfinite(value)) stop("embed must contain only finite values");
+        embed_buf[(std::size_t)i + (std::size_t)j * n] = value;
+      }
+  } else if (enhanced_prox_mode > 0) {
+    stop("embed must be supplied when enhanced_prox_mode is enabled");
   }
 
   // Output: plain C++ buffers for thread-safe accumulation
   // prox_mode: -1 = skip proximity entirely, 0 = all, 1 = inbag, 2 = oob
   bool compute_prox = (prox_mode >= 0);
-  std::vector<double> fw_buf(n * n, 0.0);
+  const std::size_t nn = (std::size_t)n * (std::size_t)n;
+  std::vector<double> fw_buf(nn, 0.0);
   std::vector<double> fw_denom_buf(n, 0.0);
-  std::vector<double> prox_buf(compute_prox ? n * n : 0, 0.0);
-  std::vector<double> prox_denom_buf(prox_mode > 0 ? n * n : 0, 0.0);
-  std::vector<double> eprox_buf(compute_enhanced ? n * n : 0, 0.0);
+  std::vector<double> prox_buf(compute_prox ? nn : 0, 0.0);
+  std::vector<double> prox_denom_buf(prox_mode > 0 ? nn : 0, 0.0);
+  std::vector<double> eprox_buf(compute_enhanced ? nn : 0, 0.0);
 
   // Per-tree results: tree structure + leaf membership + bootstrap frequency
   struct TreeResult {
@@ -1434,21 +1630,11 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   // Pre-sort all X columns once (shared across trees, read-only)
   auto sort_order = presort_columns(Xv, n, px);
 
-  // Parallel tree building with thread-local accumulation buffers.
+  // Phase 1: build trees in parallel.  Each tree owns its RNG streams and its
+  // result slot, so scheduling cannot change the fitted forest.
   #ifdef _OPENMP
-  #pragma omp parallel
+  #pragma omp parallel for schedule(dynamic)
   #endif
-  {
-    std::vector<double> fw_local(n * n, 0.0);
-    std::vector<double> fw_denom_local(n, 0.0);
-    std::vector<double> prox_local(compute_prox ? n * n : 0, 0.0);
-    std::vector<double> prox_denom_local(prox_mode > 0 ? n * n : 0, 0.0);
-    std::vector<double> eprox_local(compute_enhanced ? n * n : 0, 0.0);
-    // Scratch buffers for enhanced proximity centroid computation
-    std::vector<double> centroid_scratch(compute_enhanced ? 2 * embed_dim : 0, 0.0);
-    #ifdef _OPENMP
-    #pragma omp for schedule(dynamic)
-    #endif
   for (int t = 0; t < ntree; t++) {
     RfsrcRan1 rng_boot(chain_seed_a[t]);
     RfsrcRan1 rng_split(chain_seed_b[t]);
@@ -1470,19 +1656,20 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     } else {
       // SWOR: sample WITHOUT replacement (default, matches rfsrc samptype="swor")
       // Draw ~63.2% of samples (matching expected unique count of standard bootstrap)
-      int samp_size = std::max(1, (int)std::round(n * (1.0 - std::exp(-1.0))));
+      int samp_size = std::max(1, (int)std::round(0.632 * n));
       bag = sample_swor_rfsrc_style(n, samp_size, rng_boot);
       for (int i = 0; i < samp_size; i++) {
         inbag_freq[bag[i]] = 1;
       }
     }
-    tree_results[t].inbag = inbag_freq;
+    tree_results[t].inbag = std::move(inbag_freq);
     std::sort(bag.begin(), bag.end());
 
     // Build tree with partition-based sorted indices (ranger-style)
     tree_results[t].nodes = build_tree_part(Xv, Yv, bag, sort_order, n, px,
                                              mtry, ytry, nodesize_min,
-                                             max_depth, nsplit, rng_split);
+                                             max_depth, nsplit, xvar_wt_ptr,
+                                             yvar_wt_ptr, rng_split);
 
     // Release sample vectors from all nodes — they are only needed during
     // tree construction; leaf membership is obtained via predict_leaf.
@@ -1496,15 +1683,24 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     for (int i = 0; i < n; i++) {
       tree_results[t].leaf_ids[i] = predict_leaf(tree_results[t].nodes, Xv, i);
     }
+  }
 
-    // Accumulate forest weights and proximity.
-    // Forest-weight semantics are currently inbag-style:
-    //   - rows are all samples predicted through the tree
-    //   - columns are inbag donors only
-    //   - each row is normalized by the number of trees contributing to it
-    std::unordered_map<int, std::vector<int>> leaf_groups;
+  // Phase 2: accumulate strictly in tree-index order.  Besides making floating
+  // point results bit-identical across thread counts, this avoids allocating
+  // multiple n-by-n matrices per OpenMP worker.
+  std::vector<double> centroid_scratch(compute_enhanced ? 2 * embed_dim : 0, 0.0);
+
+  for (int t = 0; t < ntree; t++) {
+    const auto& inbag_freq = tree_results[t].inbag;
+    const auto& leaf_ids = tree_results[t].leaf_ids;
+
+    // Accumulate forest weights.
+    //   all   (0): all query rows, all observed rows as uniform donors (Eq. 3)
+    //   inbag (1): all query rows, bootstrap-frequency-weighted inbag donors
+    //   oob   (2): OOB query rows only, bootstrap-frequency-weighted donors
+    std::map<int, std::vector<int>> leaf_groups;
     for (int i = 0; i < n; i++) {
-      leaf_groups[tree_results[t].leaf_ids[i]].push_back(i);
+      leaf_groups[leaf_ids[i]].push_back(i);
     }
 
     for (auto& kv : leaf_groups) {
@@ -1512,33 +1708,29 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       int g = (int)group.size();
       if (g == 0) continue;
 
-      // Pre-extract inbag donors and their weights in this leaf.
-      // This avoids the branch `if (inbag_freq[ib] > 0)` in the inner loop.
-      std::vector<int> ib_idx;
-      std::vector<double> ib_wt;
-      double boot_leaf_size = 0.0;
-      ib_idx.reserve(g);
-      ib_wt.reserve(g);
-      for (int a = 0; a < g; a++) {
-        int freq = inbag_freq[group[a]];
-        if (freq > 0) {
-          ib_idx.push_back(group[a]);
-          ib_wt.push_back((double)freq);
-          boot_leaf_size += freq;
+      std::vector<int> donor_idx;
+      std::vector<double> donor_wt;
+      double donor_mass = 0.0;
+      donor_idx.reserve(g);
+      donor_wt.reserve(g);
+      for (int idx : group) {
+        double wt = (forest_wt_mode == 0) ? 1.0 : (double)inbag_freq[idx];
+        if (wt > 0.0) {
+          donor_idx.push_back(idx);
+          donor_wt.push_back(wt);
+          donor_mass += wt;
         }
       }
-      if (boot_leaf_size < 1.0) continue;
-
-      // Normalize weights once
-      double inv_bls = 1.0 / boot_leaf_size;
-      int n_ib = (int)ib_idx.size();
+      if (donor_mass < 1.0) continue;
+      double inv_mass = 1.0 / donor_mass;
 
       for (int a = 0; a < g; a++) {
         int ia = group[a];
-        fw_denom_local[ia] += 1.0;
-        double* row = &fw_local[ia * n];
-        for (int b = 0; b < n_ib; b++) {
-          row[ib_idx[b]] += ib_wt[b] * inv_bls;
+        if (forest_wt_mode == 2 && inbag_freq[ia] > 0) continue;
+        fw_denom_buf[ia] += 1.0;
+        double* row = &fw_buf[(std::size_t)ia * n];
+        for (int b = 0; b < (int)donor_idx.size(); b++) {
+          row[donor_idx[b]] += donor_wt[b] * inv_mass;
         }
       }
     }
@@ -1552,11 +1744,11 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
           int g = (int)group.size();
           for (int a = 0; a < g; a++) {
             int ia = group[a];
-            prox_local[ia * n + ia] += 1.0;
+            prox_buf[(std::size_t)ia * n + ia] += 1.0;
             for (int b = a + 1; b < g; b++) {
               int ib = group[b];
-              prox_local[ia * n + ib] += 1.0;
-              prox_local[ib * n + ia] += 1.0;
+              prox_buf[(std::size_t)ia * n + ib] += 1.0;
+              prox_buf[(std::size_t)ib * n + ia] += 1.0;
             }
           }
         }
@@ -1574,17 +1766,17 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
           }
         }
 
-        std::unordered_map<int, std::vector<int>> prox_leaf_groups;
+        std::map<int, std::vector<int>> prox_leaf_groups;
         for (int idx : prox_members) {
-          prox_leaf_groups[tree_results[t].leaf_ids[idx]].push_back(idx);
+          prox_leaf_groups[leaf_ids[idx]].push_back(idx);
         }
         for (int a = 0; a < (int)prox_members.size(); a++) {
           int ia = prox_members[a];
-          prox_denom_local[ia * n + ia] += 1.0;
+          prox_denom_buf[(std::size_t)ia * n + ia] += 1.0;
           for (int b = a + 1; b < (int)prox_members.size(); b++) {
             int ib = prox_members[b];
-            prox_denom_local[ia * n + ib] += 1.0;
-            prox_denom_local[ib * n + ia] += 1.0;
+            prox_denom_buf[(std::size_t)ia * n + ib] += 1.0;
+            prox_denom_buf[(std::size_t)ib * n + ia] += 1.0;
           }
         }
         for (auto& kv : prox_leaf_groups) {
@@ -1592,11 +1784,11 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
           int g = (int)group.size();
           for (int a = 0; a < g; a++) {
             int ia = group[a];
-            prox_local[ia * n + ia] += 1.0;
+            prox_buf[(std::size_t)ia * n + ia] += 1.0;
             for (int b = a + 1; b < g; b++) {
               int ib = group[b];
-              prox_local[ia * n + ib] += 1.0;
-              prox_local[ib * n + ia] += 1.0;
+              prox_buf[(std::size_t)ia * n + ib] += 1.0;
+              prox_buf[(std::size_t)ib * n + ia] += 1.0;
             }
           }
         }
@@ -1609,19 +1801,17 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     // Same-leaf pairs get weight 1; sibling-leaf pairs get gamma * max(corr, 0).
     if (compute_enhanced) {
       const auto& nodes = tree_results[t].nodes;
-      const auto& lids = tree_results[t].leaf_ids;
-
       // 1. Same-leaf contribution (weight = 1)
       for (auto& kv : leaf_groups) {
         const std::vector<int>& group = kv.second;
         int g = (int)group.size();
         for (int a = 0; a < g; a++) {
           int ia = group[a];
-          eprox_local[ia * n + ia] += 1.0;
+          eprox_buf[(std::size_t)ia * n + ia] += 1.0;
           for (int b = a + 1; b < g; b++) {
             int ib = group[b];
-            eprox_local[ia * n + ib] += 1.0;
-            eprox_local[ib * n + ia] += 1.0;
+            eprox_buf[(std::size_t)ia * n + ib] += 1.0;
+            eprox_buf[(std::size_t)ib * n + ia] += 1.0;
           }
         }
       }
@@ -1650,16 +1840,18 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
         std::fill(cent_r, cent_r + embed_dim, 0.0);
         for (int si : grp_l)
           for (int d = 0; d < embed_dim; d++)
-            cent_l[d] += embed_buf[si + d * n];
+            cent_l[d] += embed_buf[(std::size_t)si + (std::size_t)d * n];
         for (int si : grp_r)
           for (int d = 0; d < embed_dim; d++)
-            cent_r[d] += embed_buf[si + d * n];
+            cent_r[d] += embed_buf[(std::size_t)si + (std::size_t)d * n];
         double inv_l = 1.0 / grp_l.size();
         double inv_r = 1.0 / grp_r.size();
         for (int d = 0; d < embed_dim; d++) { cent_l[d] *= inv_l; cent_r[d] *= inv_r; }
 
         // Spearman correlation of centroids
-        double corr = spearman_corr(cent_l, cent_r, embed_dim);
+        double corr = grouped_spearman_corr(
+          cent_l, cent_r, embed_dim, embed_split
+        );
         double w = sibling_gamma * std::max(corr, 0.0);
         if (w <= 0.0) continue;
         if (w > 1.0) w = 1.0;
@@ -1667,123 +1859,92 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
         // Add sibling proximity
         for (int a : grp_l) {
           for (int b : grp_r) {
-            eprox_local[a * n + b] += w;
-            eprox_local[b * n + a] += w;
+            eprox_buf[(std::size_t)a * n + b] += w;
+            eprox_buf[(std::size_t)b * n + a] += w;
           }
         }
       }
     }
   }
-    #ifdef _OPENMP
-    #pragma omp critical
-    #endif
-    {
-      for (std::size_t i = 0; i < fw_denom_buf.size(); ++i) {
-        fw_denom_buf[i] += fw_denom_local[i];
-      }
-      if (prox_mode > 0) {
-        for (std::size_t idx = 0; idx < prox_denom_buf.size(); ++idx) {
-          prox_denom_buf[idx] += prox_denom_local[idx];
-        }
-      }
-      for (std::size_t idx = 0; idx < fw_buf.size(); ++idx) {
-        fw_buf[idx] += fw_local[idx];
-      }
-      if (compute_prox) {
-        for (std::size_t idx = 0; idx < prox_buf.size(); ++idx) {
-          prox_buf[idx] += prox_local[idx];
-        }
-      }
-      if (compute_enhanced) {
-        for (std::size_t idx = 0; idx < eprox_buf.size(); ++idx) {
-          eprox_buf[idx] += eprox_local[idx];
-        }
-      }
-    }
-  }
 
-  // Copy to R matrices + normalize
+  // Copy one dense buffer at a time and release it before allocating the next
+  // output matrix, keeping peak memory close to the size of the returned data.
   NumericMatrix forest_wt(n, n);
-  NumericMatrix prox(n, n);
-  IntegerMatrix membership(n, ntree);
-  IntegerMatrix inbag_mat(n, ntree);
-
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[i * n + j] / fw_denom_buf[i] : NA_REAL;
+      forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[(std::size_t)i * n + j] / fw_denom_buf[i] : NA_REAL;
     }
   }
+  std::vector<double>().swap(fw_buf);
+  std::vector<double>().swap(fw_denom_buf);
+
+  NumericMatrix prox(n, n);
   if (compute_prox) {
     for (int i = 0; i < n; i++) {
       for (int j = 0; j < n; j++) {
         if (prox_mode == 0) {
-          prox(i, j) = prox_buf[i * n + j] / ntree;
+          prox(i, j) = prox_buf[(std::size_t)i * n + j] / ntree;
         } else {
-          prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
+          const std::size_t idx = (std::size_t)i * n + j;
+          prox(i, j) = (prox_denom_buf[idx] > 0.0) ? prox_buf[idx] / prox_denom_buf[idx] : NA_REAL;
         }
       }
     }
   }
+  std::vector<double>().swap(prox_buf);
+  std::vector<double>().swap(prox_denom_buf);
 
   // ──── Enhanced proximity normalization ────
   NumericMatrix enhanced_prox(compute_enhanced ? n : 0, compute_enhanced ? n : 0);
   if (compute_enhanced) {
     for (int i = 0; i < n; i++) {
       for (int j = 0; j < n; j++) {
-        enhanced_prox(i, j) = eprox_buf[i * n + j] / ntree;
+        enhanced_prox(i, j) = eprox_buf[(std::size_t)i * n + j] / ntree;
       }
     }
   }
+  std::vector<double>().swap(eprox_buf);
 
-  // ──── IMD aggregation ────
-  // Global accumulators
-  std::vector<double> imd_x_sum(px, 0.0);
-  std::vector<int>    imd_x_cnt(px, 0);
-  std::vector<double> imd_y_sum(qy, 0.0);
-  std::vector<int>    imd_y_cnt(qy, 0);
+  IntegerMatrix membership(n, ntree);
+  IntegerMatrix inbag_mat(n, ntree);
 
-  // Per-tree IMD: ntree x (px + qy) stored as R matrix (for method="test")
+  // ──── Inverse minimal depth (IMD) aggregation ────
+  // For each tree and variable, IMD = 1 / (minimum split depth + 1), or zero
+  // when absent.  Y variables are considered only when selected as the node's
+  // MSRV (largest component G_j among the ytry responses at that split).
   NumericMatrix imd_x_per_tree(px, ntree);
   NumericMatrix imd_y_per_tree(qy, ntree);
 
-  // Pairwise X-Y co-occurrence matrix (px x qy) for pairwise_imd
-  // pairwise_xy[x_var, y_var] = sum of y_stats at splits using x_var
-  std::vector<double> pairwise_buf(px * qy, 0.0);
+  // Pairwise semantics: every split contributes its depth weight to the one
+  // X/MSRV pair assigned to that node, then the matrix is averaged over trees.
+  std::vector<double> pairwise_buf((std::size_t)px * qy, 0.0);
 
   for (int t = 0; t < ntree; t++) {
-    // Per-tree accumulators
-    std::vector<double> tx_sum(px, 0.0);
-    std::vector<int>    tx_cnt(px, 0);
-    std::vector<double> ty_sum(qy, 0.0);
-    std::vector<int>    ty_cnt(qy, 0);
+    std::vector<int> min_x_depth(px, -1);
+    std::vector<int> min_y_depth(qy, -1);
 
     for (const auto& node : tree_results[t].nodes) {
       if (node.split_var < 0) continue;
       int xv = node.split_var;
-      // X importance
-      tx_sum[xv] += node.imd_x_score;
-      tx_cnt[xv]++;
-      imd_x_sum[xv] += node.imd_x_score;
-      imd_x_cnt[xv]++;
-      // Y importance + pairwise
-      for (int j = 0; j < (int)node.imd_y_stats.size() && j < qy; j++) {
-        if (node.imd_y_stats[j] > 0.0) {
-          ty_sum[j] += node.imd_y_stats[j];
-          ty_cnt[j]++;
-          imd_y_sum[j] += node.imd_y_stats[j];
-          imd_y_cnt[j]++;
-          // Pairwise: this split used X var xv and Y var j contributed
-          pairwise_buf[xv * qy + j] += node.imd_y_stats[j];
+      if (min_x_depth[xv] < 0 || node.depth < min_x_depth[xv]) {
+        min_x_depth[xv] = node.depth;
+      }
+      int yv = node.msrv;
+      if (yv >= 0 && yv < qy) {
+        if (min_y_depth[yv] < 0 || node.depth < min_y_depth[yv]) {
+          min_y_depth[yv] = node.depth;
         }
+        pairwise_buf[(std::size_t)xv * qy + yv] += 1.0 / (node.depth + 1.0);
       }
     }
 
-    // Store per-tree averages
     for (int j = 0; j < px; j++) {
-      imd_x_per_tree(j, t) = (tx_cnt[j] > 0) ? tx_sum[j] / tx_cnt[j] : 0.0;
+      imd_x_per_tree(j, t) = (min_x_depth[j] >= 0)
+        ? 1.0 / (min_x_depth[j] + 1.0) : 0.0;
     }
     for (int j = 0; j < qy; j++) {
-      imd_y_per_tree(j, t) = (ty_cnt[j] > 0) ? ty_sum[j] / ty_cnt[j] : 0.0;
+      imd_y_per_tree(j, t) = (min_y_depth[j] >= 0)
+        ? 1.0 / (min_y_depth[j] + 1.0) : 0.0;
     }
   }
 
@@ -1791,26 +1952,23 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   NumericMatrix pairwise_xy(px, qy);
   for (int i = 0; i < px; i++) {
     for (int j = 0; j < qy; j++) {
-      pairwise_xy(i, j) = pairwise_buf[i * qy + j] / ntree;
+      pairwise_xy(i, j) = pairwise_buf[(std::size_t)i * qy + j] / ntree;
     }
   }
 
-  // Global averages + L2 normalize
+  // Forest IMD is the simple mean of per-tree inverse minimal depths.
   NumericVector imd_x(px);
   NumericVector imd_y(qy);
   for (int j = 0; j < px; j++) {
-    imd_x[j] = (imd_x_cnt[j] > 0) ? imd_x_sum[j] / imd_x_cnt[j] : 0.0;
+    double sum = 0.0;
+    for (int t = 0; t < ntree; t++) sum += imd_x_per_tree(j, t);
+    imd_x[j] = sum / ntree;
   }
   for (int j = 0; j < qy; j++) {
-    imd_y[j] = (imd_y_cnt[j] > 0) ? imd_y_sum[j] / imd_y_cnt[j] : 0.0;
+    double sum = 0.0;
+    for (int t = 0; t < ntree; t++) sum += imd_y_per_tree(j, t);
+    imd_y[j] = sum / ntree;
   }
-  double norm_x = 0.0, norm_y = 0.0;
-  for (int j = 0; j < px; j++) norm_x += imd_x[j] * imd_x[j];
-  for (int j = 0; j < qy; j++) norm_y += imd_y[j] * imd_y[j];
-  norm_x = std::sqrt(norm_x);
-  norm_y = std::sqrt(norm_y);
-  if (norm_x > 0) for (int j = 0; j < px; j++) imd_x[j] /= norm_x;
-  if (norm_y > 0) for (int j = 0; j < qy; j++) imd_y[j] /= norm_y;
 
   // Free heavy per-node data no longer needed (samples only).
   // Keep imd_x_score and imd_y_stats for cluster-weighted IMD.
@@ -1837,6 +1995,7 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     IntegerVector t_nodesize(n_nodes);
     LogicalVector t_is_leaf(n_nodes);
     NumericVector t_imd_x_score(n_nodes);
+    IntegerVector t_msrv(n_nodes, NA_INTEGER);
 
     for (int ni = 0; ni < n_nodes; ni++) {
       t_split_var[ni] = tree_results[t].nodes[ni].split_var;
@@ -1847,6 +2006,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       t_nodesize[ni] = tree_results[t].nodes[ni].nodesize;
       t_is_leaf[ni] = (tree_results[t].nodes[ni].split_var < 0);
       t_imd_x_score[ni] = tree_results[t].nodes[ni].imd_x_score;
+      if (tree_results[t].nodes[ni].msrv >= 0) {
+        t_msrv[ni] = tree_results[t].nodes[ni].msrv;
+      }
     }
 
     // Per-node Y IMD stats: n_internal_nodes x qy matrix (only for internal nodes)
@@ -1876,7 +2038,8 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
       Named("nodesize") = t_nodesize,
       Named("is_leaf") = t_is_leaf,
       Named("imd_x_score") = t_imd_x_score,
-      Named("imd_y_stats") = t_imd_y_stats
+      Named("imd_y_stats") = t_imd_y_stats,
+      Named("msrv") = t_msrv
     );
   }
 
@@ -1891,6 +2054,7 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
     Named("imd_x_per_tree") = imd_x_per_tree,
     Named("imd_y_per_tree") = imd_y_per_tree,
     Named("pairwise_xy") = pairwise_xy,
+    Named("forest_wt_mode") = forest_wt_mode,
     Named("ntree") = ntree,
     Named("mtry") = mtry,
     Named("ytry") = ytry,
@@ -1920,11 +2084,37 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
                               int prox_mode = 0,
                               Nullable<NumericMatrix> embed = R_NilValue,
                               double sibling_gamma = 0.5,
-                              int enhanced_prox_mode = 0) {
+                              int enhanced_prox_mode = 0,
+                              int forest_wt_mode = 0,
+                              int nsplit = 10) {
   // enhanced_prox_mode: 0 = off, 1 = compute enhanced proximity
 
   int n = data.nrow();
   int p = data.ncol();
+  if (n < 2 || p < 1) {
+    stop("data must contain at least two rows and one column");
+  }
+  if (ntree < 1) stop("ntree must be a positive integer");
+  if (seed == NA_INTEGER) stop("seed must be a finite integer");
+  if (nodesize_min < 1) stop("nodesize_min must be a positive integer");
+  if (max_depth < 0) stop("max_depth must be a non-negative integer");
+  if (nthread < 0) stop("nthread must be a non-negative integer");
+  if (samptype < 0 || samptype > 1) {
+    stop("samptype must be 0 ('swor') or 1 ('swr')");
+  }
+  if (prox_mode < -1 || prox_mode > 2) {
+    stop("prox_mode must be -1 ('none'), 0 ('all'), 1 ('inbag'), or 2 ('oob')");
+  }
+  if (enhanced_prox_mode < 0 || enhanced_prox_mode > 1) {
+    stop("enhanced_prox_mode must be 0 or 1");
+  }
+  if (!std::isfinite(sibling_gamma) || sibling_gamma < 0.0) {
+    stop("sibling_gamma must be finite and non-negative");
+  }
+  if (forest_wt_mode < 0 || forest_wt_mode > 2) {
+    stop("forest_wt_mode must be 0 ('all'), 1 ('inbag'), or 2 ('oob')");
+  }
+  if (nsplit < 0) stop("nsplit must be a non-negative integer");
 
   // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
@@ -1940,19 +2130,28 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   std::vector<double> embed_buf;
   if (compute_enhanced) {
     NumericMatrix embed_mat(embed.get());
+    if (embed_mat.nrow() != n || embed_mat.ncol() < 1) {
+      stop("embed must have nrow(data) rows and at least one column");
+    }
     embed_dim = embed_mat.ncol();
-    embed_buf.resize(n * embed_dim);
+    embed_buf.resize((std::size_t)n * embed_dim);
     for (int i = 0; i < n; i++)
-      for (int j = 0; j < embed_dim; j++)
-        embed_buf[i + j * n] = embed_mat(i, j);
+      for (int j = 0; j < embed_dim; j++) {
+        double value = embed_mat(i, j);
+        if (!std::isfinite(value)) stop("embed must contain only finite values");
+        embed_buf[(std::size_t)i + (std::size_t)j * n] = value;
+      }
+  } else if (enhanced_prox_mode > 0) {
+    stop("embed must be supplied when enhanced_prox_mode is enabled");
   }
 
   bool compute_prox = (prox_mode >= 0);
-  std::vector<double> fw_buf(n * n, 0.0);
+  const std::size_t nn = (std::size_t)n * (std::size_t)n;
+  std::vector<double> fw_buf(nn, 0.0);
   std::vector<double> fw_denom_buf(n, 0.0);
-  std::vector<double> prox_buf(compute_prox ? n * n : 0, 0.0);
-  std::vector<double> prox_denom_buf(prox_mode > 0 ? n * n : 0, 0.0);
-  std::vector<double> eprox_buf(compute_enhanced ? n * n : 0, 0.0);
+  std::vector<double> prox_buf(compute_prox ? nn : 0, 0.0);
+  std::vector<double> prox_denom_buf(prox_mode > 0 ? nn : 0, 0.0);
+  std::vector<double> eprox_buf(compute_enhanced ? nn : 0, 0.0);
 
   struct UnsupTreeResult {
     std::vector<Node> nodes;
@@ -1962,10 +2161,13 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   std::vector<UnsupTreeResult> tree_results(ntree);
 
   // Copy data to a thread-safe MatrixView (avoid Rcpp inside OpenMP)
-  std::vector<double> data_buf(n * p);
+  std::vector<double> data_buf((std::size_t)n * p);
   for (int i = 0; i < n; i++)
-    for (int j = 0; j < p; j++)
-      data_buf[i + j * n] = data(i, j);
+    for (int j = 0; j < p; j++) {
+      double value = data(i, j);
+      if (!std::isfinite(value)) stop("data must contain only finite values");
+      data_buf[(std::size_t)i + (std::size_t)j * n] = value;
+    }
   MatrixView D(data_buf.data(), n, p);
 
   // mtry default: ceiling(sqrt(p)), matching rfsrc unsupervised
@@ -1995,7 +2197,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
         inbag_freq[idx]++;
       }
     } else {
-      int samp_size_u = std::max(1, (int)std::round(n * (1.0 - std::exp(-1.0))));
+      int samp_size_u = std::max(1, (int)std::round(0.632 * n));
       bag = sample_swor_rfsrc_style(n, samp_size_u, rng_t);
       for (int i = 0; i < samp_size_u; i++) {
         inbag_freq[bag[i]] = 1;
@@ -2005,7 +2207,8 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
     std::vector<Node> tree = build_tree_unsup(D, bag, sort_order_unsup, n,
                                                mtry_default, ytry_use,
-                                               nodesize_min, max_depth, rng_t);
+                                               nodesize_min, max_depth,
+                                               nsplit, rng_t);
 
     for (auto& node : tree) {
       node.samples.clear();
@@ -2037,30 +2240,29 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
       int g = (int)group.size();
       if (g == 0) continue;
 
-      std::vector<int> ib_idx;
-      std::vector<double> ib_wt;
-      double boot_leaf_size = 0.0;
-      ib_idx.reserve(g);
-      ib_wt.reserve(g);
-      for (int a = 0; a < g; a++) {
-        int freq = inbag_freq[group[a]];
-        if (freq > 0) {
-          ib_idx.push_back(group[a]);
-          ib_wt.push_back((double)freq);
-          boot_leaf_size += freq;
+      std::vector<int> donor_idx;
+      std::vector<double> donor_wt;
+      double donor_mass = 0.0;
+      donor_idx.reserve(g);
+      donor_wt.reserve(g);
+      for (int idx : group) {
+        double wt = (forest_wt_mode == 0) ? 1.0 : (double)inbag_freq[idx];
+        if (wt > 0.0) {
+          donor_idx.push_back(idx);
+          donor_wt.push_back(wt);
+          donor_mass += wt;
         }
       }
-      if (boot_leaf_size < 1.0) continue;
-
-      double inv_bls = 1.0 / boot_leaf_size;
-      int n_ib = (int)ib_idx.size();
+      if (donor_mass < 1.0) continue;
+      double inv_mass = 1.0 / donor_mass;
 
       for (int a = 0; a < g; a++) {
         int ia = group[a];
+        if (forest_wt_mode == 2 && inbag_freq[ia] > 0) continue;
         fw_denom_buf[ia] += 1.0;
         double* row = &fw_buf[ia * n];
-        for (int b = 0; b < n_ib; b++) {
-          row[ib_idx[b]] += ib_wt[b] * inv_bls;
+        for (int b = 0; b < (int)donor_idx.size(); b++) {
+          row[donor_idx[b]] += donor_wt[b] * inv_mass;
         }
       }
     }
@@ -2157,10 +2359,10 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
         std::fill(cent_r, cent_r + embed_dim, 0.0);
         for (int si : grp_l)
           for (int d = 0; d < embed_dim; d++)
-            cent_l[d] += embed_buf[si + d * n];
+            cent_l[d] += embed_buf[(std::size_t)si + (std::size_t)d * n];
         for (int si : grp_r)
           for (int d = 0; d < embed_dim; d++)
-            cent_r[d] += embed_buf[si + d * n];
+            cent_r[d] += embed_buf[(std::size_t)si + (std::size_t)d * n];
         double inv_l = 1.0 / grp_l.size();
         double inv_r = 1.0 / grp_r.size();
         for (int d = 0; d < embed_dim; d++) { cent_l[d] *= inv_l; cent_r[d] *= inv_r; }
@@ -2190,6 +2392,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   NumericMatrix forest_wt(n, n);
   NumericMatrix prox(n, n);
   IntegerMatrix membership(n, ntree);
+  IntegerMatrix inbag_mat(n, ntree);
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
@@ -2204,43 +2407,39 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     }
   }
 
-  // ──── IMD-X aggregation (unsupervised: X-side only) ────
-  std::vector<double> imd_x_sum(p, 0.0);
-  std::vector<int>    imd_x_cnt(p, 0);
+  // ──── Inverse minimal depth (unsupervised: X-side only) ────
   NumericMatrix imd_x_per_tree(p, ntree);
 
   for (int t = 0; t < ntree; t++) {
-    std::vector<double> tx_sum(p, 0.0);
-    std::vector<int>    tx_cnt(p, 0);
+    std::vector<int> min_depth(p, -1);
 
     for (const auto& node : tree_results[t].nodes) {
       if (node.split_var < 0) continue;
       int xv = node.split_var;
-      tx_sum[xv] += node.imd_x_score;
-      tx_cnt[xv]++;
-      imd_x_sum[xv] += node.imd_x_score;
-      imd_x_cnt[xv]++;
+      if (min_depth[xv] < 0 || node.depth < min_depth[xv]) {
+        min_depth[xv] = node.depth;
+      }
     }
 
     for (int j = 0; j < p; j++) {
-      imd_x_per_tree(j, t) = (tx_cnt[j] > 0) ? tx_sum[j] / tx_cnt[j] : 0.0;
+      imd_x_per_tree(j, t) = (min_depth[j] >= 0)
+        ? 1.0 / (min_depth[j] + 1.0) : 0.0;
     }
   }
 
-  // Global averages + L2 normalize
+  // Simple forest mean; no across-variable normalization.
   NumericVector imd_x(p);
   for (int j = 0; j < p; j++) {
-    imd_x[j] = (imd_x_cnt[j] > 0) ? imd_x_sum[j] / imd_x_cnt[j] : 0.0;
+    double sum = 0.0;
+    for (int t = 0; t < ntree; t++) sum += imd_x_per_tree(j, t);
+    imd_x[j] = sum / ntree;
   }
-  double norm_x = 0.0;
-  for (int j = 0; j < p; j++) norm_x += imd_x[j] * imd_x[j];
-  norm_x = std::sqrt(norm_x);
-  if (norm_x > 0) for (int j = 0; j < p; j++) imd_x[j] /= norm_x;
 
   List tree_info_list(ntree);
   for (int t = 0; t < ntree; t++) {
     for (int i = 0; i < n; i++) {
       membership(i, t) = tree_results[t].leaf_ids[i];
+      inbag_mat(i, t) = tree_results[t].inbag[i];
     }
 
     int n_nodes = (int)tree_results[t].nodes.size();
@@ -2284,6 +2483,8 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     Named("proximity") = prox,
     Named("enhanced_prox") = enhanced_prox,
     Named("membership") = membership,
+    Named("inbag") = inbag_mat,
+    Named("forest_wt_mode") = forest_wt_mode,
     Named("ntree") = ntree,
     Named("n") = n,
     Named("p") = p,

@@ -15,7 +15,13 @@
 #' forest weight matrix before fusion.
 #' @param recon_fusion Reconstruction fusion mode.
 #' `"weighted"` (default) uses `connection_score`; `"uniform"` uses equal weights.
+#' @param global_fusion Fusion across per-response matrices. `"average"`
+#' implements the uniform Eq. 8 average; `"pmin"` is an optional element-wise
+#' intersection extension.
 #' @param connection_score Optional directional score matrix from `find_connection(return_score = TRUE)`.
+#' @param response_blocks Optional character vector containing every data block
+#'   that must have a response-side forest. The workflow supplies all input
+#'   block names so an entirely omitted block cannot be silently ignored.
 #' @param score_power Exponent applied to raw connection scores before normalization.
 #' @param score_floor Non-negative floor applied to raw connection scores before normalization.
 #' @param fallback_uniform Logical; whether to fallback to uniform averaging when weighted scores are unavailable.
@@ -46,6 +52,7 @@ mrf3_reconstr <- function(recon = NULL,
                           recon_fusion = c("weighted", "uniform"),
                           global_fusion = c("average", "pmin"),
                           connection_score = NULL,
+                          response_blocks = NULL,
                           score_power = 1,
                           score_floor = 0,
                           fallback_uniform = TRUE,
@@ -73,6 +80,7 @@ mrf3_reconstr <- function(recon = NULL,
       recon_fusion = recon_fusion,
       global_fusion = global_fusion,
       connection_score = connection_score,
+      response_blocks = response_blocks,
       score_power = score_power,
       score_floor = score_floor,
       fallback_uniform = fallback_uniform,
@@ -202,6 +210,7 @@ get_reconstr_matrix <- function(rfit,
                                 recon_fusion = c("weighted", "uniform"),
                                 global_fusion = c("average", "pmin"),
                                 connection_score = NULL,
+                                response_blocks = NULL,
                                 score_power = 1,
                                 score_floor = 0,
                                 fallback_uniform = TRUE,
@@ -246,7 +255,11 @@ get_reconstr_matrix <- function(rfit,
   names(model_score) <- model_names
   weighted_sum <- NA_real_
   if (recon_fusion == "weighted") {
-    model_score <- match_model_scores(model_names = model_names, connection_score = connection_score)
+    model_score <- match_model_scores(
+      model_names = model_names,
+      connection_score = connection_score,
+      model_list = rfit
+    )
     model_score <- pmax(model_score, score_floor)^score_power
     weighted_sum <- sum(model_score, na.rm = TRUE)
     ## normalize_fusion_weights() handles fallback to uniform when scores are invalid
@@ -254,12 +267,6 @@ get_reconstr_matrix <- function(rfit,
     model_score[] <- 1
     weighted_sum <- sum(model_score)
   }
-
-  global_alpha <- normalize_fusion_weights(
-    model_score,
-    fallback_uniform = fallback_uniform
-  )
-  names(global_alpha) <- model_names
 
   ## ══════════════════════════════════════════════════════════════
   ## Step 1: Extract and preprocess per-connection W_m matrices
@@ -289,9 +296,11 @@ get_reconstr_matrix <- function(rfit,
     ## Compute reconstruction products (keep these, they are smaller)
     xvar <- mod$xvar
     yvar <- mod$yvar
-    mod_names <- parse_model_pair(m)
+    mod_names <- parse_model_pair(m, model = mod)
 
-    if (!is.null(yvar)) {
+    one_block <- length(mod_names) == 1L ||
+      (!is.null(mod$connection) && is.null(mod$connection$predictor))
+    if (!one_block && !is.null(yvar)) {
       out <- list(
         W %*% as.matrix(xvar),
         W %*% as.matrix(yvar)
@@ -326,6 +335,15 @@ get_reconstr_matrix <- function(rfit,
   }
 
   dat_names <- unique(vapply(mat_records, `[[`, FUN.VALUE = character(1), "dat_name"))
+  if (is.null(response_blocks)) {
+    score_blocks <- if (is.matrix(connection_score)) rownames(connection_score) else NULL
+    response_blocks <- if (length(score_blocks)) score_blocks else dat_names
+  }
+  response_blocks <- as.character(response_blocks)
+  if (!length(response_blocks) || anyNA(response_blocks) ||
+      any(!nzchar(response_blocks)) || anyDuplicated(response_blocks)) {
+    stop("`response_blocks` must contain unique, non-missing block names.")
+  }
   full_fused_mat <- list()
   block_model_weights <- list()
 
@@ -346,35 +364,25 @@ get_reconstr_matrix <- function(rfit,
   ## W^(k) = sum_{i != k} alpha_{ki} * W_{ki},  normalised within
   ## the response-k subset.  Used for shared-specific decomposition.
   ## ══════════════════════════════════════════════════════════════
-  W_per_response <- vector("list", length(dat_names))
-  names(W_per_response) <- dat_names
-  per_response_alpha <- vector("list", length(dat_names))
-  names(per_response_alpha) <- dat_names
+  W_per_response <- vector("list", length(response_blocks))
+  names(W_per_response) <- response_blocks
+  per_response_alpha <- vector("list", length(response_blocks))
+  names(per_response_alpha) <- response_blocks
 
-  for (d in dat_names) {
+  for (d in response_blocks) {
     resp_idx <- vapply(model_names, function(m) {
-      pair <- parse_model_pair(m)
+      pair <- parse_model_pair(m, model = rfit[[m]])
       identical(pair[1], d)
     }, logical(1))
     resp_models <- model_names[resp_idx]
 
     if (length(resp_models) == 0L) {
-      warning(
-        "No connection has block `", d, "` as response. ",
-        "Falling back to uniform W for W_per_response.",
-        call. = FALSE
+      stop(
+        "No fitted connection has block `", d, "` as response. ",
+        "Per-response reconstruction cannot substitute predictor-side/global weights."
       )
-      ## Use uniform average of all W_m as fallback
-      fallback_alpha <- rep(1 / length(model_names), length(model_names))
-      names(fallback_alpha) <- model_names
-      W_fb <- fuse_matrix_list(W_models, fallback_alpha)
-      rs <- rowSums(W_fb); rs[rs <= 0 | !is.finite(rs)] <- 1
-      W_per_response[[d]] <- W_fb / rs
-      per_response_alpha[[d]] <- fallback_alpha
     } else {
-      resp_scores <- model_score[resp_models]
-      resp_scores[!is.finite(resp_scores)] <- 1.0
-      resp_scores <- pmax(resp_scores, 0)
+      resp_scores <- pmax(model_score[resp_models], 0)
       resp_alpha <- normalize_fusion_weights(resp_scores, fallback_uniform = fallback_uniform)
       names(resp_alpha) <- resp_models
       per_response_alpha[[d]] <- resp_alpha
@@ -417,6 +425,14 @@ get_reconstr_matrix <- function(rfit,
     )
   }
 
+  # Effective coefficients in Eq. 8: every response matrix has weight 1/K;
+  # within a response, directed models retain their Eq. 7 coefficients.
+  model_fusion_weights <- setNames(rep(0, length(model_names)), model_names)
+  for (response in names(per_response_alpha)) {
+    alpha <- per_response_alpha[[response]]
+    model_fusion_weights[names(alpha)] <- alpha / K
+  }
+
   list(
     fused_mat = full_fused_mat,
     W = list(
@@ -432,7 +448,7 @@ get_reconstr_matrix <- function(rfit,
     },
     global_fusion = global_fusion,
     model_score = model_score,
-    model_fusion_weights = global_alpha,
+    model_fusion_weights = model_fusion_weights,
     per_response_alpha = per_response_alpha,
     block_model_weights = block_model_weights
   )
@@ -492,7 +508,39 @@ normalize_fusion_weights <- function(score, fallback_uniform = TRUE) {
   score / sum(score)
 }
 
-parse_model_pair <- function(model_name) {
+parse_model_pair <- function(model_name, model = NULL) {
+  # New fits retain an explicit response/predictor mapping. Prefer it to the
+  # historical underscore-delimited display name, because omics block names
+  # themselves commonly contain underscores.
+  if (is.list(model)) {
+    conn <- model$connection
+    if (is.list(conn) && !is.null(conn$response)) {
+      response <- as.character(conn$response)[1L]
+      predictor <- if (is.null(conn$predictor)) character() else {
+        as.character(conn$predictor)[1L]
+      }
+      if (!is.na(response) && nzchar(response)) {
+        if (length(predictor) && !is.na(predictor) && nzchar(predictor)) {
+          return(c(response, predictor))
+        }
+        return(response)
+      }
+    }
+    if (is.character(conn) && length(conn)) {
+      return(as.character(conn)[seq_len(min(2L, length(conn)))])
+    }
+    if (!is.null(model$response_block)) {
+      response <- as.character(model$response_block)[1L]
+      predictor <- if (is.null(model$predictor_block)) character() else {
+        as.character(model$predictor_block)[1L]
+      }
+      if (length(predictor) && !is.na(predictor) && nzchar(predictor)) {
+        return(c(response, predictor))
+      }
+      return(response)
+    }
+  }
+
   split <- as.character(stringr::str_split(model_name, "_", simplify = TRUE))
   split <- split[split != ""]
   if (length(split) == 0L) {
@@ -504,7 +552,8 @@ parse_model_pair <- function(model_name) {
   split[1:2]
 }
 
-match_model_scores <- function(model_names, connection_score = NULL) {
+match_model_scores <- function(model_names, connection_score = NULL,
+                               model_list = NULL) {
   out <- rep(NA_real_, length(model_names))
   names(out) <- model_names
   if (is.null(connection_score)) {
@@ -515,7 +564,12 @@ match_model_scores <- function(model_names, connection_score = NULL) {
   }
 
   for (i in seq_along(model_names)) {
-    pair <- parse_model_pair(model_names[i])
+    model_i <- if (!is.null(model_list) && length(model_list) >= i) {
+      model_list[[i]]
+    } else {
+      NULL
+    }
+    pair <- parse_model_pair(model_names[i], model = model_i)
     if (length(pair) < 2L) {
       out[i] <- NA_real_
       next
@@ -607,6 +661,14 @@ ao_fuse_similarity <- function(W_models, k, gamma = 0.1, alpha_init = NULL,
   if (length(obj_path) == max_iter && obj_path[max_iter] == 0) {
     obj_path <- obj_path[obj_path != 0]
   }
+
+  # Each AO step updates alpha after computing U. Recompute the embedding once
+  # from the final weights so every returned component describes the same fit.
+  L_alpha <- Reduce("+", Map(`*`, alpha, L_list))
+  eig <- eigen(L_alpha, symmetric = TRUE)
+  ord <- order(eig$values, decreasing = FALSE)
+  U <- eig$vectors[, ord[seq_len(k)], drop = FALSE]
+
   S_fused <- Reduce("+", Map(`*`, alpha, S_list))
   if (hollow) diag(S_fused) <- 0
 
@@ -617,6 +679,10 @@ resolve_top_v_values <- function(dat_input,
                                  mod_input,
                                  connection_input,
                                  connection_score,
+                                 recon_fusion = c("weighted", "uniform"),
+                                 score_power = 1,
+                                 score_floor = 0,
+                                 fallback_uniform = TRUE,
                                  model_top_v_input,
                                  fused_top_v_input,
                                  disable_fused_top_v = FALSE,
@@ -628,6 +694,7 @@ resolve_top_v_values <- function(dat_input,
                                  stage_prefix = "[Stage 3/5]",
                                  verbose = TRUE) {
   top_v_method <- match.arg(top_v_method)
+  recon_fusion <- match.arg(recon_fusion)
   tuning <- list(
     model_top_v = NULL,
     fused_top_v = NULL
@@ -636,6 +703,11 @@ resolve_top_v_values <- function(dat_input,
     mod = mod_input,
     connection = connection_input,
     connection_score = connection_score,
+    recon_fusion = recon_fusion,
+    score_power = score_power,
+    score_floor = score_floor,
+    fallback_uniform = fallback_uniform,
+    response_blocks = names(dat_input),
     recon = NULL
   )
 
@@ -664,8 +736,14 @@ resolve_top_v_values <- function(dat_input,
         if (verbose) message("  model_top_v: fallback to all ", model_use, " neighbors.")
       } else {
         model_use <- as.integer(ceiling(stats::quantile(neff_vals, probs = neff_quantile, na.rm = TRUE)))
-        model_use <- max(model_use, 10L)
-        if (verbose) message("  model_top_v = ", model_use, " (neff method, median neff across connections)")
+        n_samples <- nrow(dat_input[[1]])
+        model_use <- min(n_samples, max(model_use, min(10L, n_samples)))
+        if (model_use >= ceiling(0.8 * n_samples)) {
+          model_use <- as.integer(n_samples)
+          if (verbose) message("  model_top_v: no truncation (neff >= 80% of n).")
+        } else if (verbose) {
+          message("  model_top_v = ", model_use, " (neff method, median neff across connections)")
+        }
       }
     } else {
       if (verbose) message("Tuning model_top_v..")
@@ -686,10 +764,21 @@ resolve_top_v_values <- function(dat_input,
         column = "model_top_v",
         allow_infinite = FALSE
       )
-      if (verbose) message("  model_top_v = ", model_use)
+      n_samples <- nrow(dat_input[[1]])
+      if (model_use >= ceiling(0.8 * n_samples)) {
+        model_use <- as.integer(n_samples)
+        if (verbose) message("  model_top_v: no truncation (selected v >= 80% of n).")
+      } else if (verbose) {
+        message("  model_top_v = ", model_use)
+      }
     }
   } else {
-    model_use <- as.integer(model_use)
+    n_samples <- nrow(dat_input[[1]])
+    model_use <- min(as.integer(model_use), n_samples)
+    if (model_use >= ceiling(0.8 * n_samples)) {
+      model_use <- as.integer(n_samples)
+      if (verbose) message("  model_top_v: no truncation (v >= 80% of n).")
+    }
   }
 
   fused_use <- if (disable_fused_top_v) NULL else fused_top_v_input
@@ -702,15 +791,17 @@ resolve_top_v_values <- function(dat_input,
       # Fast path: build fused weight matrix, then select v from neff
       if (verbose) message("Selecting fused_top_v via effective neighbourhood size..")
       rfit <- if (!is.null(mod_input$mod)) mod_input$mod else mod_input
-      alpha <- compute_tune_model_alpha(
-        model_names = names(rfit),
-        connection_score = connection_score
-      )
       cache_list <- build_model_weight_cache_list(rfit, vmax = model_use)
-      W_fused <- build_fused_weight_from_cache(
+      W_fused <- build_response_fused_weight_from_cache(
         cache_list = cache_list,
         top_v = model_use,
-        alpha = alpha,
+        connection_score = connection_score,
+        model_list = rfit,
+        response_blocks = names(dat_input),
+        recon_fusion = recon_fusion,
+        score_power = score_power,
+        score_floor = score_floor,
+        fallback_uniform = fallback_uniform,
         keep_ties = TRUE
       )
       W_fused <- postprocess_fused_weight(
@@ -744,7 +835,10 @@ resolve_top_v_values <- function(dat_input,
         column = "fused_top_v",
         allow_infinite = TRUE
       )
-      if (is.null(fused_use)) {
+      if (!is.null(fused_use) && fused_use >= ceiling(0.8 * nrow(dat_input[[1]]))) {
+        fused_use <- NULL
+        if (verbose) message("  fused_top_v: no truncation (selected v >= 80% of n).")
+      } else if (is.null(fused_use)) {
         if (verbose) message("  fused_top_v: no truncation.")
       } else {
         if (verbose) message("  fused_top_v = ", fused_use)
@@ -752,6 +846,10 @@ resolve_top_v_values <- function(dat_input,
     }
   } else if (!is.null(fused_use)) {
     fused_use <- as.integer(fused_use)
+    if (fused_use >= ceiling(0.8 * nrow(dat_input[[1]]))) {
+      fused_use <- NULL
+      if (verbose) message("  fused_top_v: no truncation (v >= 80% of n).")
+    }
   }
 
   list(

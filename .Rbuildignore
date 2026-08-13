@@ -1,5 +1,6 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.r_libs$
 ^\.git$
 ^\.gitignore$
 ^\.Rhistory$

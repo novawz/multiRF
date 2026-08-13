@@ -12,7 +12,7 @@ get_multi_weights(
   use_depth = FALSE,
   robust = FALSE,
   parallel = FALSE,
-  normalized = TRUE,
+  normalized = FALSE,
   calc = "Both",
   ytry = 1,
   w = NULL,
@@ -36,7 +36,9 @@ get_multi_weights(
 
 \item{parallel}{Logical; whether to parallelize across models.}
 
-\item{normalized}{Logical; whether to normalize the merged weights.}
+\item{normalized}{Logical; whether to normalize the merged weights. The
+default is \code{FALSE}, preserving raw forest IMD on its 0-to-1 scale
+for variable selection.}
 
 \item{calc}{Which importance side to compute: \code{"X"}, \code{"Y"}, or \code{"Both"}.}
 

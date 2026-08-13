@@ -42,6 +42,24 @@ compute_oob_fw <- function(mod) {
   fw_oob
 }
 
+.average_sub_mrf_imd <- function(imd_sum, n_sub) {
+  if (!is.numeric(n_sub) || length(n_sub) != 1L ||
+      !is.finite(n_sub) || n_sub < 1L) {
+    stop("`n_sub` must be a single positive integer.")
+  }
+  imd_sum / as.integer(n_sub)
+}
+
+# Document connection-level parallel controls added to `fit_multi_forest()`
+# without editing its backend implementation file.
+#' @rdname fit_forest
+#' @name fit_forest
+#' @param parallel_connections Logical; whether directed connections are fitted
+#'   in parallel.
+#' @param cores_connections Optional core budget for connection-level
+#'   parallelism.
+NULL
+
 
 #' Fit an ensemble of sub-sampled MRF models for a single connection
 #'
@@ -56,18 +74,20 @@ compute_oob_fw <- function(mod) {
 #' @param Y  Response data frame (samples x features) — a single omics block.
 #' @param n_sub  Integer; number of sub-MRF replicates to fit.
 #' @param frac_response  Fraction of response columns to sample per replicate
-#'   (default 0.1).  Convergence analysis shows symmetric low fractions
+#'   (default 0.2).  Convergence analysis shows symmetric low fractions
 #'   (0.1--0.3 for both response and predictor) yield the best
 #'   approximation of the full forest-weight matrix.
 #' @param frac_predictor  Fraction of predictor columns to sample per replicate
-#'   (default 0.1).  Avoid setting this to 1.0 when `frac_response` is
+#'   (default 0.2).  Avoid setting this to 1.0 when `frac_response` is
 #'   small, as the asymmetric case leads to poor convergence (each
 #'   sub-model overfits to its response subset).
-#' @param ntree_per_sub  Number of trees per sub-MRF (default 50).
+#' @param ntree_per_sub  Number of trees per sub-MRF (default 25 for direct
+#'   calls; the workflow inherits the main tree budget by using
+#'   `ceiling(ntree / n_sub)` unless explicitly overridden).
 #' @param mtry Number of candidate X variables per split. Passed through to
 #'   `fit_forest()`.
-#' @param ytry  Number of candidate Y variables per split. Default `0L` means
-#'   the C++ engine uses `min(qy, ceiling(p/3))`. A positive integer overrides this.
+#' @param ytry Number of candidate Y variables per split. `NULL` delegates to
+#'   the forest engine (the native default is `ceiling(qy / 3)`).
 #' @param min_response  Minimum number of response columns per sub-MRF.
 #' @param min_predictor  Minimum number of predictor columns per sub-MRF.
 #' @param enhanced  Logical; if `TRUE`, compute soft enhanced proximity
@@ -188,17 +208,21 @@ fit_sub_mrf <- function(X, Y,
     ## (only when enhanced = TRUE; otherwise skip to save time)
     enh_prox <- NULL
     if (isTRUE(enhanced) && !is.null(full_embed)) {
-      enh <- tryCatch(
-        cl_forest(
-          mod,
-          merge_mode     = "soft",
-          symm           = TRUE,
-          parallel       = FALSE,
-          sample_embed_list = full_embed
-        ),
-        error = function(e) NULL
-      )
-      enh_prox <- if (!is.null(enh)) enh$prox else mod$proximity
+      if (!is.null(mod$enhanced_prox) && nrow(mod$enhanced_prox) == nrow(X)) {
+        enh_prox <- mod$enhanced_prox
+      } else {
+        enh <- tryCatch(
+          cl_forest(
+            mod,
+            merge_mode     = "soft",
+            symm           = TRUE,
+            parallel       = FALSE,
+            sample_embed_list = full_embed
+          ),
+          error = function(e) NULL
+        )
+        enh_prox <- if (!is.null(enh)) enh$prox else mod$proximity
+      }
     }
 
     res <- list(
@@ -212,18 +236,26 @@ fit_sub_mrf <- function(X, Y,
 
     ## Compute IMD on this sub-model before it is discarded
     if (isTRUE(compute_imd)) {
-      imd_defaults <- list(
-        mod = mod, parallel = FALSE, robust = FALSE,
-        calc = "Both", normalized = FALSE, use_depth = FALSE,
-        weighted = FALSE, ytry = NULL, seed = seed + b
-      )
-      imd_call <- utils::modifyList(imd_defaults, imd_args)
-      imd_out <- tryCatch(
-        do.call(get_imp_forest, imd_call),
-        error = function(e) NULL
-      )
-      if (!is.null(imd_out)) {
-        res$imd_imp <- imd_out$imp_ls
+      if (!is.null(mod$imd_weights)) {
+        # Native forests expose Eq. 6-8 inverse minimal depth directly,
+        # including the actual response selected as MSRV at every split.
+        # Recomputing through the historical traversal would instead use a
+        # post-hoc split score and can disagree with response subsampling.
+        res$imd_imp <- mod$imd_weights
+      } else {
+        imd_defaults <- list(
+          mod = mod, parallel = FALSE, robust = FALSE,
+          calc = "Both", normalized = FALSE, use_depth = FALSE,
+          weighted = FALSE, ytry = NULL, seed = seed + b
+        )
+        imd_call <- utils::modifyList(imd_defaults, imd_args)
+        imd_out <- tryCatch(
+          do.call(get_imp_forest, imd_call),
+          error = function(e) NULL
+        )
+        if (!is.null(imd_out)) {
+          res$imd_imp <- imd_out$imp_ls
+        }
       }
     }
 
@@ -266,13 +298,9 @@ fit_sub_mrf <- function(X, Y,
   ## IMD accumulators: named numeric vectors (full feature space)
   imd_X_sum   <- NULL
   imd_Y_sum   <- NULL
-  imd_X_count <- NULL
-  imd_Y_count <- NULL
   if (isTRUE(compute_imd)) {
     imd_X_sum   <- setNames(numeric(pX), colnames(X))
     imd_Y_sum   <- setNames(numeric(pY), colnames(Y))
-    imd_X_count <- setNames(integer(pX), colnames(X))
-    imd_Y_count <- setNames(integer(pY), colnames(Y))
   }
 
   for (b in seq_len(n_sub)) {
@@ -293,13 +321,11 @@ fit_sub_mrf <- function(X, Y,
         x_names <- names(r$imd_imp$X)
         common_x <- intersect(x_names, names(imd_X_sum))
         imd_X_sum[common_x]   <- imd_X_sum[common_x]   + r$imd_imp$X[common_x]
-        imd_X_count[common_x] <- imd_X_count[common_x] + 1L
       }
       if (!is.null(r$imd_imp$Y)) {
         y_names <- names(r$imd_imp$Y)
         common_y <- intersect(y_names, names(imd_Y_sum))
         imd_Y_sum[common_y]   <- imd_Y_sum[common_y]   + r$imd_imp$Y[common_y]
-        imd_Y_count[common_y] <- imd_Y_count[common_y] + 1L
       }
     }
 
@@ -325,14 +351,12 @@ fit_sub_mrf <- function(X, Y,
   ## ---- average IMD weights -------------------------------------------------
   imd_weights <- NULL
   if (isTRUE(compute_imd) && !is.null(imd_X_sum)) {
-    ## Average only over sub-models that included each feature
-    safe_div <- function(s, cnt) {
-      out <- ifelse(cnt > 0L, s / cnt, 0)
-      out
-    }
+    # Eq. 8 averages over the complete ensemble. A feature absent from a
+    # sub-model contributes zero; dividing only by its inclusion count would
+    # inflate rarely sampled features onto a different scale.
     imd_weights <- list(
-      X = safe_div(imd_X_sum, imd_X_count),
-      Y = safe_div(imd_Y_sum, imd_Y_count)
+      X = .average_sub_mrf_imd(imd_X_sum, n_sub),
+      Y = .average_sub_mrf_imd(imd_Y_sum, n_sub)
     )
     if (verbose) message("  Pre-computed IMD weights from sub-models.")
   }
@@ -379,7 +403,12 @@ fit_sub_mrf <- function(X, Y,
 #'   response features are used instead of sub-sampling.
 #' @param min_predictor_for_sub Minimum predictor-block size below which all
 #'   predictor features are used instead of sub-sampling.
-#' @param ntree_full Deprecated compatibility argument. Ignored.
+#' @param ntree_full Number of trees used when both blocks are below their
+#'   sub-sampling thresholds and a full forest is fitted instead.
+#' @param parallel_connections Logical; whether distinct directed connections
+#'   may be fitted in parallel.
+#' @param cores_connections Optional total core budget for connection-level
+#'   parallelism.
 #' @inheritParams fit_sub_mrf
 #' @param ...  Passed to `fit_sub_mrf()` and then `fit_forest()`.
 #'
@@ -524,6 +553,15 @@ fit_sub_multi_rfsrc <- function(dat.list,
     mod_l <- lapply(connect_list, fit_one_connection)
   }
 
-  names(mod_l) <- purrr::map_chr(connect_list, ~paste0(., collapse = "_"))
+  names(mod_l) <- connection_display_names(connect_list)
+  for (i in seq_along(mod_l)) {
+    d <- as.character(connect_list[[i]])
+    mod_l[[i]]$connection <- list(
+      response = d[[1L]],
+      predictor = if (length(d) >= 2L) d[[2L]] else NULL
+    )
+    mod_l[[i]]$response_block <- d[[1L]]
+    mod_l[[i]]$predictor_block <- if (length(d) >= 2L) d[[2L]] else NULL
+  }
   mod_l
 }

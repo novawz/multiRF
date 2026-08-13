@@ -13,7 +13,7 @@ cluster_imd(
   ntree = NULL,
   ytry = NULL,
   parallel = TRUE,
-  imd_normalized_weights = TRUE,
+  imd_normalized_weights = FALSE,
   run_vs = FALSE,
   vs_args = list(),
   fit_args = list(),
@@ -40,7 +40,9 @@ cluster_imd(
 
 \item{parallel}{Logical; whether IMD computation inside each cluster is parallelized.}
 
-\item{imd_normalized_weights}{Logical; passed to \code{get_multi_weights()} as \code{normalized}.}
+\item{imd_normalized_weights}{Logical; passed to \code{get_multi_weights()} as
+\code{normalized}. The default is \code{FALSE} so cluster-level variable selection
+receives raw forest IMD on its 0-to-1 scale.}
 
 \item{run_vs}{Logical; whether to run \code{mrf3_vs()} variable selection on each
 cluster after IMD.}

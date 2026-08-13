@@ -33,22 +33,24 @@ fit_sub_mrf(
 \item{n_sub}{Integer; number of sub-MRF replicates to fit.}
 
 \item{frac_response}{Fraction of response columns to sample per replicate
-(default 0.1).  Convergence analysis shows symmetric low fractions
+(default 0.2).  Convergence analysis shows symmetric low fractions
 (0.1--0.3 for both response and predictor) yield the best
 approximation of the full forest-weight matrix.}
 
 \item{frac_predictor}{Fraction of predictor columns to sample per replicate
-(default 0.1).  Avoid setting this to 1.0 when \code{frac_response} is
+(default 0.2).  Avoid setting this to 1.0 when \code{frac_response} is
 small, as the asymmetric case leads to poor convergence (each
 sub-model overfits to its response subset).}
 
-\item{ntree_per_sub}{Number of trees per sub-MRF (default 50).}
+\item{ntree_per_sub}{Number of trees per sub-MRF (default 25 for direct
+calls; the workflow inherits the main tree budget by using
+\code{ceiling(ntree / n_sub)} unless explicitly overridden).}
 
 \item{mtry}{Number of candidate X variables per split. Passed through to
 \code{fit_forest()}.}
 
-\item{ytry}{Number of candidate Y variables per split. Default \code{0L} means
-the C++ engine uses \code{min(qy, ceiling(p/3))}. A positive integer overrides this.}
+\item{ytry}{Number of candidate Y variables per split. \code{NULL} delegates to
+the forest engine (the native default is \code{ceiling(qy / 3)}).}
 
 \item{min_response}{Minimum number of response columns per sub-MRF.}
 

@@ -1,3 +1,29 @@
+.combine_specific_imd_per_tree <- function(matrices, feature_names, block) {
+  matrices <- Filter(Negate(is.null), matrices)
+  if (!length(matrices)) return(NULL)
+  aligned <- lapply(seq_along(matrices), function(i) {
+    mat <- as.matrix(matrices[[i]])
+    rn <- rownames(mat)
+    if (is.null(rn) || anyNA(rn) || any(!nzchar(rn)) || anyDuplicated(rn)) {
+      stop("Per-tree specific IMD for block `", block, "` in consensus run ",
+           i, " must have unique, non-empty feature row names.")
+    }
+    missing_features <- setdiff(feature_names, rn)
+    extra_features <- setdiff(rn, feature_names)
+    if (length(missing_features) || length(extra_features)) {
+      stop("Per-tree specific IMD feature mismatch for block `", block,
+           "` in consensus run ", i, ".")
+    }
+    mat <- mat[feature_names, , drop = FALSE]
+    if (any(!is.finite(mat))) {
+      stop("Per-tree specific IMD for block `", block,
+           "` contains non-finite values in consensus run ", i, ".")
+    }
+    mat
+  })
+  do.call(cbind, aligned)
+}
+
 #' Build Shared/Specific Weights From Reconstruction
 #'
 #' @param dat.list A named list of omics matrices (samples in rows, features in columns).
@@ -5,9 +31,9 @@
 #' @param per_response_recon Logical; when \code{TRUE} (default), the shared
 #' reconstruction for each block \code{k} uses only the forest weight matrices
 #' from connections where block \code{k} is the \emph{response}.
-#' Specifically, \code{W^{(k)} = \sum \alpha_m W_m} (modularity-weighted) over
+#' Specifically, `W^(k) = sum_m alpha_m W_m` (modularity-weighted) over
 #' models \code{m} whose response is block \code{k}, and then
-#' \code{\hat{X}^{(k)} = W^{(k)} X^{(k)}}.
+#' `X_hat^(k) = W^(k) X^(k)`.
 #' This ensures that each block's residual captures genuinely block-specific
 #' variation rather than reconstruction artefacts from connections where
 #' the block served as predictor.
@@ -31,6 +57,14 @@
 #' weights and IMD across runs. This reduces variance in the specific
 #' signal at the cost of proportionally more computation. Default \code{1L}
 #' (single run, no consensus averaging).
+#' @param specific_ntree,specific_samptype,specific_ytry,specific_proximity RF
+#' structure inherited from the main forest workflow for residual
+#' unsupervised forests.
+#' @param specific_nsplit,specific_nthread Candidate cutpoint count and native
+#' thread count inherited from the main workflow.
+#' @param specific_nodesize,specific_max_depth Residual-tree stopping settings.
+#' @param specific_forest_wt Forest-weight mode for residual forests. The
+#' bioRxiv clustering definition uses `"all"`.
 #' @param ... Deprecated/ignored arguments kept for compatibility.
 #'
 #' @return A list with `shared` and `specific` components:
@@ -54,6 +88,15 @@ get_shared_specific_weights <- function(dat.list,
                                         specific_row_normalize = TRUE,
                                         specific_seed = NULL,
                                         specific_n_consensus = 1L,
+                                        specific_ntree = 500L,
+                                        specific_samptype = c("swor", "swr"),
+                                        specific_ytry = NULL,
+                                        specific_proximity = "all",
+                                        specific_nsplit = 10L,
+                                        specific_nthread = getOption("multiRF.nthread", 0L),
+                                        specific_nodesize = 3L,
+                                        specific_max_depth = 0L,
+                                        specific_forest_wt = "all",
                                         ...) {
 
   dot_args <- list(...)
@@ -81,6 +124,13 @@ get_shared_specific_weights <- function(dat.list,
   }
 
   dat_names <- names(dat.list)
+  specific_samptype <- match.arg(specific_samptype)
+  specific_proximity <- match.arg(
+    specific_proximity, c("all", "inbag", "oob", "none")
+  )
+  specific_forest_wt <- match.arg(
+    specific_forest_wt, c("all", "inbag", "oob")
+  )
   n_cons <- max(as.integer(specific_n_consensus), 1L)
   if (is.null(specific_seed)) {
     specific_seed <- 529L
@@ -159,8 +209,24 @@ get_shared_specific_weights <- function(dat.list,
     predicted[[d]] <- X_hat
     residual[[d]] <- R
 
-    # Forward enhanced_prox / sibling_gamma / leaf_embed_dim from ... if present
-    fit_extra <- dot_args[intersect(names(dot_args), c("enhanced_prox", "sibling_gamma", "leaf_embed_dim"))]
+    # Inherit the main forest's structural settings; enhanced proximity
+    # remains an optional extension forwarded through `...`.
+    fit_extra <- c(
+      list(
+        ntree = as.integer(specific_ntree),
+        samptype = specific_samptype,
+        ytry = specific_ytry,
+        proximity = specific_proximity,
+        nsplit = as.integer(specific_nsplit),
+        nthread = as.integer(specific_nthread),
+        nodesize = as.integer(specific_nodesize),
+        max_depth = as.integer(specific_max_depth),
+        forest.wt = specific_forest_wt
+      ),
+      dot_args[intersect(
+        names(dot_args), c("enhanced_prox", "sibling_gamma", "leaf_embed_dim")
+      )]
+    )
 
     # ---- Fit residual unsupervised RF (with seed and optional consensus) ----
     if (n_cons == 1L) {
@@ -199,6 +265,7 @@ get_shared_specific_weights <- function(dat.list,
       # Consensus path: average forest weights and IMD across n_cons runs
       wt_accum <- NULL
       imd_accum <- NULL
+      imd_per_tree_runs <- vector("list", n_cons)
       last_mod <- NULL
 
       for (ci in seq_len(n_cons)) {
@@ -226,12 +293,29 @@ get_shared_specific_weights <- function(dat.list,
         }
 
         if (!is.null(r_mod_ci$imd_weights) && !is.null(r_mod_ci$imd_weights$X)) {
-          imd_i <- r_mod_ci$imd_weights$X
+          imd_i <- as.numeric(r_mod_ci$imd_weights$X)
+          names(imd_i) <- names(r_mod_ci$imd_weights$X)
+          imd_names <- names(imd_i)
+          if (is.null(imd_names) || anyNA(imd_names) || any(!nzchar(imd_names)) ||
+              anyDuplicated(imd_names) ||
+              !setequal(imd_names, colnames(X))) {
+            stop("Specific IMD feature mismatch for block `", d,
+                 "` in consensus run ", ci, ".")
+          }
+          imd_i <- imd_i[colnames(X)]
+          if (any(!is.finite(imd_i))) {
+            stop("Specific IMD for block `", d,
+                 "` contains non-finite values in consensus run ", ci, ".")
+          }
           if (is.null(imd_accum)) {
             imd_accum <- imd_i
           } else {
             imd_accum <- imd_accum + imd_i
           }
+        }
+        if (!is.null(r_mod_ci$imd_weights_per_tree) &&
+            !is.null(r_mod_ci$imd_weights_per_tree$X)) {
+          imd_per_tree_runs[[ci]] <- r_mod_ci$imd_weights_per_tree$X
         }
         last_mod <- r_mod_ci
       }
@@ -249,16 +333,18 @@ get_shared_specific_weights <- function(dat.list,
       )
       if (!is.null(imd_accum)) {
         imd_avg <- imd_accum / n_cons
-        # Re-normalize to sum to 1
-        imd_avg <- imd_avg / sum(imd_avg)
         specific_imd[[d]] <- imd_avg
       } else {
         specific_imd[[d]] <- setNames(rep(1.0 / ncol(X), ncol(X)), colnames(X))
       }
-      # Store per-tree from last consensus run
-      if (!is.null(last_mod$imd_weights_per_tree) && !is.null(last_mod$imd_weights_per_tree$X)) {
-        specific_imd_per_tree[[d]] <- last_mod$imd_weights_per_tree$X
-      }
+      # Preserve all consensus runs. With the same tree count per run, the row
+      # means of this combined matrix equal the consensus mean IMD rather than
+      # silently reverting to the final run.
+      specific_imd_per_tree[[d]] <- .combine_specific_imd_per_tree(
+        imd_per_tree_runs,
+        feature_names = colnames(X),
+        block = d
+      )
     }
   }
 

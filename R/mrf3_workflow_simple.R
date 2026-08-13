@@ -32,7 +32,7 @@ mrf3 <- function(dat.list,
                  top_v = NULL,
                  samptype = c("swor", "swr"),
                  main_clustering = c("similarity", "proximity", "enhanced_proximity"),
-                 filter_mode = c("none", "auto", "manual"),
+                 filter_mode = c("auto", "none", "manual"),
                  seed = 529,
                  ...) {
 
@@ -47,7 +47,10 @@ mrf3 <- function(dat.list,
   filter_mode <- match.arg(filter_mode)
 
   dots <- list(...)
-  if (!is.null(dots$specific_method)) dots$specific_method <- NULL
+  legacy_shared_method <- dots$shared_method
+  legacy_specific_method <- dots$specific_method
+  dots$shared_method <- NULL
+  dots$specific_method <- NULL
   clustering_args <- list(
     shared_mode = "average",
     shared_method = "Spectral",
@@ -56,6 +59,8 @@ mrf3 <- function(dat.list,
     specific_similarity_type = "second",
     specific_prox_method_cl = "PAM"
   )
+  if (!is.null(legacy_shared_method)) clustering_args$shared_method <- legacy_shared_method
+  if (!is.null(legacy_specific_method)) clustering_args$specific_method <- legacy_specific_method
 
   if (!is.null(k)) {
     if (!is.numeric(k) || length(k) != 1L || !is.finite(k) || k < 2) {

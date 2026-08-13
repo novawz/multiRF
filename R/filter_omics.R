@@ -18,6 +18,11 @@
 #'
 #' @return If `return_summary = FALSE`, returns filtered `dat.list`.
 #' Otherwise returns a list with `dat_filtered` and `filter_summary`.
+#' @details Before feature ranking, all blocks are checked to have the same
+#' samples in the same order, unique sample names, numeric finite values, and
+#' at least two samples. Zero-variance features are removed before optional
+#' scaling or RF fitting because they cannot define a split and would become
+#' non-finite under z-standardization. Column names are preserved verbatim.
 #' @export filter_omics
 filter_omics <- function(dat.list,
                          filter_mode = c("auto", "none", "manual"),
@@ -35,6 +40,19 @@ filter_omics <- function(dat.list,
   if (is.null(names(dat.list)) || any(names(dat.list) == "")) {
     names(dat.list) <- paste0("omics", seq_along(dat.list))
   }
+  if (anyDuplicated(names(dat.list))) {
+    dup <- unique(names(dat.list)[duplicated(names(dat.list))])
+    stop("`dat.list` block names must be unique; duplicated: ", paste(dup, collapse = ", "))
+  }
+
+  # Sanitize all blocks before filtering so sample alignment is verified once,
+  # before any scaling can erase the source of an invalid value.
+  block_names <- names(dat.list)
+  dat.list <- lapply(seq_along(dat.list), function(i) {
+    sanitize_omics_block(dat.list[[i]], block_name = block_names[i])
+  })
+  names(dat.list) <- block_names
+  validate_omics_sample_alignment(dat.list)
 
   filter_mode <- match.arg(filter_mode)
   filter_method <- match.arg(filter_method)
@@ -46,7 +64,24 @@ filter_omics <- function(dat.list,
 
   for (i in seq_along(dat.list)) {
     block_name <- names(dat.list)[i]
-    dat_block <- sanitize_omics_block(dat.list[[i]], block_name = block_name)
+    dat_block <- dat.list[[i]]
+
+    n_features_raw <- ncol(dat_block)
+    zero_var <- vapply(
+      dat_block,
+      function(x) min(x) == max(x),
+      logical(1)
+    )
+    n_zero_var <- sum(zero_var)
+    if (n_zero_var > 0L) {
+      dat_block <- dat_block[, !zero_var, drop = FALSE]
+      if (ncol(dat_block) == 0L) {
+        stop(
+          "Block `", block_name,
+          "` contains only zero-variance features; no RF split can be fitted."
+        )
+      }
+    }
 
     omics_type <- infer_omics_type(block_name)
     n_samples <- nrow(dat_block)
@@ -74,7 +109,7 @@ filter_omics <- function(dat.list,
       message(
         sprintf(
           "Filtering %s [%s]: %d -> %d features (%s)",
-          block_name, omics_type, n_features, ncol(filter_out$dat),
+          block_name, omics_type, n_features_raw, ncol(filter_out$dat),
           ifelse(filter_out$applied, filter_method, "none")
         )
       )
@@ -84,7 +119,8 @@ filter_omics <- function(dat.list,
       block = block_name,
       omics_type = omics_type,
       n_samples = n_samples,
-      n_features_in = n_features,
+      n_features_in = n_features_raw,
+      n_zero_variance_removed = n_zero_var,
       n_features_out = ncol(filter_out$dat),
       top_n = top_n,
       filter_applied = filter_out$applied,
@@ -104,6 +140,9 @@ filter_omics <- function(dat.list,
 
 sanitize_omics_block <- function(dat_block, block_name) {
   dat_block <- as.data.frame(dat_block, check.names = FALSE)
+  if (nrow(dat_block) < 2L) {
+    stop("Block `", block_name, "` must contain at least two samples.")
+  }
   if (ncol(dat_block) == 0) {
     stop("Block `", block_name, "` has zero features.")
   }
@@ -113,7 +152,57 @@ sanitize_omics_block <- function(dat_block, block_name) {
     stop("All columns in block `", block_name, "` must be numeric.")
   }
 
+  values <- as.matrix(dat_block)
+  if (any(!is.finite(values))) {
+    stop(
+      "Block `", block_name,
+      "` contains NA, NaN, or infinite values. Impute or remove them before RF fitting."
+    )
+  }
+
+  sample_names <- rownames(dat_block)
+  if (is.null(sample_names) || anyNA(sample_names) || any(sample_names == "")) {
+    stop("Block `", block_name, "` must have non-missing sample names.")
+  }
+  if (anyDuplicated(sample_names)) {
+    stop("Block `", block_name, "` has duplicated sample names.")
+  }
+
   dat_block
+}
+
+
+validate_omics_sample_alignment <- function(dat.list) {
+  reference_name <- names(dat.list)[1L]
+  reference_samples <- rownames(dat.list[[1L]])
+
+  if (length(dat.list) > 1L) {
+    for (i in seq_along(dat.list)[-1L]) {
+      block_name <- names(dat.list)[i]
+      block_samples <- rownames(dat.list[[i]])
+      if (length(block_samples) != length(reference_samples)) {
+        stop(
+          "All omics blocks must contain the same samples: block `",
+          block_name, "` has ", length(block_samples), " rows but block `",
+          reference_name, "` has ", length(reference_samples), "."
+        )
+      }
+      if (!identical(block_samples, reference_samples)) {
+        if (setequal(block_samples, reference_samples)) {
+          stop(
+            "Sample order differs between blocks `", reference_name, "` and `",
+            block_name, "`. Reorder blocks explicitly before fitting."
+          )
+        }
+        stop(
+          "Sample names differ between blocks `", reference_name, "` and `",
+          block_name, "`. All blocks must contain identical samples."
+        )
+      }
+    }
+  }
+
+  invisible(TRUE)
 }
 
 

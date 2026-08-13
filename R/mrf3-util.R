@@ -673,6 +673,171 @@ get_iv <- function(var_name, imp){
 
 }
 
+.imd_model_block_map <- function(mod, model_name = NULL, sides = c("X", "Y"),
+                                 dat_names = NULL) {
+  sides <- intersect(c("X", "Y"), as.character(sides))
+
+  scalar_chr <- function(x) {
+    if (is.null(x) || length(x) == 0L || is.na(x[[1L]]) || !nzchar(x[[1L]])) {
+      return(NULL)
+    }
+    as.character(x[[1L]])
+  }
+
+  response <- predictor <- NULL
+  conn <- mod$connection
+  one_block_metadata <- FALSE
+  if (is.list(conn) && !is.null(names(conn))) {
+    response <- scalar_chr(conn$response)
+    predictor <- scalar_chr(conn$predictor)
+    one_block_metadata <- "response" %in% names(conn) &&
+      !is.null(response) && is.null(predictor)
+  } else if (!is.null(conn)) {
+    conn_flat <- as.character(unlist(conn, use.names = FALSE))
+    response <- scalar_chr(conn_flat[1L])
+    if (length(conn_flat) >= 2L) predictor <- scalar_chr(conn_flat[2L])
+  }
+
+  # These scalar fields are retained for compatibility with model objects
+  # written before the nested connection metadata was introduced.
+  if (is.null(response)) response <- scalar_chr(mod$response_block)
+  if (is.null(predictor)) predictor <- scalar_chr(mod$predictor_block)
+  if (!is.null(response) && is.null(predictor) &&
+      !is.null(mod$response_block) && is.null(mod$predictor_block)) {
+    one_block_metadata <- TRUE
+  }
+
+  needs_predictor <- "X" %in% sides && is.null(predictor) &&
+    !one_block_metadata
+
+  # If metadata are absent, first try an exact match against the supplied
+  # block names. This remains unambiguous when a block name contains `_`.
+  if ((is.null(response) || needs_predictor) &&
+      length(dat_names) > 0L && !is.null(model_name)) {
+    dat_names <- as.character(dat_names)
+    if (model_name %in% dat_names && length(sides) == 1L && sides == "X") {
+      response <- model_name
+    } else {
+      candidates <- expand.grid(
+        response = dat_names,
+        predictor = dat_names,
+        stringsAsFactors = FALSE
+      )
+      hit <- paste(candidates$response, candidates$predictor, sep = "_") == model_name
+      if (sum(hit) == 1L) {
+        response <- candidates$response[hit]
+        predictor <- candidates$predictor[hit]
+        needs_predictor <- FALSE
+      }
+    }
+  }
+
+  # Last-resort legacy fallback. New fits always carry metadata, so parsing a
+  # model label is intentionally confined to old objects.
+  if ((is.null(response) || needs_predictor) &&
+      !is.null(model_name) && nzchar(model_name)) {
+    tokens <- strsplit(model_name, "_", fixed = TRUE)[[1L]]
+    if (is.null(response) && length(tokens) >= 1L) response <- tokens[[1L]]
+    if (is.null(predictor) && length(tokens) >= 2L) {
+      predictor <- tokens[[length(tokens)]]
+    }
+  }
+
+  # X is the predictor side for a directed forest. In an unsupervised
+  # one-block forest there is no predictor metadata, and X is that sole block.
+  block_map <- c(
+    X = if (!is.null(predictor)) predictor else response,
+    Y = response
+  )
+  block_map[sides]
+}
+
+.rename_imd_sides <- function(x, block_map) {
+  if (is.null(x) || length(x) == 0L) return(x)
+  side_names <- names(x)
+  if (is.null(side_names)) {
+    side_names <- names(block_map)[seq_len(min(length(x), length(block_map)))]
+  }
+  mapped <- unname(block_map[side_names])
+  missing <- is.na(mapped) | !nzchar(mapped)
+  mapped[missing] <- side_names[missing]
+  names(x) <- mapped
+  x
+}
+
+# Align one model's IMD to the data columns before aggregating across forests.
+# Named vectors are deliberately treated as keyed data: R's ordinary vector
+# arithmetic is positional and would otherwise silently recycle or combine a
+# reordered feature with the wrong feature.
+.strict_align_imd_vector <- function(x, feature_names, block, model_name) {
+  feature_names <- as.character(feature_names)
+  if (!length(feature_names) || anyNA(feature_names) ||
+      any(!nzchar(feature_names)) || anyDuplicated(feature_names)) {
+    stop("Data block `", block,
+         "` must have unique, non-empty feature names for IMD aggregation.")
+  }
+  if (is.null(x)) return(NULL)
+  x <- unlist(x, use.names = TRUE)
+  x_names <- names(x)
+  label <- if (!is.null(model_name) && nzchar(model_name)) model_name else "<unnamed>"
+  if (is.null(x_names) || anyNA(x_names) || any(!nzchar(x_names))) {
+    stop("IMD for block `", block, "` in model `", label,
+         "` must name every feature; positional aggregation is not allowed.")
+  }
+  if (anyDuplicated(x_names)) {
+    stop("IMD for block `", block, "` in model `", label,
+         "` contains duplicated feature names.")
+  }
+  missing_features <- setdiff(feature_names, x_names)
+  extra_features <- setdiff(x_names, feature_names)
+  if (length(missing_features) || length(extra_features)) {
+    detail <- c(
+      if (length(missing_features)) {
+        paste0("missing: ", paste(missing_features, collapse = ", "))
+      },
+      if (length(extra_features)) {
+        paste0("unexpected: ", paste(extra_features, collapse = ", "))
+      }
+    )
+    stop("IMD feature mismatch for block `", block, "` in model `", label,
+         "` (", paste(detail, collapse = "; "), ").")
+  }
+  x <- as.numeric(x[feature_names])
+  names(x) <- feature_names
+  if (any(!is.finite(x))) {
+    stop("IMD for block `", block, "` in model `", label,
+         "` contains non-finite values.")
+  }
+  x
+}
+
+.aggregate_imd_block <- function(vectors, feature_names, block,
+                                 model_names = NULL, normalized = FALSE) {
+  if (is.null(model_names)) model_names <- rep("<unnamed>", length(vectors))
+  if (length(model_names) != length(vectors)) {
+    stop("Internal IMD aggregation error: model labels and vectors differ in length.")
+  }
+  present <- !vapply(vectors, is.null, logical(1))
+  vectors <- vectors[present]
+  model_names <- as.character(model_names[present])
+  if (!length(vectors)) {
+    return(stats::setNames(numeric(length(feature_names)), feature_names))
+  }
+  aligned <- Map(
+    function(x, model_name) {
+      .strict_align_imd_vector(x, feature_names, block, model_name)
+    },
+    vectors,
+    model_names
+  )
+  w_out <- Reduce(`+`, aligned) / length(aligned)
+  if (isTRUE(normalized)) {
+    denom <- sqrt(sum(w_out^2))
+    if (is.finite(denom) && denom > 0) w_out <- w_out / denom
+  }
+  w_out
+}
+
 #' Get multi-omics weights
 #' @param mod_list A named list of fitted random forest models.
 #' @param dat.list A named list of omics datasets used to align weights.
@@ -681,7 +846,9 @@ get_iv <- function(var_name, imp){
 #' @param use_depth Logical; whether to average depth-aware importances.
 #' @param robust Logical; whether to use robust matrix-based aggregation.
 #' @param parallel Logical; whether to parallelize across models.
-#' @param normalized Logical; whether to normalize the merged weights.
+#' @param normalized Logical; whether to normalize the merged weights. The
+#'   default is `FALSE`, preserving raw forest IMD on its 0-to-1 scale
+#'   for variable selection.
 #' @param calc Which importance side to compute: `"X"`, `"Y"`, or `"Both"`.
 #' @param ytry Response sampling proportion used in node-level updates.
 #' @param w Optional case weights.
@@ -690,51 +857,87 @@ get_iv <- function(var_name, imp){
 #' @param ... Additional arguments for downstream helper functions.
 #' @rdname get_multi_weights
 get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  use_depth = FALSE, robust = FALSE,
-                              parallel = FALSE, normalized = TRUE, calc = "Both", ytry = 1,
+                              parallel = FALSE, normalized = FALSE, calc = "Both", ytry = 1,
                               w = NULL, cores = NULL, seed = -5, ...){
 
   mod_names <- names(mod_list)
+  model_labels <- mod_names
+  if (is.null(model_labels)) model_labels <- rep("", length(mod_list))
+  model_labels[is.na(model_labels) | !nzchar(model_labels)] <-
+    paste0("model_", which(is.na(model_labels) | !nzchar(model_labels)))
 
   # Fast path: if ALL models have pre-computed imd_weights (native engine),
   # skip the expensive post-hoc tree traversal entirely.
   all_have_imd <- all(vapply(mod_list, function(m) !is.null(m$imd_weights), logical(1)))
   if (all_have_imd) {
     message("  Using pre-computed IMD weights from native engine (zero extra cost).")
-    weight_l <- lapply(mod_names, function(m_name) {
-      iw <- mod_list[[m_name]]$imd_weights
-      m_name_sep <- rev(unlist(stringr::str_split(m_name, "_")))
-      names(iw) <- m_name_sep
-      iw
+    weight_l <- lapply(seq_along(mod_list), function(i) {
+      m_name <- model_labels[[i]]
+      mod_i <- mod_list[[i]]
+      iw <- mod_i$imd_weights
+      side_names <- names(iw)
+      if (is.null(side_names)) side_names <- c("X", "Y")[seq_along(iw)]
+      block_map <- .imd_model_block_map(
+        mod_i, model_name = m_name, sides = side_names,
+        dat_names = names(dat.list)
+      )
+      .rename_imd_sides(iw, block_map)
     })
+    names(weight_l) <- model_labels
 
     block_names <- names(dat.list)
     weight_list <- lapply(block_names, function(bn) {
-      ww <- purrr::compact(purrr::map(weight_l, bn))
-      if (length(ww) == 0L) return(setNames(numeric(ncol(dat.list[[bn]])), colnames(dat.list[[bn]])))
-      w_out <- Reduce("+", ww) / length(ww)
-      if (normalized) {
-        denom <- sqrt(sum(w_out^2))
-        if (is.finite(denom) && denom > 0) w_out <- w_out / denom
-      }
-      w_out
+      ww <- lapply(weight_l, function(x) x[[bn]])
+      .aggregate_imd_block(
+        ww,
+        feature_names = colnames(dat.list[[bn]]),
+        block = bn,
+        model_names = model_labels,
+        normalized = normalized
+      )
     })
     names(weight_list) <- block_names
 
     # Build per-tree weight distributions (for method="test" in mrf3_vs)
     # Format: list of connections, each = list of ntree elements,
     #   each = named list(block1 = vec, block2 = vec)
-    all_have_pt <- all(vapply(mod_list, function(m) !is.null(m$imd_weights_per_tree), logical(1)))
+    all_have_pt <- all(vapply(mod_list, function(m) {
+      ipt <- m$imd_weights_per_tree
+      !is.null(ipt) && any(vapply(ipt, function(z) {
+        !is.null(z) && (is.null(dim(z)) || ncol(z) > 0L)
+      }, logical(1)))
+    }, logical(1)))
     weight_list_init <- NULL
     if (all_have_pt) {
-      weight_list_init <- lapply(mod_names, function(m_name) {
-        ipt <- mod_list[[m_name]]$imd_weights_per_tree  # list(X=mat, Y=mat)
-        m_name_sep <- rev(unlist(stringr::str_split(m_name, "_")))
-        nt_local <- ncol(ipt$X)
+      weight_list_init <- lapply(seq_along(mod_list), function(i) {
+        m_name <- model_labels[[i]]
+        mod_i <- mod_list[[i]]
+        ipt <- mod_i$imd_weights_per_tree
+        side_names <- names(ipt)
+        if (is.null(side_names)) {
+          side_names <- c("X", "Y")[seq_along(ipt)]
+          names(ipt) <- side_names
+        }
+        present <- side_names[vapply(ipt, function(z) !is.null(z), logical(1))]
+        ipt <- ipt[present]
+        ntrees <- vapply(ipt, function(z) {
+          if (is.null(dim(z))) 1L else ncol(z)
+        }, integer(1))
+        if (length(unique(ntrees)) != 1L) {
+          stop("Per-tree IMD matrices for model `", m_name,
+               "` must contain the same number of trees.")
+        }
+        nt_local <- ntrees[[1L]]
+        block_map <- .imd_model_block_map(
+          mod_i, model_name = m_name, sides = present,
+          dat_names = names(dat.list)
+        )
         # list of ntree elements, each = list(block1 = vec, block2 = vec)
         lapply(seq_len(nt_local), function(t) {
-          out <- list(ipt$X[, t], ipt$Y[, t])
-          names(out) <- m_name_sep
-          out
+          out <- lapply(ipt, function(z) {
+            if (is.null(dim(z))) z else z[, t, drop = TRUE]
+          })
+          .rename_imd_sides(out, block_map)
         })
       })
     }
@@ -755,43 +958,22 @@ get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  u
   weight_l <- purrr::map(results, "wl")
   weight_l_init <- purrr::map(results, "wl_init")
   # M_list <- purrr::map(results, "M")
-  
-  if(length(weight_l) > 1){
-    weight_list <- plyr::llply(
-      names(dat.list),
-      .fun = function(i){
-        w <- purrr::map(weight_l, i)
-        w <- purrr::compact(w)
-        w <- (Reduce("+", w))/length(w)
-        if(normalized) {
-          denom <- sqrt(sum(w^2))
-          if (is.finite(denom) && denom > 0) {
-            w <- w/denom
-          }
-        }
-        w
-      }
+
+  slow_labels <- names(weight_l)
+  if (is.null(slow_labels)) slow_labels <- model_labels[seq_along(weight_l)]
+  slow_labels[is.na(slow_labels) | !nzchar(slow_labels)] <-
+    paste0("model_", which(is.na(slow_labels) | !nzchar(slow_labels)))
+  weight_list <- lapply(names(dat.list), function(block) {
+    vectors <- lapply(weight_l, function(x) x[[block]])
+    .aggregate_imd_block(
+      vectors,
+      feature_names = colnames(dat.list[[block]]),
+      block = block,
+      model_names = slow_labels,
+      normalized = normalized
     )
-    names(weight_list) <- names(dat.list)
-  } else {
-    weight_list <- weight_l[[1]]
-    wl <- plyr::llply(
-      names(weight_list),
-      .fun = function(i){
-        w <- weight_list[[i]]
-        if(normalized) {
-          denom <- sqrt(sum(w^2))
-          if (is.finite(denom) && denom > 0) {
-            w <- w/denom
-          }
-        }
-        w
-      }
-    )
-    names(wl) <- names(weight_list)
-    weight_list <- wl
-    weight_list <- weight_list[names(dat.list)]
-  }
+  })
+  names(weight_list) <- names(dat.list)
 
   out <- list(weight_list = weight_list,
               weight_list_init = weight_l_init,
@@ -921,9 +1103,13 @@ get_results <- function(mod_list, parallel,
     .fun = function(m_name){
 
       mod <- mod_list[[m_name]]
+      block_map <- .imd_model_block_map(
+        mod, model_name = m_name, sides = c("X", "Y")
+      )
       # l <- lambda[m_name]
       if(!is.null(w)) {
-        w0 <- w[[gsub("_.*", "", m_name)]]
+        predictor_block <- unname(block_map[["X"]])
+        w0 <- if (!is.null(predictor_block)) w[[predictor_block]] else NULL
       } else {w0 <- NULL}
       results <- get_imp_forest(mod, parallel = parallel, robust = robust, normalized = normalized,
                                 weighted = weighted, calc = calc,  w = w0,
@@ -935,9 +1121,10 @@ get_results <- function(mod_list, parallel,
       
       net <- results$net
 
-      m_name_sep <- unlist(stringr::str_split(m_name, "_"))
-
-      names(wl) <- rev(m_name_sep)
+      wl <- .rename_imd_sides(wl, block_map)
+      if (is.list(wl_init)) {
+        wl_init <- lapply(wl_init, .rename_imd_sides, block_map = block_map)
+      }
       # freq <- cal_freq(mod, net)
       # names(freq) <- rev(m_name_sep)
       return(list(

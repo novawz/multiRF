@@ -8,7 +8,9 @@
 #' @param ntree Deprecated compatibility argument. Ignored in no-refit mode.
 #' @param ytry `ytry` used for per-cluster IMD. If `NULL`, reuses object setting.
 #' @param parallel Logical; whether IMD computation inside each cluster is parallelized.
-#' @param imd_normalized_weights Logical; passed to `get_multi_weights()` as `normalized`.
+#' @param imd_normalized_weights Logical; passed to `get_multi_weights()` as
+#'   `normalized`. The default is `FALSE` so cluster-level variable selection
+#'   receives raw forest IMD on its 0-to-1 scale.
 #' @param fit_args Deprecated compatibility argument. Ignored in no-refit mode.
 #' @param imd_args Optional named list merged into each per-cluster `get_multi_weights()` call.
 #' @param run_vs Logical; whether to run `mrf3_vs()` variable selection on each
@@ -29,7 +31,7 @@ cluster_imd <- function(x,
                         ntree = NULL,
                         ytry = NULL,
                         parallel = TRUE,
-                        imd_normalized_weights = TRUE,
+                        imd_normalized_weights = FALSE,
                         run_vs = FALSE,
                         vs_args = list(),
                         fit_args = list(),
@@ -88,6 +90,19 @@ cluster_imd <- function(x,
   if (any(vapply(base$dat, nrow, integer(1)) != n)) {
     stop("All matrices in `dat.list` must share the same number of rows.")
   }
+  ref_samples <- rownames(base$dat[[1L]])
+  if (is.null(ref_samples) || anyNA(ref_samples) || any(!nzchar(ref_samples)) || anyDuplicated(ref_samples)) {
+    stop("Every block must have unique, non-missing sample names.")
+  }
+  for (j in seq_along(base$dat)[-1L]) {
+    block_samples <- rownames(base$dat[[j]])
+    if (!identical(block_samples, ref_samples)) {
+      stop(
+        "Sample identities and row order differ between blocks `", dat_names[[1L]],
+        "` and `", dat_names[[j]], "`."
+      )
+    }
+  }
   if (!is.null(names(cluster)) && !is.null(rownames(base$dat[[1]]))) {
     if (all(rownames(base$dat[[1]]) %in% names(cluster))) {
       cluster <- cluster[rownames(base$dat[[1]])]
@@ -102,11 +117,9 @@ cluster_imd <- function(x,
     stop("`cluster` has no non-NA labels.")
   }
 
-  make_conn_name <- function(conn) paste(as.character(conn), collapse = "_")
-
   if (is.null(names(base$mod_list)) || any(names(base$mod_list) == "")) {
     if (!is.null(base$connect_list) && length(base$connect_list) == length(base$mod_list)) {
-      names(base$mod_list) <- vapply(base$connect_list, make_conn_name, character(1))
+      names(base$mod_list) <- connection_display_names(base$connect_list)
     } else {
       stop("`base$mod_list` has no names; cannot map models to connections.")
     }
@@ -127,8 +140,8 @@ cluster_imd <- function(x,
     conn_global <- conn_out$connect_list
   }
 
-  conn_names <- vapply(conn_global, make_conn_name, character(1))
-  mod_template <- base$mod_list[conn_names]
+  conn_idx <- model_indices_for_connections(base$mod_list, conn_global)
+  mod_template <- base$mod_list[conn_idx]
   use_refit <- any(vapply(mod_template, function(m) !is.null(m$sub_mrf_info), logical(1)))
   ytry_use <- if (is.null(ytry)) base$ytry else ytry
 
@@ -175,14 +188,16 @@ cluster_imd <- function(x,
     }
 
     dat_sub <- lapply(base$dat, function(d) d[idx, , drop = FALSE])
+    mod_sub <- NULL
 
     # ── Fast path: cluster-weighted IMD from pre-computed per-node scores ──
     # Uses tree_info$imd_x_score + membership to weight each node's
     # contribution by the fraction of this cluster's samples passing through it.
-    has_node_imd <- all(vapply(mod_template, function(m) {
-      !is.null(m$tree_info) &&
-        !is.null(m$tree_info[[1]]$imd_x_score)
-    }, logical(1)))
+    # `cluster_weighted_imd()` aggregates node split scores and is a useful
+    # descriptive extension, but it is not Eq. 6-8 inverse minimal depth.
+    # Cluster IMD exposed through this API therefore uses the
+    # depth-based path for both reporting and optional variable selection.
+    has_node_imd <- FALSE
 
     if (has_node_imd && !use_refit) {
       # Compute cluster-weighted IMD for this cluster across all connections
@@ -218,7 +233,7 @@ cluster_imd <- function(x,
         }
         if (length(ww) == 0L) return(setNames(numeric(ncol(base$dat[[bn]])), colnames(base$dat[[bn]])))
         w_out <- Reduce("+", ww) / length(ww)
-        if (imd_normalized_weights) {
+        if (isTRUE(imd_normalized_weights)) {
           denom <- sqrt(sum(w_out^2))
           if (is.finite(denom) && denom > 0) w_out <- w_out / denom
         }
@@ -245,7 +260,7 @@ cluster_imd <- function(x,
             ms$imd_weights_per_tree <- NULL
             ms
           })
-          names(out) <- conn_names
+          names(out) <- names(mod_template)
           out
         }
       }, error = function(e) e)
@@ -279,7 +294,8 @@ cluster_imd <- function(x,
       list(
         mod = mod_sub,
         connection = conn_global,
-        weights = imd_out$weight_list,
+        imd = imd_out$weight_list,
+        imd_ls = imd_out$weight_list_init,
         net = imd_out$net,
         dat.list = dat_sub,
         ntree = if (is.null(base$ntree)) NA_integer_ else base$ntree,

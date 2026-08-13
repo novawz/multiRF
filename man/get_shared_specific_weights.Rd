@@ -7,9 +7,21 @@
 get_shared_specific_weights(
   dat.list,
   recon,
+  per_response_recon = TRUE,
   specific_top_v = NULL,
   specific_keep_ties = TRUE,
   specific_row_normalize = TRUE,
+  specific_seed = NULL,
+  specific_n_consensus = 1L,
+  specific_ntree = 500L,
+  specific_samptype = c("swor", "swr"),
+  specific_ytry = NULL,
+  specific_proximity = "all",
+  specific_nsplit = 10L,
+  specific_nthread = getOption("multiRF.nthread", 0L),
+  specific_nodesize = 3L,
+  specific_max_depth = 0L,
+  specific_forest_wt = "all",
   ...
 )
 }
@@ -17,6 +29,18 @@ get_shared_specific_weights(
 \item{dat.list}{A named list of omics matrices (samples in rows, features in columns).}
 
 \item{recon}{Reconstruction output from \code{get_reconstr_matrix()}.}
+
+\item{per_response_recon}{Logical; when \code{TRUE} (default), the shared
+reconstruction for each block \code{k} uses only the forest weight matrices
+from connections where block \code{k} is the \emph{response}.
+Specifically, \verb{W^(k) = sum_m alpha_m W_m} (modularity-weighted) over
+models \code{m} whose response is block \code{k}, and then
+\verb{X_hat^(k) = W^(k) X^(k)}.
+This ensures that each block's residual captures genuinely block-specific
+variation rather than reconstruction artefacts from connections where
+the block served as predictor.
+When \code{FALSE}, reverts to the legacy behaviour that uses the global
+fused reconstruction (\code{recon$fused_mat}) or \code{W_{all} \%*\% X}.}
 
 \item{specific_top_v}{Optional integer. If set, each row of fused specific
 residual-forest weights keeps top-v entries.}
@@ -26,19 +50,50 @@ residual-forest weights keeps top-v entries.}
 \item{specific_row_normalize}{Logical; whether to row-normalize fused specific
 weights after optional truncation.}
 
+\item{specific_seed}{Integer seed for the residual unsupervised forests.
+When \code{NULL} (default), falls back to 529 with a warning.
+\code{mrf3_fit()} automatically injects the pipeline seed here, so
+users calling \code{mrf3()} or \code{mrf3_fit()} need not set this.
+Direct callers of \code{get_shared_specific_weights()} should pass
+an explicit positive seed for reproducibility.}
+
+\item{specific_n_consensus}{Integer; number of consensus runs for the
+residual unsupervised forests. When \code{> 1}, fits the residual RF
+\code{specific_n_consensus} times with seeds
+\code{specific_seed, specific_seed + 1, ...} and averages the forest
+weights and IMD across runs. This reduces variance in the specific
+signal at the cost of proportionally more computation. Default \code{1L}
+(single run, no consensus averaging).}
+
+\item{specific_ntree, specific_samptype, specific_ytry, specific_proximity}{RF
+structure inherited from the main forest workflow for residual
+unsupervised forests.}
+
+\item{specific_nsplit, specific_nthread}{Candidate cutpoint count and native
+thread count inherited from the main workflow.}
+
+\item{specific_nodesize, specific_max_depth}{Residual-tree stopping settings.}
+
+\item{specific_forest_wt}{Forest-weight mode for residual forests. The
+bioRxiv clustering definition uses \code{"all"}.}
+
 \item{...}{Deprecated/ignored arguments kept for compatibility.}
 }
 \value{
 A list with \code{shared} and \code{specific} components:
 \itemize{
-\item \code{shared$W_all}: shared fused weights.
+\item \code{shared$W_all}: shared fused weights (global, for shared clustering).
+\item \code{shared$W_per_response}: named list of per-response fused weight matrices
+(only present when \code{per_response_recon = TRUE}).
 \item \code{specific$residual}: residual omics matrices
 \code{R = X - X_pred}.
 \item \code{specific$predicted}: predicted omics matrices
-\code{X_pred} from shared reconstruction.
+\code{X_pred} from per-response (or global) reconstruction.
 \item \code{specific$residual_mod}: unsupervised RF models fitted on residual matrices.
 \item \code{specific$W}: specific residual weights from residual RF models
 after adjusted/truncate/row-sum-normalize.
+\item \code{specific$imd}: named list of per-block variable-level IMD weights
+(named numeric vectors) from unsupervised RF on residuals.
 }
 }
 \description{

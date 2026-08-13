@@ -1,31 +1,49 @@
 #' MRF variable selection
 #'
 #' @param mod A fitted `mrf3_fit` object, or an `mrf3`-like object that already
-#' contains IMD weights in `mod$imd`.
-#' @param dat.list A list of omics matrices used for feature selection/refit.
-#' @param method Feature-selection rule: `"filter"`, `"test"`, `"mixture"`, or `"thres"`.
+#'   contains raw forest IMD in `mod$imd`.
+#' @param dat.list A named list of omics matrices used for feature selection
+#'   and optional refitting.
+#' @param method Feature-selection rule. `"filter"` adaptively tunes the
+#'   cutoff `tau * sd(IMD)` using OOB error; `"mixture"` fits a
+#'   point-mass/two-component model; and `"test"` (alias
+#'   `"transformation"`) implements the Eq. 16 Student-t transformation.
+#'   `"thres"` applies a fixed `se * sd(IMD)` cutoff.
 #' @param signal Which signal component to select on: `"shared"` (cross-modal),
-#'   `"specific"` (per-block residual), or `"all"` (both, returned as a list).
-#' @param se Multiplier on standard deviation for thresholding in `"thres"` mode.
-#' @param c1 Distribution family for component 1 in mixture mode.
-#' @param c2 Distribution family for component 2 in mixture mode.
-#' @param level Significance level for test/mixture selection. Can be:
-#'   `"auto"` — adaptive Bayesian FDR control (recommended for mixture);
-#'   a single numeric (applied to all blocks); or a named vector/list for
-#'   per-block thresholds, e.g. `c(mri = 0.2, dnam = 0.01)`.
-#' @param tscore Logical; whether to use test scores in mixture mode.
-#' @param use_distribution Logical; whether to use distributional approximation in thresholding.
-#' @param re_weights Logical; whether to pass selected weights into refitting.
+#'   `"specific"` (per-block residual), or `"all"` (the union of both).
+#' @param se The fixed value of tau used by `method = "thres"`.
+#' @param c1 Distribution family for the lower-IMD (noise) component in
+#'   mixture mode: `"normal"` or `"truncn"`.
+#' @param c2 Distribution family for the higher-IMD component in mixture mode:
+#'   `"normal"` or `"gamma"`.
+#' @param level One-sided significance level for the transformation, or the
+#'   maximum posterior noise probability for mixture selection. A single
+#'   numeric value is applied to every block; a named vector/list supplies
+#'   block-specific values. `"auto"` retains the optional Bayesian-FDR rule in
+#'   mixture mode.
+#' @param tscore Deprecated compatibility switch. Use
+#'   `method = "transformation"` instead.
+#' @param use_distribution Deprecated compatibility argument.
+#' @param re_weights Logical; whether selected IMD values are supplied as
+#'   variable-sampling weights during the final refit.
 #' @param re_fit Logical; whether to refit forests after feature selection.
-#' @param ntree Number of trees used in optional refit.
-#' @param scale Logical; whether to standardize data before refit.
-#' @param k Number of folds/repeats used by filtering heuristics.
-#' @param tol Improvement tolerance in adaptive threshold search.
-#' @param iter Maximum EM iterations for mixture mode.
-#' @param eps EM convergence tolerance for mixture mode.
-#' @param normalized Logical; whether to renormalize selected weights.
-#' @param select Data block(s) to apply selection to; default `"ALL"`.
-#' @param ... Additional arguments passed to underlying fitting functions.
+#' @param ntree Number of trees used in the optional final refit. `NULL` reuses
+#'   the fitted object's tree count, falling back to 300.
+#' @param scale Logical; whether to standardize selected data before refitting.
+#' @param k Number of repeated forest fits at each candidate filtering cutoff.
+#' @param tol Tolerable adjacent change in mean OOB normalized MSE used to
+#'   choose the filtering cutoff.
+#' @param iter Maximum EM iterations in mixture mode.
+#' @param eps EM convergence tolerance in mixture mode.
+#' @param normalized Logical; whether to L2-normalize the retained weights
+#'   after selection. These methods are always evaluated on raw IMD;
+#'   therefore the default is `FALSE`.
+#' @param select Data block(s) to which selection is applied; default `"ALL"`.
+#' @param ... Additional arguments passed to forest fitting.
+#'
+#' @return An object inheriting from `mrf3` and `vs`. For `signal = "all"`,
+#'   `dat.list` and `imd` contain the union selection and the two component
+#'   results are retained in `signal_results`.
 #' @export
 mrf3_vs <- function(mod,
                     dat.list = NULL,
@@ -39,90 +57,202 @@ mrf3_vs <- function(mod,
                     use_distribution = TRUE,
                     re_weights = FALSE,
                     re_fit = TRUE,
-                    ntree = 300,
+                    ntree = NULL,
                     scale = FALSE,
                     k = 3,
                     tol = 0.01,
                     iter = 1000,
                     eps = 1e-05,
-                    normalized = TRUE,
+                    normalized = FALSE,
                     select = "ALL",
-                    ...){
+                    ...) {
 
   signal <- match.arg(signal)
+  method_requested <- match.arg(
+    as.character(method)[1L],
+    c("filter", "mixture", "test", "transformation", "thres")
+  )
+  method <- if (identical(method_requested, "transformation")) "test" else method_requested
 
-  ## ---- signal = "all": run both shared and specific, return combined ----
-  if (signal == "all") {
-    message("Running shared + specific variable selection...")
-    cl <- match.call()
+  if (isTRUE(tscore)) {
+    warning(
+      "`tscore` is deprecated; using the Eq. 16 Student-t transformation.",
+      call. = FALSE
+    )
+    method <- "test"
+    method_requested <- "transformation"
+  }
+  select_all <- length(select) == 1L && identical(as.character(select), "ALL")
+  if (!select_all) {
+    select <- unique(as.character(select))
+    if (!length(select) || anyNA(select) || any(!nzchar(select))) {
+      stop("`select` must be \"ALL\" or one or more valid block names.")
+    }
+  }
+  block_is_selected <- function(block_name) select_all || block_name %in% select
+
+  # `signal = "all"` is a usable union result, rather than a bare pair of
+  # unrelated objects. Fit at most once, after the two selections are merged.
+  if (identical(signal, "all")) {
+    if (identical(method, "filter")) {
+      warning(
+        "Adaptive OOB filtering is not defined for residual-specific IMD; ",
+        "the shared component will use adaptive OOB filtering and the ",
+        "specific component will use the fixed cutoff `se * sd(IMD)`.",
+        call. = FALSE
+      )
+      shared_method <- "filter"
+      specific_method <- "thres"
+    } else {
+      shared_method <- specific_method <- method_requested
+    }
+    source_dat <- dat.list
+    if (is.null(source_dat) && inherits(mod, "mrf3_fit")) source_dat <- mod$data
+    if (is.null(source_dat)) {
+      stop("`signal = 'all'` requires `dat.list` or data retained in `mod$data`.")
+    }
+
+    cl <- match.call(expand.dots = TRUE)
+    cl$method <- shared_method
     cl$signal <- "shared"
+    cl$re_fit <- FALSE
     shared_res <- eval(cl, parent.frame())
+    cl$method <- specific_method
     cl$signal <- "specific"
     specific_res <- eval(cl, parent.frame())
-    return(list(shared = shared_res, specific = specific_res))
+
+    dat_names <- names(source_dat)
+    union_vars <- lapply(dat_names, function(block) {
+      unique(c(
+        colnames(shared_res$dat.list[[block]]),
+        colnames(specific_res$dat.list[[block]])
+      ))
+    })
+    names(union_vars) <- dat_names
+    union_vars <- lapply(dat_names, function(block) {
+      cols <- colnames(source_dat[[block]])
+      cols[cols %in% union_vars[[block]]]
+    }) |>
+      stats::setNames(dat_names)
+
+    combined_dat <- lapply(dat_names, function(block) {
+      source_dat[[block]][, union_vars[[block]], drop = FALSE]
+    }) |>
+      stats::setNames(dat_names)
+
+    combine_weight <- function(block) {
+      cols <- colnames(source_dat[[block]])
+      a <- .vs_align_vector(shared_res$imd[[block]], cols, fill = 0)
+      b <- .vs_align_vector(specific_res$imd[[block]], cols, fill = 0)
+      out <- pmax(a, b)
+      out[!cols %in% union_vars[[block]]] <- 0
+      out
+    }
+    combined_weights <- lapply(dat_names, combine_weight) |>
+      stats::setNames(dat_names)
+
+    out <- shared_res
+    out$imd <- combined_weights
+    out$dat.list <- if (isTRUE(scale)) {
+      lapply(combined_dat, function(x) base::scale(x))
+    } else {
+      combined_dat
+    }
+    out$selected_vars <- union_vars
+    out$selected_weights <- lapply(dat_names, function(block) {
+      combined_weights[[block]][union_vars[[block]]]
+    }) |>
+      stats::setNames(dat_names)
+    out$signal <- "all"
+    out$selection_method <- method_requested
+    out$signal_results <- list(shared = shared_res, specific = specific_res)
+    out$thres <- list(shared = shared_res$thres, specific = specific_res$thres)
+    out$refit_performed <- FALSE
+
+    if (isTRUE(re_fit)) {
+      if (any(vapply(out$dat.list, ncol, integer(1)) == 0L)) {
+        warning(
+          "The union selection contains an empty block; the final refit was skipped.",
+          call. = FALSE
+        )
+      } else {
+        refit_weights <- NULL
+        if (isTRUE(re_weights)) {
+          refit_weights <- lapply(dat_names, function(block) {
+            combined_weights[[block]][colnames(out$dat.list[[block]])]
+          }) |>
+            stats::setNames(dat_names)
+        }
+        refit <- fit_multi_forest(
+          out$dat.list,
+          connect_list = out$connection,
+          ntree = out$ntree,
+          type = out$type,
+          var.wt = refit_weights,
+          ytry = out$ytry,
+          ...
+        )
+        out$mod <- refit
+        out$oob_err <- .vs_mean_model_oob_nmse(refit)
+        out$refit_performed <- TRUE
+      }
+    }
+    class(out) <- unique(c("mrf3_vs_all", class(out), "vs", "mrf3"))
+    return(out)
   }
 
   if (inherits(mod, "mrf3_fit")) {
     wf <- mod
-    if (is.null(dat.list)) {
-      dat.list <- wf$data
-    }
+    if (is.null(dat.list)) dat.list <- wf$data
     if (is.null(dat.list)) {
       stop(
-        "`mrf3_vs()` with `mrf3_fit` requires data in `wf$data`. ",
-        "Run `mrf3_fit(..., return_data = TRUE)` or provide `dat.list` explicitly."
+        "`mrf3_vs()` with `mrf3_fit` requires data in `mod$data`. ",
+        "Run `mrf3_fit(..., return_data = TRUE)` or provide `dat.list`."
       )
     }
 
-    if (signal == "specific") {
-      ## ---- Specific signal: use residual-RF IMD ----
+    if (identical(signal, "specific")) {
       spec <- wf$specific
       if (is.null(spec) || is.null(spec$imd)) {
         stop(
-          "`mrf3_vs(signal = 'specific')` requires specific IMD weights ",
-          "in `wf$specific$imd`. Ensure shared-specific decomposition was run."
+          "`signal = 'specific'` requires residual-forest IMD in ",
+          "`mod$specific$imd`."
         )
       }
       wf_weights <- spec$imd
-      ## Build imd_ls from specific imd_per_tree (p x ntree per block)
-      ## Format needed by test_fn: list of 1 pseudo-connection, each = list
-      ## of ntree elements, each = named list(block = vec)
       wf_weights_ls <- NULL
+      # Selecting on residual-specific IMD still refits the original
+      # cross-omics forest structure; self-connections are used only to map the
+      # per-block transformation records below.
+      refit_connection_vs <- wf$connection
       spec_pt <- spec$imd_per_tree
-      if (!is.null(spec_pt) && length(spec_pt) > 0L) {
+      if (is.list(spec_pt) && length(spec_pt)) {
         block_names <- names(spec_pt)
-        ## Each block's unsupervised RF is independent, so wrap each as a
-        ## separate pseudo-connection so test_fn processes them per-block
-        wf_weights_ls <- lapply(block_names, function(bn) {
-          pt_mat <- spec_pt[[bn]]  # p x ntree
+        wf_weights_ls <- lapply(block_names, function(block) {
+          pt_mat <- spec_pt[[block]]
           if (is.null(pt_mat)) return(NULL)
-          nt <- ncol(pt_mat)
-          lapply(seq_len(nt), function(t) {
-            out <- list(pt_mat[, t])
-            names(out) <- bn
-            out
+          pt_mat <- as.matrix(pt_mat)
+          lapply(seq_len(ncol(pt_mat)), function(tree) {
+            ans <- list(pt_mat[, tree])
+            names(ans) <- block
+            ans
           })
         })
+        names(wf_weights_ls) <- block_names
         wf_weights_ls <- Filter(Negate(is.null), wf_weights_ls)
       }
+      connect_list_vs <- lapply(names(wf_weights), function(block) c(block, block))
     } else {
-      ## ---- Shared signal (original path) ----
       wf_weights <- wf$imd
       wf_weights_ls <- wf$imd_init
+      connect_list_vs <- wf$connection
     }
 
     if (is.null(wf_weights)) {
       stop(
-        "`mrf3_vs()` with `mrf3_fit` requires IMD weights. ",
-        "Run `mrf3_fit(..., run_imd = TRUE)` first."
+        "`mrf3_vs()` requires raw IMD weights. Run ",
+        "`mrf3_fit(..., run_imd = TRUE)` first."
       )
-    }
-
-    ## Build connection list for specific: one pseudo-connection per block
-    if (signal == "specific") {
-      connect_list_vs <- lapply(names(wf_weights), function(bn) c(bn, bn))
-    } else {
-      connect_list_vs <- wf$connection
     }
 
     mod <- list(
@@ -133,500 +263,813 @@ mrf3_vs <- function(mod,
       ntree = wf$config$ntree,
       type = wf$type,
       oob_err = wf$oob_err,
-      mod = wf$models
+      mod = wf$models,
+      refit_connection = if (exists("refit_connection_vs", inherits = FALSE)) {
+        refit_connection_vs
+      } else {
+        NULL
+      }
     )
     class(mod) <- "mrf3"
   }
 
-  if (is.null(dat.list)) {
-    stop("`dat.list` must be provided.")
+  if (is.null(dat.list) || !is.list(dat.list) || !length(dat.list)) {
+    stop("`dat.list` must be a non-empty named list.")
   }
-  
+  if (is.null(names(dat.list)) || any(!nzchar(names(dat.list)))) {
+    stop("`dat.list` must have non-empty block names.")
+  }
+  dat_names <- names(dat.list)
+  if (!select_all) {
+    unknown_select <- setdiff(select, dat_names)
+    if (length(unknown_select)) {
+      stop("Unknown block(s) in `select`: ", paste(unknown_select, collapse = ", "))
+    }
+  }
+
   weights <- mod$imd
-  if (is.null(weights)) {
-    stop(
-      "`mrf3_vs()` requires IMD weights in `mod$imd`. ",
-      "`mrf3_init()` no longer computes IMD weights; run `mrf3_fit(..., run_imd = TRUE)` ",
-      "or construct `mod` with weights from `get_multi_weights()`."
-    )
-  }
-  new_dat <- dat.list
-  dat_names <- names(new_dat)
-  connect_list <- mod$connection
+  if (is.null(weights)) weights <- mod$weights
+  if (is.null(weights)) stop("`mod` does not contain IMD weights in `$imd`.")
 
-  is_all_selected <- identical(select, "ALL")
-  normalize_weight_vec <- function(w) {
-    if (!isTRUE(normalized)) {
-      return(w)
+  # Align once by feature name. The selection methods below operate on raw
+  # Eq. 8 forest IMD, whose domain is [0, 1].
+  weights <- lapply(dat_names, function(block) {
+    if (is.null(weights[[block]])) {
+      stop("Missing IMD weights for block `", block, "`.")
     }
-    norm_w <- sqrt(sum(w^2))
-    if (!is.finite(norm_w) || norm_w <= 0) {
-      return(w)
+    out <- .vs_align_vector(weights[[block]], colnames(dat.list[[block]]), fill = 0)
+    if (any(!is.finite(out))) stop("Non-finite IMD in block `", block, "`.")
+    if (any(out < -sqrt(.Machine$double.eps)) ||
+        any(out > 1 + sqrt(.Machine$double.eps))) {
+      stop("Raw forest IMD must lie in [0, 1]; invalid values in block `", block, "`.")
     }
-    w / norm_w
-  }
-  keep_feature_names <- function(dat_block, weight_vec, block_name, allow_empty = FALSE) {
-    cols <- colnames(dat_block)
-    if (is.null(cols)) {
-      keep_idx <- which(weight_vec > 0)
-      if (!length(keep_idx) && !allow_empty && length(weight_vec)) {
-        keep_idx <- which.max(weight_vec)
-      }
-      keep_idx <- keep_idx[keep_idx <= ncol(dat_block)]
-      return(cols[keep_idx])
-    }
+    out[out < 0] <- 0
+    out[out > 1] <- 1
+    out
+  }) |>
+    stats::setNames(dat_names)
 
-    if (is.null(names(weight_vec))) {
-      keep_idx <- which(weight_vec > 0)
-      if (!length(keep_idx) && !allow_empty && length(weight_vec)) {
-        keep_idx <- which.max(weight_vec)
-      }
-      keep_idx <- keep_idx[keep_idx <= length(cols)]
-      return(cols[keep_idx])
-    }
-
-    keep_names <- intersect(names(weight_vec)[weight_vec > 0], cols)
-    if (!length(keep_names) && !allow_empty) {
-      best_name <- names(weight_vec)[which.max(weight_vec)]
-      if (!is.na(best_name) && nzchar(best_name) && best_name %in% cols) {
-        keep_names <- best_name
-      } else if (length(cols)) {
-        keep_names <- cols[[1]]
-      }
-    }
-    keep_names
+  ntree_use <- ntree
+  if (is.null(ntree_use)) ntree_use <- mod$ntree
+  if (is.null(ntree_use) || !length(ntree_use) || !is.finite(ntree_use[1L])) {
+    ntree_use <- 300L
   }
-  subset_block <- function(dat_block, weight_vec, block_name, allow_empty = FALSE) {
-    if (!is_all_selected && !block_name %in% select) {
-      return(dat_block)
-    }
-    keep_names <- keep_feature_names(dat_block, weight_vec, block_name, allow_empty = allow_empty)
-    if (!length(keep_names)) {
-      return(dat_block[, 0, drop = FALSE])
-    }
-    dat_block[, keep_names, drop = FALSE]
-  }
+  ntree_use <- as.integer(ntree_use[1L])
+  if (ntree_use < 1L) stop("`ntree` must be positive.")
 
   message("Variable selection..")
+  thres <- NULL
 
-  if(method == "thres") {
-
-    thres <- chooss_thres3(
-      mod$imd,
-      se = se
-    )
-    
+  if (identical(method, "thres")) {
+    thres <- chooss_thres3(weights, se = se)
   }
-  
-  
-  if(method == 'test'|tscore) {
 
-    if (signal == "specific") {
-      ## Direct per-block z-test for specific signal (no cross-modal connections)
-      imd_ls <- mod$imd_ls
-      if (is.null(imd_ls)) {
-        warning(
-          "`method = 'test'` for specific signal requires per-tree IMD. ",
-          "Falling back to `method = 'mixture'`.",
-          call. = FALSE
-        )
-        method <- "mixture"
-      } else {
-        block_names <- names(mod$imd)
-        thres_list <- lapply(seq_along(block_names), function(i) {
-          bn <- block_names[i]
-          w <- imd_ls[[i]]
-          raw <- purrr::map(w, bn)
-          raw <- raw[vapply(raw, length, integer(1)) > 0L]
-          if (length(raw) == 0L) return(list(keep_idx = NULL, pval = NULL, ts = NULL))
-          mat <- do.call(cbind, raw)  # p x ntree
-          mu <- mean(mat)
-          se <- apply(mat, 1, function(k) {
-            if (sum(k != 0) > 1) sd(k) / sqrt(length(k) - 1) else -1
-          })
-          z <- ifelse(se != -1, (rowMeans(mat) - mu) / se, 0)
-          p <- 1 - pnorm(z)
-          sig <- if (is.numeric(level)) level[1] else 0.05
-          keep <- ifelse(p < sig, 1, 0)
-          list(keep_idx = keep, pval = p, ts = z)
-        })
-        names(thres_list) <- block_names
-        thres <- list(
-          keep_idx = lapply(thres_list, `[[`, "keep_idx"),
-          pval = lapply(thres_list, `[[`, "pval"),
-          ts = lapply(thres_list, `[[`, "ts")
-        )
-      }
-    } else if (is.null(mod$imd_ls)) {
+  if (identical(method, "test")) {
+    if (is.null(mod$imd_ls)) {
+      stop(
+        "The IMD transformation requires per-tree IMD in `mod$imd_ls`; ",
+        "it cannot be reconstructed from forest means."
+      )
+    }
+    thres <- test_fn(
+      wl = mod$imd_ls,
+      connection = mod$connection,
+      dat_names = dat_names,
+      sig.thres = level,
+      feature_names = lapply(dat.list, colnames)
+    )
+  }
+
+  if (identical(method, "mixture")) {
+    c1 <- match.arg(c1, c("normal", "truncn"))
+    c2 <- match.arg(c2, c("normal", "gamma"))
+    thres <- lapply(dat_names, function(block) {
+      .fit_imd_mixture(
+        weights[[block]],
+        iter = iter,
+        eps = eps,
+        c1 = c1,
+        c2 = c2
+      )
+    }) |>
+      stats::setNames(dat_names)
+  }
+
+  if (identical(method, "filter")) {
+    if (identical(signal, "specific")) {
       warning(
-        "`method = 'test'` requires per-tree weight distributions (unavailable ",
-        "with native engine pre-computed IMD). Falling back to `method = 'mixture'`.",
+        "Adaptive OOB filtering is defined for cross-modal forests; ",
+        "using the fixed cutoff `se * sd(IMD)` for specific IMD.",
         call. = FALSE
       )
-      method <- "mixture"
+      method <- "thres"
+      method_requested <- "thres"
+      thres <- chooss_thres3(weights, se = se)
     } else {
-      thres <- test_fn(
-        wl = mod$imd_ls,
-        connection = connect_list,
-        dat_names = dat_names,
-        sig.thres = level)
+      thres <- choose_thres2(
+        weights = weights,
+        connection = mod$connection,
+        new_dat = dat.list,
+        ytry = mod$ytry,
+        ntree = ntree_use,
+        type = mod$type,
+        oob_init = mod$oob_err,
+        models_init = mod$mod,
+        k = k,
+        select = select,
+        tol = tol,
+        ...
+      )
     }
   }
-  
-  if(method == "filter" && signal == "specific") {
-    warning(
-      "`method = 'filter'` is not supported for specific signal. ",
-      "Falling back to `method = 'mixture'`.",
-      call. = FALSE
-    )
-    method <- "mixture"
-  }
 
-  if(method == "mixture") {
-    if(tscore) ts <- thres$ts
+  weights_new <- lapply(dat_names, function(block) {
+    w <- weights[[block]]
+    if (!block_is_selected(block)) return(w)
 
-    thres <- plyr::llply(
-      names(weights),
-      .fun = function(t) {
-        if(tscore) {
-          ww0 <- ts[[t]]
-        } else {
-          ww0 <- weights[[t]]
-        }
-        
-        param <- get_param(ww0)
-        e <- em(ww0, p = param$p, mu = param$mu, sigma = param$sigma, iter = iter, eps = eps, c1 = c1, c2 = c2)
-        cbind(e$par$post[,1]/rowSums(e$par$post),
-              e$par$post[,2]/rowSums(e$par$post),
-              e$par$post[,3]/rowSums(e$par$post))
-        
-      }
-    )
-    
-    names(thres) <- names(weights)
-
-  }
-  
-  if(method == "filter") {
-    weights_norm <- purrr::map(weights, ~./sqrt(sum(.^2)))
-    thres <- choose_thres2(
-      weights,
-      connection = connect_list,
-      new_dat = new_dat,
-      ytry = mod$ytry,
-      ntree = mod$ntree,
-      type = mod$type,
-      oob_init = mod$oob_err,
-      k = k,
-      select = select,
-      tol = tol,
-      ...)
-
-  }
-
-  
-  weights_new <- plyr::llply(
-    dat_names,
-    .fun = function(i) {
-      w <- weights[[i]]
-      if(!method %in% c("mixture", "test") ) {
-        if(select != 'ALL') {
-          
-          if(i %in% select) {
-            w[w < thres[i]] <- 0
-            w[w > thres[i]] <- w[w > thres[i]] - thres[i]
-          } 
-        } else {
-          w[w < thres[i]] <- 0
-          w[w > thres[i]] <- w[w > thres[i]] - thres[i]
+    if (method %in% c("filter", "thres")) {
+      cutoff <- unname(thres[[block]])
+      keep <- is.finite(w) & w > cutoff
+      w[!keep] <- 0
+    } else if (identical(method, "test")) {
+      keep <- thres$keep_idx[[block]]
+      keep <- .vs_align_vector(keep, names(w), fill = 1) > 0
+      w[!keep] <- 0
+    } else if (identical(method, "mixture")) {
+      post <- thres[[block]]
+      # The explicit zero-mass component is part of the null/noise class.
+      prob_noise <- post[, "noise"] + post[, "zero"]
+      if (identical(level, "auto")) {
+        target_fdr <- 0.05
+        positive <- which(w > 0)
+        keep <- rep(FALSE, length(w))
+        if (length(positive)) {
+          ord <- positive[order(prob_noise[positive])]
+          cumulative_fdr <- cumsum(prob_noise[ord]) / seq_along(ord)
+          n_keep <- max(c(0L, which(cumulative_fdr <= target_fdr)))
+          if (n_keep > 0L) keep[ord[seq_len(n_keep)]] <- TRUE
         }
       } else {
-        if(method == "mixture") {
-          lfdr <- thres[[i]][,1]  # local FDR = P(noise | data)
-          if (identical(level, "auto")) {
-            ## Bayesian FDR control: sort by local FDR, find largest
-            ## set where cumulative mean lfdr <= target_fdr
-            target_fdr <- 0.05
-            nonzero <- which(lfdr < 1 - 1e-8)  # skip exact-zero features
-            if (length(nonzero) > 0) {
-              ord <- order(lfdr[nonzero])
-              cum_fdr <- cumsum(lfdr[nonzero][ord]) / seq_along(ord)
-              n_sel <- max(0L, sum(cum_fdr <= target_fdr))
-              lvl_i <- if (n_sel > 0) lfdr[nonzero][ord][n_sel] + 1e-12 else 0
-            } else {
-              n_sel <- 0L
-              lvl_i <- 0
-            }
-            if (n_sel == 0L) {
-              message(sprintf("  [mixture auto] %s: no features at FDR<=%.2f; ",
-                              i, target_fdr),
-                      "selecting top feature by lowest local FDR")
-              best <- which.min(lfdr)
-              t <- rep(0L, length(lfdr))
-              t[best] <- 1L
-            } else {
-              message(sprintf("  [mixture auto] %s: %d features at FDR<=%.2f (lfdr cutoff=%.4f)",
-                              i, n_sel, target_fdr, lvl_i))
-              t <- ifelse(lfdr < lvl_i, 1, 0)
-            }
-          } else {
-            lvl_i <- if (is.null(names(level))) level[1] else {
-              if (i %in% names(level)) level[[i]] else level[1]
-            }
-            t <- ifelse(lfdr < lvl_i, 1, 0)
-          }
-        } else {
-          t <- thres$keep_idx[[i]]
-          
-        }
-
-        if(select != 'ALL') {
-          
-          if(i %in% select) {
-            
-            w <- w * t
-          } 
-        } else {
-
-          w <- w * t
-        }
-        
+        pr <- .vs_level_for_block(level, block)
+        keep <- w > 0 & prob_noise < pr
       }
-      
-      
-      normalize_weight_vec(w)
+      w[!keep] <- 0
     }
-  )
 
-  names(weights_new) <- dat_names
-  mod$imd <- weights_new
-  if (isTRUE(re_fit)) {
-    message("Refit model..")
-  }
-    
-  new_dat <- plyr::llply(
-    dat_names,
-    .fun = function(i) subset_block(new_dat[[i]], weights_new[[i]], i)
-  )
-  names(new_dat) <- dat_names
-  m <- purrr::map(weights_new, ~.[.>0])
-  
-  if(scale) {
-    new_dat2 <- purrr::map(new_dat, ~scale(.))
-  } else {
-    new_dat2 <- new_dat
-  }
-    
-  if(!re_weights) {
-    m <- NULL
-  } 
-  if(re_fit && signal == "specific") {
-    message("Skipping refit for specific signal (self-connections not meaningful for supervised RF).")
-    re_fit <- FALSE
-  }
-  if(re_fit) {
-    refit <- fit_multi_forest(new_dat2, connect_list = connect_list, ntree = ntree,
-                             type = mod$type, var.wt = m, ytry = mod$ytry, ...)
-
-    oob_err <- purrr::map(refit, ~get_r_sq(.))
-    oob_err <- Reduce("+", oob_err)
-
-    mod$oob_err <- oob_err
-    mod$mod <- refit
-  }
-  
-  mod$dat.list <- new_dat2
-  mod$thres <- thres
-  mod$ntree <- ntree
-  
-  class(mod) <- c(class(mod), "vs")
-  
-  mod
-  
-}
-
-choose_thres2 <- function(weights, connection, new_dat, ytry, ntree, type, oob_init, k = 3, tol = 0.01, select = "ALL", ...) {
-  
-  num <- seq(.8,3.1,by = 0.1)
-  oob <- c()
-  i <- 1
-  is_all_selected <- identical(select, "ALL")
-  apply_threshold <- function(block_name, w, threshold) {
-    if (!is_all_selected && !block_name %in% select) {
-      return(w)
+    if (isTRUE(normalized)) {
+      denom <- sqrt(sum(w^2))
+      if (is.finite(denom) && denom > 0) w <- w / denom
     }
-    w[w < threshold] <- 0
-    w[w > threshold] <- w[w > threshold] - threshold
     w
+  }) |>
+    stats::setNames(dat_names)
+
+  new_dat <- lapply(dat_names, function(block) {
+    if (!block_is_selected(block)) return(dat.list[[block]])
+    keep <- names(weights_new[[block]])[weights_new[[block]] > 0]
+    keep <- colnames(dat.list[[block]])[colnames(dat.list[[block]]) %in% keep]
+    dat.list[[block]][, keep, drop = FALSE]
+  }) |>
+    stats::setNames(dat_names)
+
+  new_dat_fit <- if (isTRUE(scale)) {
+    lapply(new_dat, function(x) base::scale(x))
+  } else {
+    new_dat
   }
-  subset_block <- function(dat_block, weight_vec, block_name) {
-    if (!is_all_selected && !block_name %in% select) {
-      return(dat_block)
+
+  mod$imd <- weights_new
+  mod$weights <- NULL
+  mod$dat.list <- new_dat_fit
+  mod$selected_vars <- lapply(new_dat, colnames)
+  mod$selected_weights <- lapply(dat_names, function(block) {
+    weights_new[[block]][colnames(new_dat[[block]])]
+  }) |>
+    stats::setNames(dat_names)
+  mod$thres <- thres
+  mod$ntree <- ntree_use
+  mod$signal <- signal
+  mod$selection_method <- method_requested
+  mod$refit_performed <- FALSE
+
+  if (isTRUE(re_fit)) {
+    refit_connection <- if (!is.null(mod$refit_connection)) {
+      mod$refit_connection
+    } else {
+      mod$connection
     }
-    cols <- colnames(dat_block)
-    if (is.null(names(weight_vec))) {
-      keep_idx <- which(weight_vec > 0)
-      if (!length(keep_idx) && length(weight_vec)) {
-        keep_idx <- which.max(weight_vec)
+    if (is.null(refit_connection) || !length(refit_connection)) {
+      warning("Model refitting was skipped because no connection is available.", call. = FALSE)
+    } else if (any(vapply(new_dat_fit, ncol, integer(1)) == 0L)) {
+      warning("At least one selected block is empty; model refitting was skipped.", call. = FALSE)
+    } else {
+      message("Refit model..")
+      refit_weights <- NULL
+      if (isTRUE(re_weights)) {
+        refit_weights <- lapply(dat_names, function(block) {
+          if (!block_is_selected(block)) return(NULL)
+          weights_new[[block]][colnames(new_dat_fit[[block]])]
+        }) |>
+          stats::setNames(dat_names)
       }
-      keep_idx <- keep_idx[keep_idx <= ncol(dat_block)]
-      return(dat_block[, keep_idx, drop = FALSE])
+      refit <- fit_multi_forest(
+        new_dat_fit,
+        connect_list = refit_connection,
+        ntree = ntree_use,
+        type = mod$type,
+        var.wt = refit_weights,
+        ytry = mod$ytry,
+        ...
+      )
+      mod$mod <- refit
+      mod$oob_err <- .vs_mean_model_oob_nmse(refit)
+      mod$refit_performed <- TRUE
     }
-    keep_names <- intersect(names(weight_vec)[weight_vec > 0], cols)
-    if (!length(keep_names) && length(cols)) {
-      best_name <- names(weight_vec)[which.max(weight_vec)]
-      keep_names <- if (!is.na(best_name) && best_name %in% cols) best_name else cols[[1]]
-    }
-    dat_block[, keep_names, drop = FALSE]
   }
 
-  while(i <= length(num)) {
-    t <- num[i]
-
-    weights_new <- purrr::imap(weights, ~apply_threshold(.y, .x, t * stats::sd(.x)))
-    
-    new_dat2 <- plyr::llply(
-      names(new_dat),
-      .fun = function(i) subset_block(new_dat[[i]], weights_new[[i]], i)
-    )
-    names(new_dat2) <- names(new_dat)
-
-    oob_err0 <- plyr::laply(1:k,
-                            .fun = function(k) {
-                              refit <- fit_multi_forest(new_dat2, connect_list = connection,
-                                                       ntree = ntree, type = type, ytry = ytry,
-                                                       var.wt = NULL,
-                                                       forest.wt = "oob")
-
-                              oob_err <- purrr::map(refit, ~get_r_sq(.))
-                              Reduce("+", oob_err)/length(new_dat2)
-                            })
-    
-    oob_err <- mean(unlist(oob_err0))
-    oob <- c(oob, oob_err)
-    oob_init <- oob_err
-    i <- i + 1
-  }
-
-  diff <- abs(diff(oob[-1]))
-  t <- sort(num[-1][which(diff < tol)])[1]
-  
-  message("Choose ", t, " times sd")
-  thres <- plyr::llply(
-    weights,
-    .fun = function(w) {
-      
-      t * sd(w)
-    }
-  )
-  
-  unlist(thres)
-  
+  class(mod) <- unique(c(class(mod), "vs", "mrf3"))
+  mod
 }
 
+# Align feature vectors by name without recycling. If names are unavailable,
+# positional alignment is accepted only when lengths agree.
+.vs_align_vector <- function(x, target_names, fill = NA_real_) {
+  target_names <- as.character(target_names)
+  out <- rep(fill, length(target_names))
+  names(out) <- target_names
+  if (is.null(x)) return(out)
+  x_names <- names(x)
+  x <- as.vector(x)
+  if (is.null(x_names) || !any(nzchar(x_names))) {
+    if (length(x) != length(out)) {
+      stop("Unnamed feature vector has length ", length(x),
+           ", expected ", length(out), ".")
+    }
+    out[] <- x
+    return(out)
+  }
+  idx <- match(target_names, x_names)
+  present <- !is.na(idx)
+  out[present] <- x[idx[present]]
+  out
+}
+
+.vs_level_for_block <- function(level, block, default = 0.05) {
+  if (identical(level, "auto")) return(default)
+  if (is.list(level)) level <- unlist(level, use.names = TRUE)
+  if (!is.numeric(level) || !length(level)) {
+    stop("`level` must be numeric, a named numeric vector/list, or \"auto\".")
+  }
+  value <- if (!is.null(names(level)) && block %in% names(level)) {
+    level[[block]]
+  } else {
+    level[[1L]]
+  }
+  if (length(value) != 1L || !is.finite(value) || value <= 0 || value >= 1) {
+    stop("Selection level for block `", block, "` must lie strictly between 0 and 1.")
+  }
+  as.numeric(value)
+}
+
+# Mean feature-level normalized OOB MSE, averaged again across directed
+# connections. `get_oob_nmse()` already averages all p + q coordinates.
+.vs_mean_model_oob_nmse <- function(models) {
+  if (is.null(models) || !is.list(models) || !length(models)) return(NA_real_)
+  score <- vapply(models, function(model) {
+    value <- tryCatch(get_oob_nmse(model), error = function(e) NA_real_)
+    as.numeric(value)
+  }, numeric(1))
+  if (!any(is.finite(score))) return(NA_real_)
+  mean(score[is.finite(score)])
+}
+
+#' @keywords internal
+choose_thres2 <- function(weights, connection, new_dat, ytry, ntree, type,
+                          oob_init = NULL, models_init = NULL, k = 3,
+                          tol = 0.01, select = "ALL",
+                          tau_grid = seq(0.8, 3.1, by = 0.1),
+                          .fit_fun = fit_multi_forest,
+                          .score_fun = .vs_mean_model_oob_nmse, ...) {
+  k <- as.integer(k)
+  if (k < 1L) stop("`k` must be positive.")
+  tau_grid <- as.numeric(tau_grid)
+  if (!length(tau_grid) || any(!is.finite(tau_grid)) || any(tau_grid < 0)) {
+    stop("`tau_grid` must contain non-negative finite values.")
+  }
+  if (!is.numeric(tol) || length(tol) != 1L || !is.finite(tol) || tol < 0) {
+    stop("`tol` must be one non-negative finite number.")
+  }
+  select_all <- length(select) == 1L && identical(as.character(select), "ALL")
+  selected_block <- function(block) select_all || block %in% as.character(select)
+
+  # Kept as an unused formal for source compatibility with pre-alignment code.
+  invisible(oob_init)
+
+  dots <- list(...)
+  base_seed <- if (!is.null(dots$seed)) as.integer(dots$seed)[1L] else 529L
+  dots$seed <- NULL
+  models_have_oob_inputs <- is.list(models_init) && length(models_init) &&
+    all(vapply(models_init, function(model) {
+      !is.null(model$membership) && !is.null(model$inbag)
+    }, logical(1)))
+  baseline <- if (models_have_oob_inputs) {
+    .score_fun(models_init)
+  } else {
+    NA_real_
+  }
+  if (!is.finite(baseline)) {
+    # Historical `oob_init` values were often computed from all-tree weights,
+    # so do not mix them with true OOB scores. Refit the unfiltered data using
+    # exactly the same OOB protocol as the candidate cutoffs.
+    baseline_repeat <- rep(NA_real_, k)
+    for (replicate_id in seq_len(k)) {
+      fit_args <- utils::modifyList(
+        list(
+          dat.list = new_dat,
+          connect_list = connection,
+          ntree = ntree,
+          type = type,
+          ytry = ytry,
+          var.wt = NULL,
+          forest.wt = "oob",
+          seed = base_seed + replicate_id - 1L
+        ),
+        dots
+      )
+      # OOB scoring is part of the method and cannot be overridden by `...`.
+      fit_args$dat.list <- new_dat
+      fit_args$connect_list <- connection
+      fit_args$forest.wt <- "oob"
+      fit_args$seed <- base_seed + replicate_id - 1L
+      baseline_fit <- do.call(.fit_fun, fit_args)
+      baseline_repeat[[replicate_id]] <- .score_fun(baseline_fit)
+    }
+    if (any(is.finite(baseline_repeat))) {
+      baseline <- mean(baseline_repeat[is.finite(baseline_repeat)])
+    }
+  }
+  candidate_error <- rep(Inf, length(tau_grid))
+
+  for (i in seq_along(tau_grid)) {
+    tau <- tau_grid[[i]]
+    keep_by_block <- lapply(names(weights), function(block) {
+      if (!selected_block(block)) return(rep(TRUE, length(weights[[block]])))
+      cutoff <- tau * stats::sd(weights[[block]])
+      if (!is.finite(cutoff)) cutoff <- 0
+      weights[[block]] > cutoff
+    }) |>
+      stats::setNames(names(weights))
+
+    dat_reduced <- lapply(names(new_dat), function(block) {
+      if (!selected_block(block)) return(new_dat[[block]])
+      keep_names <- names(weights[[block]])[keep_by_block[[block]]]
+      keep_names <- colnames(new_dat[[block]])[colnames(new_dat[[block]]) %in% keep_names]
+      new_dat[[block]][, keep_names, drop = FALSE]
+    }) |>
+      stats::setNames(names(new_dat))
+
+    required_blocks <- unique(unlist(connection, use.names = FALSE))
+    if (any(vapply(dat_reduced[required_blocks], ncol, integer(1)) == 0L)) next
+
+    repeat_error <- rep(NA_real_, k)
+    for (replicate_id in seq_len(k)) {
+      fit_args <- utils::modifyList(
+        list(
+          dat.list = dat_reduced,
+          connect_list = connection,
+          ntree = ntree,
+          type = type,
+          ytry = ytry,
+          var.wt = NULL,
+          forest.wt = "oob",
+          seed = base_seed + replicate_id - 1L
+        ),
+        dots
+      )
+      fit_args$dat.list <- dat_reduced
+      fit_args$connect_list <- connection
+      fit_args$forest.wt <- "oob"
+      fit_args$seed <- base_seed + replicate_id - 1L
+      refit <- do.call(.fit_fun, fit_args)
+      repeat_error[[replicate_id]] <- .score_fun(refit)
+    }
+    if (any(is.finite(repeat_error))) {
+      candidate_error[[i]] <- mean(repeat_error[is.finite(repeat_error)])
+    }
+  }
+
+  # Adaptive filtering looks for the first stable plateau between
+  # adjacent candidate cutoffs. The unfiltered baseline is diagnostic only: it
+  # may be a single existing fit and must not be compared with a k-fit mean.
+  # The first grid point is the companion algorithm's anchor (`oob[-1]`), so a
+  # plateau can start at the second candidate once two subsequent candidates
+  # have tolerably similar errors.
+  plateau_pool <- seq_along(candidate_error)[-1L]
+  stable_start <- integer()
+  if (length(plateau_pool) >= 2L) {
+    left <- plateau_pool[-length(plateau_pool)]
+    right <- plateau_pool[-1L]
+    stable_start <- left[
+      is.finite(candidate_error[left]) &
+        is.finite(candidate_error[right]) &
+        abs(candidate_error[right] - candidate_error[left]) <= tol
+    ]
+  }
+  if (length(stable_start)) {
+    chosen_index <- stable_start[[1L]]
+  } else if (any(is.finite(candidate_error))) {
+    chosen_index <- which.min(candidate_error)
+  } else {
+    stop("No filtering cutoff produced a fit with a finite OOB error.")
+  }
+  tau <- tau_grid[[chosen_index]]
+  message("Choose ", format(tau), " times sd")
+
+  thresholds <- vapply(weights, function(w) {
+    value <- tau * stats::sd(w)
+    if (is.finite(value)) value else 0
+  }, numeric(1))
+  attr(thresholds, "tau") <- tau
+  attr(thresholds, "oob_trace") <- data.frame(
+    tau = tau_grid,
+    mean_oob_nmse = candidate_error
+  )
+  attr(thresholds, "baseline_oob_nmse") <- baseline
+  thresholds
+}
+
+# Fixed threshold tau * sd(IMD). Kept under the historical helper name
+# for compatibility with code that calls it via `multiRF:::`.
 chooss_thres3 <- function(weights, se) {
-  t <- plyr::laply(
-    weights,
-    .fun = function(w) {
-      mean(w) + se * sd(w)
-    }
-  )
-  names(t) <- names(weights)
-  t
+  if (!is.numeric(se) || length(se) != 1L || !is.finite(se) || se < 0) {
+    stop("`se` (tau) must be one non-negative finite number.")
+  }
+  out <- vapply(weights, function(w) {
+    value <- se * stats::sd(w)
+    if (is.finite(value)) value else 0
+  }, numeric(1))
+  names(out) <- names(weights)
+  out
 }
 
-test_fn <- function(wl, connection, dat_names, sig.thres = 0.05) {
+# Fit an explicit point mass at zero plus a two-component model on
+# positive IMD. Components are relabelled after fitting so column `noise`
+# always refers to the lower-mean component.
+.fit_imd_mixture <- function(x, iter = 1000, eps = 1e-5,
+                             c1 = c("normal", "truncn"),
+                             c2 = c("normal", "gamma")) {
+  c1 <- match.arg(c1)
+  c2 <- match.arg(c2)
+  x_names <- names(x)
+  x <- as.numeric(x)
+  if (any(!is.finite(x)) || any(x < 0) || any(x > 1)) {
+    stop("Mixture input must be finite raw IMD in [0, 1].")
+  }
+  n <- length(x)
+  post <- matrix(0, nrow = n, ncol = 3L,
+                 dimnames = list(x_names, c("noise", "signal", "zero")))
+  zero <- x == 0
+  post[zero, "zero"] <- 1
+  xp <- x[!zero]
+  if (!length(xp)) return(post)
+  if (length(xp) == 1L || stats::sd(xp) < sqrt(.Machine$double.eps)) {
+    warning(
+      "Positive IMD values do not contain enough variation to identify a ",
+      "two-component mixture; conservatively treating them as noise.",
+      call. = FALSE
+    )
+    post[!zero, "noise"] <- 1
+    attr(post, "degenerate") <- TRUE
+    attr(post, "component_means") <- rep(mean(xp), 2L)
+    attr(post, "loglik_trace") <- numeric()
+    return(post)
+  }
 
-  res <- plyr::llply(1:length(wl),
-              .fun = function(i) {
-                w <- wl[[i]]
-                conn <- rev(connection[[i]])
-                pls <- plyr::llply(
-                  names(w[[1]]),
-                  .fun = function(j) {
-                    raw_j <- purrr::map(w, j)
-                    raw_j <- raw_j[vapply(raw_j, length, integer(1)) > 0L]
-                    if (length(raw_j) == 0L) return(list(keep_idx = NULL, pval = NULL, ts = NULL))
-                    mat <- Reduce(cbind, raw_j)
+  min_sd <- max(stats::sd(xp) * 1e-3, 1e-6)
+  q <- as.numeric(stats::quantile(xp, c(0.3, 0.7), names = FALSE, type = 8))
+  mu <- q
+  sigma <- rep(max(stats::sd(xp) / 2, min_sd), 2L)
+  gamma_shape <- max((mu[2L] / sigma[2L])^2, 1e-3)
+  gamma_scale <- max(sigma[2L]^2 / mu[2L], 1e-6)
+  mix <- 0.5
 
-                    mu <- mean(mat)
+  log_density_one <- function(values, mean, sd, family) {
+    sd <- max(sd, min_sd)
+    if (identical(family, "truncn")) {
+      # Eq. 13 is left-truncated at zero (not doubly truncated at one).
+      log_survival_zero <- stats::pnorm(
+        0, mean = mean, sd = sd, lower.tail = FALSE, log.p = TRUE
+      )
+      stats::dnorm(values, mean = mean, sd = sd, log = TRUE) -
+        log_survival_zero
+    } else {
+      stats::dnorm(values, mean = mean, sd = sd, log = TRUE)
+    }
+  }
+  log_density_two <- function(values, mean, sd, family, shape, scale) {
+    if (identical(family, "gamma")) {
+      stats::dgamma(
+        values,
+        shape = max(shape, 1e-6),
+        scale = max(scale, .Machine$double.xmin),
+        log = TRUE
+      )
+    } else {
+      stats::dnorm(values, mean = mean, sd = max(sd, min_sd), log = TRUE)
+    }
+  }
 
-                    se <- apply(mat, 1, function(k){
-                      if(length(k[k!=0]) > 1) {
-                        sd(k)/sqrt(length(k) - 1)
-                      } else {
-                        -1
-                      }
+  weighted_normal_mle <- function(values, weights) {
+    total <- sum(weights)
+    mean <- sum(weights * values) / total
+    sd <- sqrt(sum(weights * (values - mean)^2) / total)
+    c(mean = mean, sd = max(sd, min_sd))
+  }
 
-                    } )
+  weighted_truncn_mle <- function(values, weights, start_mean, start_sd) {
+    objective <- function(par) {
+      mean <- par[[1L]]
+      sd <- exp(par[[2L]])
+      log_density <- log_density_one(values, mean, sd, "truncn")
+      value <- -sum(weights * log_density)
+      if (is.finite(value)) value else .Machine$double.xmax / 100
+    }
+    initial <- c(start_mean, log(max(start_sd, min_sd)))
+    fit <- tryCatch(
+      stats::optim(
+        initial,
+        objective,
+        method = "L-BFGS-B",
+        lower = c(-20, log(min_sd)),
+        upper = c(1, log(10)),
+        control = list(maxit = 200L)
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(fit) || !is.finite(fit$value)) {
+      return(c(mean = start_mean, sd = max(start_sd, min_sd)))
+    }
+    c(mean = fit$par[[1L]], sd = max(exp(fit$par[[2L]]), min_sd))
+  }
 
-                    z <- ifelse(se != -1, (rowMeans(mat) - mu)/se, 0)
+  weighted_gamma_mle <- function(values, weights, start_shape, start_scale) {
+    total <- sum(weights)
+    weighted_mean <- sum(weights * values) / total
+    weighted_log_mean <- sum(weights * log(values)) / total
+    target <- max(log(weighted_mean) - weighted_log_mean, 0)
 
-                    # p <- pt(z,df = nrow(mat) - 1 ,lower.tail = F)
-                    p <- 1-pnorm(z)
+    # Weighted gamma MLE: log(k) - digamma(k) = log(E_w X) - E_w log(X).
+    if (target <= 1e-12) {
+      shape <- 1e6
+    } else {
+      score <- function(shape) log(shape) - digamma(shape) - target
+      lower <- 1e-6
+      upper <- max(1, start_shape)
+      while (score(upper) > 0 && upper < 1e8) upper <- upper * 2
+      shape <- tryCatch(
+        stats::uniroot(score, lower = lower, upper = upper, tol = 1e-10)$root,
+        error = function(e) start_shape
+      )
+    }
+    shape <- min(max(shape, 1e-6), 1e8)
+    # Preserve the weighted MLE mean exactly, including very small raw IMD.
+    scale <- max(weighted_mean / shape, .Machine$double.xmin)
+    c(shape = shape, scale = scale)
+  }
 
-                    keep <- ifelse(p < sig.thres, 1, 0)
+  log_sum_exp_two <- function(left, right) {
+    maximum <- pmax(left, right)
+    maximum + log(exp(left - maximum) + exp(right - maximum))
+  }
 
-                    list(keep_idx = keep,
-                         pval = p,
-                         ts = z)
-                  }
-                )
+  component_mean_one <- function(mean, sd, family) {
+    if (!identical(family, "truncn")) return(mean)
+    alpha <- -mean / sd
+    mean + sd * exp(stats::dnorm(alpha, log = TRUE) -
+                      stats::pnorm(alpha, lower.tail = FALSE, log.p = TRUE))
+  }
+  component_mean_two <- function(mean, family, shape, scale) {
+    if (identical(family, "gamma")) shape * scale else mean
+  }
 
-                p <- lapply(pls, `[[`, "pval")
-                keep_idx <- lapply(pls, `[[`, "keep_idx")
-                ts <- lapply(pls, `[[`, "ts")
-                names(p) <- names(keep_idx) <- names(ts) <- conn
+  loglik_trace <- numeric()
+  rolled_back <- FALSE
+  responsibility <- rep(0.5, length(xp))
+  for (step in seq_len(as.integer(iter))) {
+    log_a <- log(mix) + log_density_one(xp, mu[1L], sigma[1L], c1)
+    log_b <- log1p(-mix) + log_density_two(
+      xp, mu[2L], sigma[2L], c2, gamma_shape, gamma_scale
+    )
+    log_denominator <- log_sum_exp_two(log_a, log_b)
+    responsibility <- exp(log_a - log_denominator)
+    loglik <- sum(log_denominator)
+    if (!length(loglik_trace) ||
+        abs(loglik - loglik_trace[[length(loglik_trace)]]) > 1e-12) {
+      loglik_trace <- c(loglik_trace, loglik)
+    }
 
+    weight_one <- sum(responsibility)
+    weight_two <- sum(1 - responsibility)
+    if (weight_one <= 1e-8 || weight_two <= 1e-8) break
 
-                list(keep_idx = keep_idx,
-                     pval = p, 
-                     ts = ts)
-              })
+    old_parameters <- list(
+      mix = mix,
+      mu = mu,
+      sigma = sigma,
+      gamma_shape = gamma_shape,
+      gamma_scale = gamma_scale
+    )
+    mix <- min(1 - 1e-6, max(1e-6, mean(responsibility)))
+    first_fit <- if (identical(c1, "truncn")) {
+      weighted_truncn_mle(xp, responsibility, mu[1L], sigma[1L])
+    } else {
+      weighted_normal_mle(xp, responsibility)
+    }
+    mu[1L] <- first_fit[["mean"]]
+    sigma[1L] <- first_fit[["sd"]]
 
-  keep_idx <- purrr::map(res, "keep_idx")
-  p <- purrr::map(res, "pval")
-  ts <- purrr::map(res, "ts")
+    if (identical(c2, "gamma")) {
+      second_fit <- weighted_gamma_mle(
+        xp, 1 - responsibility, gamma_shape, gamma_scale
+      )
+      gamma_shape <- second_fit[["shape"]]
+      gamma_scale <- second_fit[["scale"]]
+      mu[2L] <- gamma_shape * gamma_scale
+      sigma[2L] <- sqrt(gamma_shape) * gamma_scale
+    } else {
+      second_fit <- weighted_normal_mle(xp, 1 - responsibility)
+      mu[2L] <- second_fit[["mean"]]
+      sigma[2L] <- second_fit[["sd"]]
+    }
 
-  keep_res <- plyr::llply(dat_names,
-              .fun = function(d) {
-                keep_raw <- purrr::map(keep_idx, d)
-                keep_raw <- keep_raw[vapply(keep_raw, function(x) length(x) > 0L, logical(1))]
-                if (length(keep_raw) == 0L) {
-                  # d is a block name; get feature count from first non-empty keep_idx
-                  n_feat <- length(purrr::compact(purrr::map(keep_idx, d))[[1]])
-                  if (n_feat == 0L) n_feat <- 1L
-                  return(list(keep_idx = rep(0L, n_feat), pval = NULL, ts = NULL))
-                }
-                keep <- Reduce(cbind, keep_raw)
-                ts_raw <- purrr::map(ts, d)
-                ts_raw <- ts_raw[vapply(ts_raw, function(x) length(x) > 0L, logical(1))]
-                ts <- if (length(ts_raw) > 0L) Reduce(cbind, ts_raw) else NULL
-                if(is.null(ncol(ts))) ts <- ts else ts <- colMeans(ts)
+    proposed_a <- log(mix) + log_density_one(xp, mu[1L], sigma[1L], c1)
+    proposed_b <- log1p(-mix) + log_density_two(
+      xp, mu[2L], sigma[2L], c2, gamma_shape, gamma_scale
+    )
+    proposed_loglik <- sum(log_sum_exp_two(proposed_a, proposed_b))
 
+    # A numerically capped gamma MLE can cease to be a true maximizer for
+    # boundary-scale data. Never accept an M-step that lowers the observed-data
+    # likelihood; retain the last valid parameters instead.
+    if (!is.finite(proposed_loglik) || proposed_loglik < loglik) {
+      mix <- old_parameters$mix
+      mu <- old_parameters$mu
+      sigma <- old_parameters$sigma
+      gamma_shape <- old_parameters$gamma_shape
+      gamma_scale <- old_parameters$gamma_scale
+      rolled_back <- TRUE
+      break
+    }
+    if (abs(proposed_loglik - loglik) <= eps) {
+      if (abs(proposed_loglik - loglik_trace[[length(loglik_trace)]]) > 1e-12) {
+        loglik_trace <- c(loglik_trace, proposed_loglik)
+      }
+      break
+    }
+  }
 
-                if(!is.null(ncol(keep))) {
-                  keep <- rowMeans(keep) >= 0.5
-                } else {
-                  keep <- keep == 1
-                }
-                keep_idx <- ifelse(keep, 1, 0)
-                p_raw <- purrr::map(p, d)
-                p_raw <- p_raw[vapply(p_raw, function(x) length(x) > 0L, logical(1))]
-                p <- if (length(p_raw) > 0L) Reduce(cbind, p_raw) else NULL
-                list(keep_idx = keep_idx,
-                     pval = p,
-                     ts = ts)
+  log_a <- log(mix) + log_density_one(xp, mu[1L], sigma[1L], c1)
+  log_b <- log1p(-mix) + log_density_two(
+    xp, mu[2L], sigma[2L], c2, gamma_shape, gamma_scale
+  )
+  log_denominator <- log_sum_exp_two(log_a, log_b)
+  positive_post <- cbind(exp(log_a - log_denominator),
+                         exp(log_b - log_denominator))
+  final_loglik <- sum(log_denominator)
+  if (!length(loglik_trace) ||
+      abs(final_loglik - loglik_trace[[length(loglik_trace)]]) > 1e-12) {
+    loglik_trace <- c(loglik_trace, final_loglik)
+  }
+  component_means <- c(
+    component_mean_one(mu[1L], sigma[1L], c1),
+    component_mean_two(mu[2L], c2, gamma_shape, gamma_scale)
+  )
+  if (component_means[[1L]] > component_means[[2L]]) {
+    positive_post <- positive_post[, 2:1, drop = FALSE]
+  }
+  post[!zero, c("noise", "signal")] <- positive_post
+  attr(post, "loglik_trace") <- loglik_trace
+  attr(post, "component_means") <- sort(component_means)
+  attr(post, "em_rollback") <- rolled_back
+  post
+}
 
-              })
+# Eq. 16 transformation for one per-tree IMD matrix (features x trees).
+.imd_transformation_one <- function(mat, alpha) {
+  mat <- as.matrix(mat)
+  if (ncol(mat) < 2L) stop("IMD transformation requires at least two trees.")
+  forest_mean <- rowMeans(mat)
+  global_mean <- mean(mat)
+  standard_error <- apply(mat, 1L, stats::sd) / sqrt(ncol(mat))
+  difference <- forest_mean - global_mean
+  t_score <- difference / standard_error
+  zero_se <- !is.finite(t_score)
+  if (any(zero_se)) {
+    t_score[zero_se & difference > 0] <- Inf
+    t_score[zero_se & difference < 0] <- -Inf
+    t_score[zero_se & difference == 0] <- 0
+  }
+  p_value <- stats::pt(t_score, df = ncol(mat) - 1L, lower.tail = FALSE)
+  keep <- as.integer(p_value < alpha)
+  names(keep) <- names(p_value) <- names(t_score) <- rownames(mat)
+  list(keep_idx = keep, pval = p_value, ts = t_score, ntree = ncol(mat))
+}
 
-  names(keep_res) <- dat_names
-  keep_idx <- purrr::map(keep_res, "keep_idx")
-  p <- purrr::map(keep_res, "pval")
-  ts <- purrr::map(keep_res, "ts")
+#' @keywords internal
+test_fn <- function(wl, connection, dat_names, sig.thres = 0.05,
+                    feature_names = NULL) {
+  if (is.null(feature_names)) {
+    feature_names <- stats::setNames(vector("list", length(dat_names)), dat_names)
+  }
+  if (is.null(names(feature_names))) names(feature_names) <- dat_names
+  records <- stats::setNames(vector("list", length(dat_names)), dat_names)
 
-  list(keep_idx = keep_idx,
-       pval = p,
-       ts = ts)
+  for (i in seq_along(wl)) {
+    trees <- wl[[i]]
+    if (!is.list(trees) || !length(trees)) next
+    valid_trees <- trees[vapply(trees, is.list, logical(1))]
+    if (!length(valid_trees)) next
+    side_keys <- unique(unlist(lapply(valid_trees, names), use.names = FALSE))
+    if (!length(side_keys)) next
 
+    conn <- if (length(connection) >= i) as.character(connection[[i]]) else character()
+    if (all(side_keys %in% dat_names)) {
+      side_to_block <- stats::setNames(side_keys, side_keys)
+    } else {
+      mapped <- rev(conn)
+      mapped <- mapped[seq_len(min(length(mapped), length(side_keys)))]
+      side_to_block <- stats::setNames(mapped, side_keys[seq_along(mapped)])
+    }
+
+    for (side in names(side_to_block)) {
+      block <- unname(side_to_block[[side]])
+      if (!block %in% dat_names) next
+      raw <- lapply(valid_trees, function(tree) tree[[side]])
+      raw <- raw[vapply(raw, function(x) !is.null(x) && length(x) > 0L, logical(1))]
+      if (!length(raw)) next
+
+      target <- feature_names[[block]]
+      if (is.null(target) || !length(target)) {
+        target <- unique(unlist(lapply(raw, names), use.names = FALSE))
+        if (!length(target)) target <- paste0("V", seq_len(length(raw[[1L]])))
+      }
+      aligned <- lapply(raw, .vs_align_vector, target_names = target, fill = 0)
+      mat <- do.call(cbind, aligned)
+      rownames(mat) <- target
+      alpha <- .vs_level_for_block(sig.thres, block)
+      records[[block]][[length(records[[block]]) + 1L]] <-
+        .imd_transformation_one(mat, alpha)
+    }
+  }
+
+  aggregate_block <- function(block) {
+    target <- feature_names[[block]]
+    block_records <- records[[block]]
+    if (!length(block_records)) {
+      if (is.null(target)) target <- character()
+      warning(
+        "No connected forest supplies per-tree IMD for block `", block,
+        "`; retaining its variables because the transformation was not evaluated.",
+        call. = FALSE
+      )
+      return(list(
+        keep_idx = stats::setNames(rep(1L, length(target)), target),
+        pval = stats::setNames(rep(NA_real_, length(target)), target),
+        ts = stats::setNames(rep(NA_real_, length(target)), target),
+        n_models = 0L
+      ))
+    }
+    if (is.null(target) || !length(target)) target <- names(block_records[[1L]]$keep_idx)
+    keep_mat <- do.call(cbind, lapply(block_records, function(x) {
+      .vs_align_vector(x$keep_idx, target, fill = 0)
+    }))
+    p_mat <- do.call(cbind, lapply(block_records, function(x) {
+      .vs_align_vector(x$pval, target, fill = NA_real_)
+    }))
+    t_mat <- do.call(cbind, lapply(block_records, function(x) {
+      .vs_align_vector(x$ts, target, fill = NA_real_)
+    }))
+    mean_na <- function(mat) {
+      out <- rowMeans(mat, na.rm = TRUE)
+      out[!is.finite(out)] <- NA_real_
+      stats::setNames(out, target)
+    }
+    list(
+      # Apply a strict majority across connected forests, row-wise and
+      # separately for every feature.
+      keep_idx = stats::setNames(as.integer(rowMeans(keep_mat) > 0.5), target),
+      pval = mean_na(p_mat),
+      ts = mean_na(t_mat),
+      n_models = length(block_records)
+    )
+  }
+
+  aggregated <- lapply(dat_names, aggregate_block) |>
+    stats::setNames(dat_names)
+  list(
+    keep_idx = lapply(aggregated, `[[`, "keep_idx"),
+    pval = lapply(aggregated, `[[`, "pval"),
+    ts = lapply(aggregated, `[[`, "ts"),
+    n_models = vapply(aggregated, `[[`, integer(1), "n_models")
+  )
 }

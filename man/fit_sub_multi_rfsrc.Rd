@@ -24,6 +24,8 @@ fit_sub_multi_rfsrc(
   seed = 529L,
   parallel = FALSE,
   cores = 2L,
+  parallel_connections = FALSE,
+  cores_connections = NULL,
   verbose = TRUE,
   ...
 )
@@ -38,16 +40,18 @@ by \code{fit_multi_forest()}.}
 \item{n_sub}{Integer; number of sub-MRF replicates to fit.}
 
 \item{frac_response}{Fraction of response columns to sample per replicate
-(default 0.1).  Convergence analysis shows symmetric low fractions
+(default 0.2).  Convergence analysis shows symmetric low fractions
 (0.1--0.3 for both response and predictor) yield the best
 approximation of the full forest-weight matrix.}
 
 \item{frac_predictor}{Fraction of predictor columns to sample per replicate
-(default 0.1).  Avoid setting this to 1.0 when \code{frac_response} is
+(default 0.2).  Avoid setting this to 1.0 when \code{frac_response} is
 small, as the asymmetric case leads to poor convergence (each
 sub-model overfits to its response subset).}
 
-\item{ntree_per_sub}{Number of trees per sub-MRF (default 50).}
+\item{ntree_per_sub}{Number of trees per sub-MRF (default 25 for direct
+calls; the workflow inherits the main tree budget by using
+\code{ceiling(ntree / n_sub)} unless explicitly overridden).}
 
 \item{mtry}{Number of candidate X variables per split. Passed through to
 \code{fit_forest()}.}
@@ -65,7 +69,8 @@ response features are used instead of sub-sampling.}
 \item{min_predictor_for_sub}{Minimum predictor-block size below which all
 predictor features are used instead of sub-sampling.}
 
-\item{ntree_full}{Deprecated compatibility argument. Ignored.}
+\item{ntree_full}{Number of trees used when both blocks are below their
+sub-sampling thresholds and a full forest is fitted instead.}
 
 \item{enhanced}{Logical; if \code{TRUE}, compute soft enhanced proximity
 using full-data sample embeddings within each sub-model.  The result
@@ -83,6 +88,12 @@ Default \code{FALSE} because the extra computation is non-trivial.}
 \item{parallel}{Logical; if \code{TRUE}, use \code{\link[parallel:mclapply]{parallel::mclapply()}}.}
 
 \item{cores}{Number of cores when \code{parallel = TRUE}.}
+
+\item{parallel_connections}{Logical; whether distinct directed connections
+may be fitted in parallel.}
+
+\item{cores_connections}{Optional total core budget for connection-level
+parallelism.}
 
 \item{verbose}{Logical; print progress messages.}
 

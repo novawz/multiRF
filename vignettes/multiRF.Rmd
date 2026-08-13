@@ -1,10 +1,11 @@
 ---
-title: "Getting Started with multiRF"
+title: "Using multiRF for Multi-Omics Integration"
 author: "Wei Zhang"
-date: "`r Sys.Date()`"
-output: rmarkdown::html_vignette
+output:
+  rmarkdown::html_vignette:
+    toc: true
 vignette: >
-  %\VignetteIndexEntry{Getting Started with multiRF}
+  %\VignetteIndexEntry{Using multiRF for Multi-Omics Integration}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -13,252 +14,463 @@ vignette: >
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
-  fig.width = 6,
+  fig.width = 7,
   fig.height = 4.5,
   fig.align = "center",
-  eval = TRUE,
   message = FALSE,
   warning = FALSE
 )
+options(width = 90)
 
 library(multiRF)
-data("tcga_brca_data")
+data("tcga_brca_data", package = "multiRF")
 ```
 
 ## Overview
 
-`multiRF` provides a workflow for integrating matched multi-omics datasets with
-random forests, MRF-style weighting, clustering, and downstream summaries.
+`multiRF` integrates matched multi-omics data with directed multivariate
+random forests. The current workflow has four main stages:
 
-The typical workflow is:
+1. fit one forest for each requested response--predictor block direction;
+2. construct and fuse sample-level forest weight matrices;
+3. separate shared from block-specific signal and cluster both components;
+4. optionally calculate inverse minimal depth (IMD), select variables, and
+   refit a robust model.
 
-1. Prepare a named list of omics matrices with matched samples.
-2. Run `mrf3()` to fit the integration model and produce cluster labels.
-3. Inspect weights, selected variables, and cluster assignments.
-4. Use plotting helpers for survival and embedding diagnostics.
+The native C++ engine is the default. It implements multivariate regression,
+unsupervised residual forests, all-sample and out-of-bag forest weights,
+ordinary and enhanced proximity, weighted candidate-variable sampling, and
+depth-based forest IMD. `randomForestSRC` is an optional fallback rather than a
+requirement for the standard workflow.
 
-## Method Maps
+This vignette uses a small deterministic subset of the bundled TCGA BRCA data
+so that every evaluated chunk runs quickly. For an analysis, use all eligible
+samples, a scientifically justified feature-filtering rule, and more trees
+(the workflow default is 500).
 
-### Clustering choices
+## Input data
 
-| Setting | Scope | Typical use |
-|---------|-------|-------------|
-| `similarity` | Global `main_clustering` | Default fused-similarity workflow; best starting point. |
-| `proximity` | Global `main_clustering` | Use when RF proximity is the main object of interest. |
-| `enhanced_proximity` | Global `main_clustering` | Aggressive proximity-based branch. |
-| `PAM` | Shared or specific branch | Medoid-based clustering. |
-| `Spectral` | Shared or specific branch | Similarity geometry-based clustering. |
+The input is a **named list** of numeric matrices or data frames. Samples are
+rows and features are columns. Every block must have:
 
-### Variable-selection choices
+- the same number of samples;
+- identical, unique sample row names in the same order;
+- unique feature names; and
+- finite, non-constant numeric features.
 
-| Method | Signal model | Typical use |
-|--------|-------------|-------------|
-| `filter` | Heuristic threshold | Good baseline for a practical first pass. |
-| `test` | Significance-style | Hypothesis-testing flavor for weight selection. |
-| `mixture` | Signal/noise mixture | When weights separate into background and enriched components. |
+Do not pass unordered blocks and rely on their row positions. Align them by
+sample identifier before fitting. Missing values and categorical predictors
+should be imputed or encoded explicitly before using the native numeric
+forest.
 
-### Plotting choices
+```{r prepare-data}
+full_dimensions <- data.frame(
+  block = names(tcga_brca),
+  samples = unname(vapply(tcga_brca, nrow, integer(1))),
+  features = unname(vapply(tcga_brca, ncol, integer(1)))
+)
+knitr::kable(full_dimensions)
 
-| Function | Input focus |
-|----------|------------|
-| `plot_tsne()` | Similarity or reconstruction |
-| `plot_umap()` | Similarity or reconstruction |
-| `plot_embed()` | Matrix-based quick embedding |
-| `plot_network()` | Similarity graph |
-| `plot_weights()` | IMD or cluster-IMD weights |
-| `plot_circos()` | Adjacency-like structure |
-| `plot_km()` | Cluster labels plus clinical |
+demo_n <- 100L
+demo_p <- c(gene = 40L, methy = 40L, mirna = 30L)
+demo_ids <- rownames(tcga_brca[[1L]])[seq_len(demo_n)]
 
-## Example Data
+brca_demo <- lapply(names(tcga_brca), function(block) {
+  x <- tcga_brca[[block]]
+  x[demo_ids, seq_len(min(demo_p[[block]], ncol(x))), drop = FALSE]
+})
+names(brca_demo) <- names(tcga_brca)
 
-```{r example-data}
-names(tcga_brca)
-dim(tcga_brca$gene)
-dim(tcga_brca$methy)
-dim(tcga_brca$mirna)
+stopifnot(all(vapply(
+  brca_demo,
+  function(x) identical(rownames(x), demo_ids),
+  logical(1)
+)))
+
+knitr::kable(data.frame(
+  block = names(brca_demo),
+  samples = unname(vapply(brca_demo, nrow, integer(1))),
+  features = unname(vapply(brca_demo, ncol, integer(1)))
+))
 ```
 
-## Basic Clustering Workflow
+`filter_mode = "auto"` is the default and performs an omics-aware dispersion
+prefilter before any forest is fitted. Here the bundled matrices are already
+curated and then deliberately subset, so the example uses
+`filter_mode = "none"`. This input prefilter is distinct from IMD-based
+variable selection later in the workflow.
 
-```{r fit-main, cache=TRUE}
+## A complete, fast example
+
+`mrf3()` is the compact user-facing entry point. In this example it fits all
+directed forests, constructs the shared and specific components, calculates
+raw IMD, and applies the mixture selector without a second forest fit.
+
+```{r fit}
 fit <- mrf3(
-  tcga_brca,
-  k = 4,
-  ntree = 100,
+  dat.list = brca_demo,
+  k = 3,
+  ntree = 40,
   filter_mode = "none",
-  run_imd = TRUE,
-  seed = 529
-)
-```
-
-```{r inspect-fit}
-summary(fit)
-table(get_clusters(fit))
-names(get_weights(fit))
-get_top_vars(fit, n = 10)
-```
-
-### Comparing clustering backends
-
-```{r clustering-backends, cache=TRUE}
-fit_proximity <- mrf3(
-  tcga_brca, k = 4,
-  main_clustering = "proximity",
-  ntree = 100, seed = 529
-)
-
-fit_enhanced <- mrf3(
-  tcga_brca, k = 4,
-  main_clustering = "enhanced_proximity",
-  ntree = 100, seed = 529
-)
-```
-
-### Compare against PAM50
-
-```{r pam50-compare}
-common_ids <- intersect(
-  names(get_clusters(fit)),
-  tcga_brca_clinical$sampleID
-)
-pam50 <- tcga_brca_clinical$BRCA_Subtype_PAM50[
-  match(common_ids, tcga_brca_clinical$sampleID)
-]
-
-cluster_metric_matrix(
-  list(
-    similarity         = get_clusters(fit)[common_ids],
-    proximity          = get_clusters(fit_proximity)[common_ids],
-    enhanced_proximity = get_clusters(fit_enhanced)[common_ids],
-    PAM50              = pam50
-  ),
-  metric = "ari"
-)
-```
-
-## Variable Selection
-
-```{r vs-workflow, cache=TRUE}
-fit_vs <- mrf3_fit(
-  dat.list = tcga_brca,
-  clustering_args = list(shared_k = 4, specific_k = 4),
-  ntree = 100,
+  main_clustering = "similarity",
   run_imd = TRUE,
   run_variable_selection = TRUE,
   variable_selection_args = list(
     method = "mixture",
+    signal = "shared",
     level = 0.05,
-    normalized = TRUE
+    re_fit = FALSE
+  ),
+  return_data = TRUE,
+  nthread = 1,
+  filter_verbose = FALSE,
+  verbose = FALSE,
+  seed = 529
+)
+```
+
+The mixture rule keeps this vignette fast. The adaptive OOB filtering
+rule is described in [Variable selection](#variable-selection).
+
+```{r summarize-fit}
+summary(fit)
+
+fit_overview <- data.frame(
+  quantity = c(
+    "directed forests", "model top-v", "fused top-v",
+    "shared clusters", "selected variables"
+  ),
+  value = c(
+    length(get_models(fit)),
+    fit$model_top_v,
+    if (is.null(fit$fused_top_v)) "none" else fit$fused_top_v,
+    length(unique(get_clusters(fit))),
+    sum(vapply(get_selected_vars(fit), length, integer(1)))
+  )
+)
+knitr::kable(fit_overview)
+```
+
+The most useful accessors avoid depending on the internal list layout:
+
+```{r accessors}
+head(get_clusters(fit))
+table(shared_cluster = get_clusters(fit))
+
+specific_cluster_counts <- vapply(
+  names(brca_demo),
+  function(block) length(unique(get_clusters(fit, block = block))),
+  integer(1)
+)
+specific_cluster_counts
+
+get_top_vars(fit, n = 5)
+get_vs_summary(fit)
+```
+
+Other commonly used accessors are `get_models()`, `get_connection()`,
+`get_weights()`, `get_selected_vars()`, and `get_data()`. Use
+`get_clusters(fit, block = "gene")` for a block-specific partition and
+`get_clusters(fit, which = "robust")` after running the robust branch.
+
+## Directed forests and connections
+
+A connection is stored as `c(response, predictor)`: the second block supplies
+the split variables and the first supplies the multivariate responses. With
+three blocks, the default retains all six directed pairwise forests.
+
+```{r connections}
+connections <- get_connection(fit)
+connection_table <- do.call(rbind, lapply(connections, function(x) {
+  data.frame(response = x[[1L]], predictor = x[[2L]])
+}))
+rownames(connection_table) <- NULL
+knitr::kable(connection_table)
+```
+
+Set `select_connection = TRUE` only when direction screening is intentionally
+part of the analysis. Otherwise all directed models are retained and their
+connection scores enter the fusion weights.
+
+For the native multivariate-regression forests, important workflow defaults
+are:
+
+| Setting | Default | Meaning |
+|:--|:--|:--|
+| `ntree` | 500 in `mrf3()` | Trees per directed forest |
+| `samptype` | `"swor"` | Approximately 63.2% of samples without replacement |
+| `mtry` | `ceiling(p / 3)` | Candidate predictor variables per split |
+| `ytry` | `ceiling(q / 3)` | Candidate response variables per split |
+| `nsplit` | 10 | Random populated cut points per candidate variable; use 0 to scan all |
+| `nodesize` | 5 | Regression terminal-node size setting |
+| `forest.wt` | `"all"` | All-sample weights for reconstruction |
+| `seed` | 529 | Positive, reproducible seed |
+
+At each node, candidate responses are standardized within that node before
+their component split statistics are combined. The response with the largest
+component statistic is stored as the multivariate splitting response variable
+(MSRV). IMD, however, is a forest-level depth measure: for each tree it uses
+`1 / (minimum split depth + 1)` and then averages across trees.
+
+## Forest-weight fusion and shared/specific signal
+
+For each directed model, the workflow starts from its sample-by-sample forest
+weight matrix. The default similarity path then:
+
+1. removes self weights;
+2. applies model-level top-v truncation and row normalization;
+3. normalizes connection scores within each response block;
+4. averages the response-level matrices uniformly; and
+5. optionally applies fused top-v truncation and row normalization.
+
+This response-stratified fusion is summarized by Eqs. 6--8 in the method
+description. A tuned or fixed top-v at least 80% of the sample size is interpreted as no
+truncation. `model_top_v = Inf` and `fused_top_v = Inf` also request no
+truncation explicitly.
+
+The shared and residual-specific affinities are constructed as
+`S = W %*% t(W)`, with the diagonal set to zero. Spectral clustering is the
+default similarity backend.
+
+```{r fusion-checks}
+W <- fit$reconstruction$W$W_all
+S_shared <- fit$shared$clustering$similarity
+
+c(
+  minimum_weight_row_sum = min(rowSums(W)),
+  maximum_weight_row_sum = max(rowSums(W)),
+  maximum_similarity_diagonal = max(abs(diag(S_shared)))
+)
+
+fit$shared$frac[, c("data", "shared_frac", "specific_ratio")]
+```
+
+For block `k`, the response-specific forest weight matrix gives the shared
+reconstruction `Xhat^(k) = W^(k) X^(k)` and the residual
+`R^(k) = X^(k) - Xhat^(k)`. An unsupervised forest is then fitted to each
+residual matrix to obtain its block-specific weight matrix and similarity.
+The reported `shared_frac` is
+`1 - ||R^(k)||_F^2 / ||X^(k)||_F^2`. It is a descriptive signal fraction, not
+a hypothesis-test p-value.
+
+## Variable selection
+
+Set `run_imd = TRUE` when global raw IMD should be retained without running a
+selection branch. `run_variable_selection = TRUE` and
+`run_robust_clustering = TRUE` compute the required IMD automatically. The
+three IMD selection methods all operate on the unnormalized `[0, 1]` scale:
+
+| Method | Selection rule | When to use it |
+|:--|:--|:--|
+| `"filter"` | Select above `tau * sd(IMD)`; tune `tau` with true OOB normalized MSE across predictor and response coordinates | Adaptive OOB rule; most computationally intensive |
+| `"transformation"` (`"test"`) | Eq. 16 one-sided Student-t transformation with `df = ntree - 1` | Per-tree inferential screening |
+| `"mixture"` | Explicit point mass at zero plus two components on positive IMD | Posterior noise-probability selection |
+
+`method = "thres"` is also available when a fixed `se * sd(IMD)` cutoff is
+needed. `normalized = FALSE` is the default because selection is performed on
+raw IMD. If `re_weights = TRUE`, the retained raw IMD values are used as native
+candidate-variable sampling weights during refitting.
+
+The evaluated example used the mixture rule:
+
+```{r selected-variables}
+get_vs_summary(fit)
+lapply(get_selected_vars(fit), utils::head)
+```
+
+IMD values can be inspected independently of the selected set:
+
+```{r plot-imd, fig.width=9, fig.height=3.8}
+plot_weights(fit, weight_source = "imd", top = 8)
+```
+
+For the adaptive OOB filter, use:
+
+```{r adaptive-filter, eval=FALSE}
+vs_filter <- mrf3_vs(
+  mod = fit,
+  method = "filter",
+  signal = "shared",
+  k = 3,
+  tol = 0.01,
+  re_fit = FALSE
+)
+get_selected_vars(vs_filter)
+```
+
+The adaptive OOB filter is defined for shared IMD. With `signal = "all"`, the
+workflow uses adaptive filtering for shared IMD and the fixed cutoff for
+residual-specific IMD, then returns their union. The transformation and
+mixture methods can be applied directly to `signal = "shared"`,
+`"specific"`, or `"all"`.
+
+```{r alternative-selectors, eval=FALSE}
+vs_transformation <- mrf3_vs(
+  fit, method = "transformation", signal = "shared",
+  level = 0.05, re_fit = FALSE
+)
+
+vs_union <- mrf3_vs(
+  fit, method = "mixture", signal = "all",
+  level = 0.05, re_fit = FALSE
+)
+```
+
+Standalone `mrf3_vs()` defaults to `re_fit = TRUE`. The staged workflow does
+not refit unless requested, except that `run_robust_clustering = TRUE` must and
+therefore does force a final refit.
+
+## Clustering modes
+
+The `main_clustering` argument applies the same representation choice to the
+shared and specific branches:
+
+| Mode | Representation | Default clustering backend |
+|:--|:--|:--|
+| `"similarity"` | `W W^T` from fused or residual weights | Spectral |
+| `"proximity"` | Same-terminal-node frequency | PAM |
+| `"enhanced_proximity"` | Proximity plus sibling-leaf correction | PAM |
+
+The similarity workflow is the default. To compare representations on a full
+analysis, keep the data, tree settings, and positive seed fixed:
+
+```{r clustering-modes, eval=FALSE}
+fit_similarity <- mrf3(
+  dat.list, k = 4, ntree = 500,
+  main_clustering = "similarity", seed = 529
+)
+
+fit_proximity <- mrf3(
+  dat.list, k = 4, ntree = 500,
+  main_clustering = "proximity", seed = 529
+)
+
+fit_enhanced <- mrf3(
+  dat.list, k = 4, ntree = 500,
+  main_clustering = "enhanced_proximity", seed = 529
+)
+```
+
+If `k = NULL`, cluster number is tuned in the downstream clustering stage.
+For a fixed biological hypothesis, supply `k` explicitly as in the examples.
+
+## Robust and cluster-specific analyses
+
+Robust clustering repeats reconstruction after feature selection. It is an
+optional, more expensive branch:
+
+```{r robust, eval=FALSE}
+fit_robust <- mrf3(
+  dat.list,
+  k = 4,
+  ntree = 500,
+  run_imd = TRUE,
+  run_variable_selection = TRUE,
+  run_robust_clustering = TRUE,
+  variable_selection_args = list(
+    method = "filter",
+    re_weights = TRUE
   ),
   seed = 529
 )
+
+table(get_clusters(fit_robust, which = "robust")$shared)
 ```
 
-```{r vs-inspect}
-get_selected_vars(fit_vs)
-get_vs_summary(fit_vs)
+Cluster-specific IMD is separate from global IMD and must be requested
+explicitly:
+
+```{r cluster-imd, eval=FALSE}
+fit_cluster_imd <- mrf3(
+  dat.list,
+  k = 4,
+  ntree = 500,
+  run_imd = TRUE,
+  run_cluster_imd = TRUE,
+  cluster_imd_args = list(min_cluster_size = 15),
+  seed = 529
+)
+
+get_weights(fit_cluster_imd$cluster_imd, cluster = 1)
 ```
 
-```{r vs-methods, cache=TRUE}
-vs_test <- mrf3_vs(
-  mod = fit_vs, dat.list = tcga_brca,
-  method = "test", re_fit = FALSE, level = 0.05
-)
-vs_mixture <- mrf3_vs(
-  mod = fit_vs, dat.list = tcga_brca,
-  method = "mixture", re_fit = FALSE, level = 0.05
-)
+## Reproducibility and resource use
 
-lapply(
-  list(test = vs_test, mixture = vs_mixture),
-  get_selected_vars
-)
-```
+- Use a non-negative integer `seed` for a reproducible native fit; 529 is the
+  package default. A negative seed deliberately requests system entropy.
+  Reproducible seeds give the same result across thread counts.
+- Set `options(multiRF.nthread = n)` or pass `nthread = n` to control native
+  parallel tree construction.
+- Keep `samptype = "swor"` for the default workflow. Sampling with replacement
+  is supported when it is scientifically intended.
+- Forest weights and proximity matrices are `n` by `n`. For large cohorts,
+  account for these matrices when choosing worker counts.
+- `compact_output = TRUE` reduces retained duplicate objects, but do not use it
+  when models will be needed for later custom reconstruction or reclustering.
+- Record `packageVersion("multiRF")`, the random seed, connections, tree
+  settings, selected top-v values, and clustering arguments with every result.
 
-## Robust Clustering
+For a production fit without automatic input prefiltering:
 
-```{r robust-workflow, cache=TRUE}
-fit_robust <- mrf3_fit(
-  dat.list = tcga_brca,
-  clustering_args = list(shared_k = 4, specific_k = 4),
-  ntree = 100,
+```{r production-template, eval=FALSE}
+options(multiRF.engine = "native", multiRF.nthread = 4L)
+
+fit_final <- mrf3_fit(
+  dat.list = dat.list,
+  ntree = 500,
+  samptype = "swor",
+  filter_mode = "none",
+  main_clustering = "similarity",
+  clustering_args = list(shared_k = 4, specific_k = 2),
+  top_v_method = "entropy_elbow",
+  select_connection = FALSE,
   run_imd = TRUE,
   run_variable_selection = TRUE,
-  run_cluster_imd = FALSE,
-  run_robust_clustering = TRUE,
-  variable_selection_args = list(method = "mixture"),
+  variable_selection_args = list(
+    method = "filter",
+    signal = "shared",
+    k = 3,
+    re_fit = FALSE
+  ),
+  return_data = TRUE,
   seed = 529
 )
 ```
 
-```{r robust-inspect}
-table(get_clusters(fit_robust, which = "robust"))
-summary(fit_robust)
-```
+## Common problems
 
-### Pairwise IMD
+**Rows are silently mismatched.** They should not be: current validation stops
+on unequal or reordered sample identifiers. Align every block explicitly.
 
-```{r pairwise-imd}
-pw <- pairwise_imd(fit_robust)
-str(pw, max.level = 1)
-```
+**A constant feature becomes non-finite after scaling.** Remove constant and
+non-finite columns before fitting, or use an appropriate filtering mode.
 
-```{r plot-feature-network, fig.width=7, fig.height=7}
-plot_network(pw, label = TRUE, vertex.size = 3, vertex.label.cex = 0.4)
-```
+**`mrf3_vs()` cannot find data.** Supply `dat.list` directly or fit with
+`return_data = TRUE`.
 
-## Plotting
+**A response block is absent from reconstruction.** Per-response fusion
+requires at least one fitted response-side connection for every input block;
+the workflow now stops rather than substituting a global matrix.
 
-```{r plot-tsne, fig.width=6, fig.height=5}
-plot_tsne(
-  mod = fit,
-  group = get_clusters(fit),
-  source = "specific_shared",
-  main = "t-SNE: shared/specific branch"
-)
-```
-
-```{r plot-network, fig.width=6, fig.height=6}
-plot_network(
-  dat = fit,
-  group = get_clusters(fit),
-  source = "specific_shared",
-  cutoff = 0.01
-)
-```
-
-```{r plot-weights, fig.width=10, fig.height=4}
-plot_weights(fit_vs, weight_source = "imd", top = 15)
-```
-
-```{r plot-km, fig.width=8, fig.height=6}
-clinical_ids <- tcga_brca_clinical$sampleID
-clusters <- get_clusters(fit)
-if (is.null(names(clusters))) {
-  names(clusters) <- rownames(tcga_brca[[1]])
-}
-km_ids <- intersect(names(clusters), clinical_ids)
-clinical_sub <- tcga_brca_clinical[match(km_ids, clinical_ids), , drop = FALSE]
-keep <- !is.na(clinical_sub$OS.time) & !is.na(clinical_sub$OS)
-
-plot_km(
-  test_var = factor(clusters[km_ids][keep]),
-  time_var = "OS.time",
-  event_var = "OS",
-  pheno_mat = clinical_sub[keep, , drop = FALSE]
-)
-```
+**Block names contain underscores.** Current fits retain explicit response and
+predictor metadata, so underscores are supported. Avoid parsing model display
+names in downstream code; use `get_connection()`.
 
 ## Citation
 
-If you use `multiRF` in your research, please cite:
+If you use `multiRF`, please cite the method relevant to your analysis:
 
-> Zhang, W., Wang, L., Franzmann, E. J., and Chen, X. S. (2026). Multivariate Random Forests for Cross-Modal Multi-Omics Integration. *bioRxiv*. [doi:10.64898/2026.06.17.732933](https://doi.org/10.64898/2026.06.17.732933)
+> Zhang, W., Wang, L., Franzmann, E. J., and Chen, X. S. (2026).
+> Multivariate Random Forests for Cross-Modal Multi-Omics Integration.
+> *bioRxiv*. [doi:10.64898/2026.06.17.732933](https://doi.org/10.64898/2026.06.17.732933)
 
-> Zhang, W. et al. (2025). An integrative multi-omics random forest framework for robust biomarker discovery. *GigaScience*, 14, giaf148. [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
+> Zhang, W. et al. (2025). An integrative multi-omics random forest framework
+> for robust biomarker discovery. *GigaScience*, 14, giaf148.
+> [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
-## Session Info
+## Session information
 
 ```{r session-info}
+packageVersion("multiRF")
 sessionInfo()
 ```

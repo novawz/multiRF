@@ -9,12 +9,12 @@ compute_split_stats_cpp <- function(Y, membership, mem_left, mem_right) {
     .Call(`_multiRF_compute_split_stats_cpp`, Y, membership, mem_left, mem_right)
 }
 
-fit_mv_forest_cpp <- function(X, Y, ntree = 500L, mtry = 0L, ytry = 0L, nsplit = 10L, nodesize_min = 5L, max_depth = 0L, seed = -1L, nthread = 0L, samptype = 0L, prox_mode = 0L, embed = NULL, sibling_gamma = 0.5, enhanced_prox_mode = 0L) {
-    .Call(`_multiRF_fit_mv_forest_cpp`, X, Y, ntree, mtry, ytry, nsplit, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode)
+fit_mv_forest_cpp <- function(X, Y, ntree = 500L, mtry = 0L, ytry = 0L, nsplit = 10L, nodesize_min = 5L, max_depth = 0L, seed = -1L, nthread = 0L, samptype = 0L, prox_mode = 0L, embed = NULL, embed_split = 0L, sibling_gamma = 0.5, enhanced_prox_mode = 0L, forest_wt_mode = 0L, xvar_wt = NULL, yvar_wt = NULL) {
+    .Call(`_multiRF_fit_mv_forest_cpp`, X, Y, ntree, mtry, ytry, nsplit, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, embed_split, sibling_gamma, enhanced_prox_mode, forest_wt_mode, xvar_wt, yvar_wt)
 }
 
-fit_mv_forest_unsup_cpp <- function(data, ntree = 500L, ytry = 10L, nodesize_min = 5L, max_depth = 0L, seed = -1L, nthread = 0L, samptype = 0L, prox_mode = 0L, embed = NULL, sibling_gamma = 0.5, enhanced_prox_mode = 0L) {
-    .Call(`_multiRF_fit_mv_forest_unsup_cpp`, data, ntree, ytry, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode)
+fit_mv_forest_unsup_cpp <- function(data, ntree = 500L, ytry = 10L, nodesize_min = 5L, max_depth = 0L, seed = -1L, nthread = 0L, samptype = 0L, prox_mode = 0L, embed = NULL, sibling_gamma = 0.5, enhanced_prox_mode = 0L, forest_wt_mode = 0L, nsplit = 10L) {
+    .Call(`_multiRF_fit_mv_forest_unsup_cpp`, data, ntree, ytry, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode, forest_wt_mode, nsplit)
 }
 
 compute_oob_forest_wt_cpp <- function(membership, inbag) {

@@ -14,7 +14,7 @@ tune_fused_top_v(
   k = NULL,
   sample_n = NULL,
   sample_frac = NULL,
-  auto_sample_n = TRUE,
+  auto_sample_n = FALSE,
   max_candidates = 20,
   reuse_tuned_k = TRUE,
   parallel = TRUE,
@@ -40,7 +40,8 @@ tune_fused_top_v(
 \item{by}{Base step size for the \code{fused_top_v} grid.}
 
 \item{vmax}{Maximum \code{fused_top_v} cutoff to evaluate.
-If \code{NULL}, an adaptive small-v upper bound is used.}
+If \code{NULL}, the full sample size is used so the
+\code{v >= 0.8 * n} no-truncation rule is represented in the grid.}
 
 \item{model_top_v}{Fixed model-level top-v cutoff used while tuning
 \code{fused_top_v}.}

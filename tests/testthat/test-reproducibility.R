@@ -26,7 +26,30 @@ test_that("C++ supervised forest is deterministic and thread-invariant", {
   expect_equal(max(abs(c4$forest.wt - d4$forest.wt), na.rm = TRUE), 0)
 
   # 1 thread vs 4 threads must agree
-  expect_equal(max(abs(a$forest.wt - c4$forest.wt), na.rm = TRUE), 0)
+  expect_identical(a$forest.wt, c4$forest.wt)
+  expect_identical(a$proximity, c4$proximity)
+  expect_identical(a$membership, c4$membership)
+  expect_identical(a$inbag, c4$inbag)
+  expect_identical(a$imd_x_per_tree, c4$imd_x_per_tree)
+  expect_identical(a$imd_y_per_tree, c4$imd_y_per_tree)
+  expect_identical(a$pairwise_xy, c4$pairwise_xy)
+  expect_identical(a$tree_info, c4$tree_info)
+
+  # Exercise the OOB denominator and enhanced-proximity accumulation paths too.
+  embed <- X_mat[, seq_len(3L), drop = FALSE]
+  o1 <- fit_mv_forest_cpp(
+    X_mat, Y_mat, ntree = 50L, seed = 529L, nthread = 1L,
+    prox_mode = 2L, forest_wt_mode = 2L, embed = embed,
+    enhanced_prox_mode = 1L
+  )
+  o4 <- fit_mv_forest_cpp(
+    X_mat, Y_mat, ntree = 50L, seed = 529L, nthread = 4L,
+    prox_mode = 2L, forest_wt_mode = 2L, embed = embed,
+    enhanced_prox_mode = 1L
+  )
+  expect_identical(o1$forest.wt, o4$forest.wt)
+  expect_identical(o1$proximity, o4$proximity)
+  expect_identical(o1$enhanced_prox, o4$enhanced_prox)
 })
 
 test_that("C++ unsupervised forest is deterministic and thread-invariant", {
@@ -87,7 +110,10 @@ test_that("full mrf3_fit pipeline is reproducible", {
                      na.rm = TRUE), 0)
   }
 
-  expect_identical(as.integer(a$clusters), as.integer(b$clusters))
+  expect_identical(
+    as.integer(get_clusters(a)),
+    as.integer(get_clusters(b))
+  )
   expect_identical(a$top_v$model_top_v, b$top_v$model_top_v)
 
   if (!is.null(a$specific_clustering$S) && !is.null(b$specific_clustering$S)) {

@@ -6,10 +6,15 @@
 \alias{multiRF-package}
 \title{multiRF: A package for multiRF methods}
 \description{
-Integrates matched multi-omics datasets using multivariate random forests with inverse minimal depth (IMD) importance. Provides workflows for model fitting, variable selection, clustering, and visualization.
+Integrates multi-omics datasets using multivariate random forests for model fitting, variable selection, clustering, and visualization.
 }
 \author{
 \strong{Maintainer}: Wei Zhang \email{wzhang0739@gmail.com}
+
+Authors:
+\itemize{
+  \item Wei Zhang \email{wzhang0739@gmail.com}
+}
 
 }
 \keyword{internal}

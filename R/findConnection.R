@@ -1,6 +1,7 @@
 #' Find optimal directional connections from fitted RF models
 #'
-#' Scores each directional RF model using modularity of the raw forest weight
+#' Scores each directional RF model using modularity of the diagonal-adjusted
+#' forest weight
 #' matrix (and optionally OOB normalized MSE).  Two-step selection:
 #' (1) drop the bottom \code{drop_bottom_q} fraction of connections by
 #' rank-sum of quality metrics;
@@ -20,6 +21,7 @@
 #' when \code{FALSE}, \code{quality_score = modularity} and
 #' \code{rank_sum = rank(-modularity)}.
 #' Default is \code{FALSE}.
+#' @param seed Random seed used by Louvain modularity scoring.
 #' @param ... Additional arguments (currently ignored).
 #'
 #' @return A character vector of selected model names (`response_predictor`).
@@ -95,15 +97,15 @@ find_connection <- function(mod.list,
   keep_flag[keep_order] <- TRUE
   quality_tbl$keep_quality <- keep_flag
 
-  # Parse model names into response / predictor
-  split_names <- stringr::str_split(model_names, "_")
-  lens <- lengths(split_names)
-  if (any(lens < 2)) {
-    stop("All model names must contain at least one underscore in `response_predictor` format.")
+  # Prefer explicit metadata; retain display-name parsing for legacy models.
+  model_pairs <- lapply(seq_along(model_names), function(i) {
+    parse_model_pair(model_names[i], model = mod.list[[i]])
+  })
+  if (any(lengths(model_pairs) < 2L)) {
+    stop("Every directional model must identify both response and predictor blocks.")
   }
-
-  response  <- vapply(split_names, `[`, FUN.VALUE = character(1), 1)
-  predictor <- vapply(split_names, `[`, FUN.VALUE = character(1), 2)
+  response <- vapply(model_pairs, `[[`, character(1), 1L)
+  predictor <- vapply(model_pairs, `[[`, character(1), 2L)
   pair_id   <- vapply(
     seq_along(model_names),
     function(i) paste(sort(c(response[i], predictor[i])), collapse = "__"),
@@ -150,8 +152,6 @@ find_connection <- function(mod.list,
   score <- matrix(NA_real_, nrow = length(dat_names), ncol = length(dat_names))
   dimnames(score) <- list(dat_names, dat_names)
   score[cbind(match(response, dat_names), match(predictor, dat_names))] <- as.numeric(quality_tbl$quality_score)
-  diag(score) <- NA_real_
-
   list(
     model_connection = model_connection,
     connect_list = connect_list,
@@ -226,7 +226,8 @@ get_r_sq <- function(mod){
 #'
 #' @param mod A fitted model object from \code{fit_forest} (must contain
 #'   \code{$membership} and \code{$inbag}).
-#' @return An n x n numeric matrix of OOB forest weights.
+#' @return An n x n numeric matrix of OOB forest weights. Rows are `NA` for
+#'   samples that were not out-of-bag in any tree.
 #' @export
 compute_oob_forest_wt <- function(mod) {
   if (is.null(mod$membership) || is.null(mod$inbag)) {
@@ -234,13 +235,17 @@ compute_oob_forest_wt <- function(mod) {
   }
   W <- compute_oob_forest_wt_cpp(mod$membership, mod$inbag)
   diag(W) <- 0
+  no_oob_prediction <- rowSums(W) == 0
+  if (any(no_oob_prediction)) W[no_oob_prediction, ] <- NA_real_
   W
 }
 
 #' OOB normalized MSE for a fitted forest model
 #'
 #' Uses OOB forest weights to predict both xvar and yvar, then computes
-#' the mean column-wise normalized MSE.  Lower is better.
+#' the mean normalized MSE over all predictor and response coordinates. Lower
+#' is better; when predictor and response dimensions differ, every coordinate
+#' still receives equal weight.
 #'
 #' @param mod A fitted model from \code{fit_forest}.
 #' @return A single numeric value (normalized MSE).
@@ -251,15 +256,24 @@ get_oob_nmse <- function(mod) {
   pred_x <- W %*% X
   col_var_x <- apply(X, 2, var)
   col_var_x[col_var_x < 1e-12] <- 1e-12
-  ex <- mean(colMeans((pred_x - X)^2) / col_var_x)
+  nmse_x <- colMeans((pred_x - X)^2, na.rm = TRUE) / col_var_x
+  nmse_x[is.nan(nmse_x)] <- NA_real_
 
-  if (is.null(mod$yvar)) return(ex)
+  mean_valid <- function(x) {
+    if (!any(!is.na(x))) return(NA_real_)
+    mean(x, na.rm = TRUE)
+  }
+
+  if (is.null(mod$yvar)) return(mean_valid(nmse_x))
   Y <- as.matrix(mod$yvar)
   pred_y <- W %*% Y
   col_var_y <- apply(Y, 2, var)
   col_var_y[col_var_y < 1e-12] <- 1e-12
-  ey <- mean(colMeans((pred_y - Y)^2) / col_var_y)
-  ex + ey
+  nmse_y <- colMeans((pred_y - Y)^2, na.rm = TRUE) / col_var_y
+  nmse_y[is.nan(nmse_y)] <- NA_real_
+  # Eqs. 9-11: average the normalized OOB errors over every response and
+  # predictor variable. This feature-weighted mean matters when p != q.
+  mean_valid(c(nmse_x, nmse_y))
 }
 
 calc_weight_concentration <- function(W, eps = 1e-12) {
@@ -317,7 +331,9 @@ calc_gcc_ratio <- function(W, edge_threshold = 0, symm = TRUE) {
 
 #' Modularity of forest weight matrix
 #'
-#' Symmetrizes the raw forest weight matrix and computes weighted modularity
+#' Removes self influence, row-normalizes, symmetrizes, and computes weighted
+#' modularity.  Top-v truncation is intentionally not applied here because the
+#' modularity scores are needed before the shared top-v value is tuned.
 #' via Louvain community detection.  Higher modularity indicates clearer
 #' block / cluster structure in the proximity graph.
 #'
@@ -325,19 +341,32 @@ calc_gcc_ratio <- function(W, edge_threshold = 0, symm = TRUE) {
 #' @return A single numeric modularity value (typically 0 to ~0.8).
 #' @keywords internal
 calc_modularity <- function(fw, seed = 529L) {
-  W <- as.matrix(fw)
-  W[!is.finite(W)] <- 0
-  W <- pmax(W, 0)
+  W <- prepare_weight_matrix(
+    W = fw,
+    adjust = TRUE,
+    top_v = NULL,
+    row_normalize = TRUE,
+    zero_diag = TRUE,
+    keep_ties = TRUE
+  )
   W <- pmax(W, t(W))
   diag(W) <- 0
   n <- nrow(W)
   if (n <= 1L) return(0)
+  if (sum(W, na.rm = TRUE) <= .Machine$double.eps) return(0)
   g <- igraph::graph_from_adjacency_matrix(W, mode = "undirected",
                                             weighted = TRUE, diag = FALSE)
   # Louvain uses randomised node ordering internally; fix RNG state so the
   # modularity score is reproducible across runs.
-  old_seed <- .Random.seed
-  on.exit({ .Random.seed <<- old_seed }, add = TRUE)
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
   set.seed(seed)
   cl <- igraph::cluster_louvain(g)
   igraph::modularity(cl)

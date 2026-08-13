@@ -6,9 +6,10 @@
 #' @param ytry Number of response variables sampled at each split. `NULL`
 #'   delegates to the engine default.
 #' @param samptype Sampling scheme passed to forest fitting: `"swor"` or `"swr"`.
-#' @param connect_list Optional pre-defined connection list. If `NULL`, the
-#' function fits all directed pairwise models first, then uses `find_connection()`
-#' to select one direction per omics pair.
+#' @param connect_list Optional pre-defined connection list. If `NULL`, all
+#' directed pairwise models are retained. Their modularity scores are used as
+#' soft fusion weights; set `select_connection = TRUE` only to request the
+#' legacy direction-selection step.
 #' @param filter_mode Feature filtering mode passed to `filter_omics()`:
 #' `"auto"`, `"none"`, or `"manual"`.
 #' @param filter_method Feature dispersion metric passed to `filter_omics()`:
@@ -24,18 +25,24 @@
 #' @param sub_mrf_args  Named list of arguments forwarded to
 #'   `fit_sub_multi_rfsrc()` when `sub_mrf = TRUE`.  Common options:
 #'   `n_sub` (number of replicates, default 15), `frac_response` (default 0.2),
-#'   `frac_predictor` (default 0.2), `ntree_per_sub` (default 25),
+#'   `frac_predictor` (default 0.2), `ntree_per_sub` (by default
+#'   `ceiling(ntree / n_sub)`),
 #'   `min_response_for_sub` (default 500; blocks smaller than this use all features),
-#'   `min_predictor_for_sub` (default 500), `ytry` (default 0.5).
+#'   `min_predictor_for_sub` (default 500), and `ytry` (the main-model value).
+#'   Unless explicitly overridden, sub-MRF fits also inherit the main forest's
+#'   `samptype`, `mtry`, engine, split count, thread count, node size, and depth.
 #' @param compute_oob Logical; whether to compute OOB normalized MSE during
 #'   connection selection. When `TRUE`, quality score = modularity - oob_nmse;
 #'   when `FALSE` (default), quality score = modularity only, which is faster.
+#' @param select_connection Logical; whether to apply the legacy quality-based
+#'   connection-selection step. The default is `FALSE`, retaining all
+#'   connections for modularity-weighted fusion.
 #' @param verbose Logical; whether to print progress messages.
 #' @param seed Random seed.
 #' @param ... Additional arguments passed to forest fitting helpers.
 #'
 #' @details `mrf3_init()` now performs initialization only (filtering, forest fitting,
-#' and connection selection). IMD weights are computed downstream via
+#' and optional connection selection). IMD weights are computed downstream via
 #' `get_multi_weights()` (for example inside `mrf3_fit(..., run_imd = TRUE)`).
 #'
 #' When `sub_mrf = TRUE`, the final model fit uses a sub-sampling ensemble
@@ -43,9 +50,10 @@
 #' response and predictor blocks, smaller MRFs are fitted, and the n x n
 #' forest-weight and proximity matrices are averaged.  This trades a small
 #' amount of matrix approximation accuracy for substantial speed gains when
-#' p is large (e.g., 6-8x faster at p = 2000).  Connection selection (when
-#' `connect_list = NULL`) still uses full MRF with OOB to ensure proper
-#' direction determination.
+#' p is large (e.g., 6-8x faster at p = 2000). When `connect_list = NULL`, all
+#' directed connections are retained by default and modularity is used only as
+#' a fusion weight. Legacy direction selection is opt-in through
+#' `select_connection = TRUE`.
 #' @return mrf3 object
 #' @export
 #'
@@ -102,6 +110,15 @@ mrf3_init <- function(dat.list,
   samptype <- match.arg(samptype)
   filter_mode <- match.arg(filter_mode)
   filter_method <- match.arg(filter_method)
+  if (isTRUE(sub_mrf)) {
+    sub_mrf_args <- .inherit_sub_mrf_args(
+      sub_mrf_args = sub_mrf_args,
+      ntree = ntree,
+      samptype = samptype,
+      ytry = ytry,
+      dots = dots
+    )
+  }
 
   if (verbose) message("Filtering data..")
   prep_info <- filter_omics(
@@ -143,7 +160,7 @@ mrf3_init <- function(dat.list,
       n_sub = 15L,
       frac_response = 0.2,
       frac_predictor = 0.2,
-      ntree_per_sub = 25L,
+      ntree_per_sub = as.integer(ceiling(ntree / 15L)),
       min_response_for_sub = 500L,
       min_predictor_for_sub = 500L,
       ntree_full = ntree,
@@ -175,41 +192,41 @@ mrf3_init <- function(dat.list,
 
       if (select_connection) {
         ## Legacy: score + select a subset of connections
-        ## find_connection reads $forest.wt, so temporarily swap in the OOB version
-        if (verbose) message("  Finding connections (OOB)..")
-        mod_all_oob <- lapply(mod_all, function(m) {
-          m$forest.wt <- m$forest.wt.oob
-          m
-        })
-        conn_out <- find_connection(mod_all_oob, return_score = TRUE,
-                                         compute_oob = compute_oob)
+        if (verbose) message("  Finding connections..")
+        conn_out <- find_connection(
+          mod_all,
+          return_score = TRUE,
+          compute_oob = compute_oob
+        )
         connect_list <- conn_out$connect_list
         connection_score <- conn_out$score
         connection_top_v_used <- conn_out$top_v_used
 
         ## Reuse already-fitted models for the selected connections
-        selected_names <- vapply(connect_list, paste0, collapse = "_",
-                                 FUN.VALUE = character(1))
-        mod_list <- mod_all[selected_names]
+        selected_idx <- model_indices_for_connections(mod_all, connect_list)
+        mod_list <- mod_all[selected_idx]
       } else {
         ## New default: keep ALL connections, compute modularity for weighting
         if (verbose) message("  Computing modularity scores (no selection)..")
         mod_list <- mod_all
         model_names <- names(mod_list)
 
-        mod_score <- vapply(mod_list, function(m) {
-          fw <- if (!is.null(m$forest.wt.oob)) m$forest.wt.oob else m$forest.wt
-          calc_modularity(fw, seed = seed)
-        }, numeric(1))
+        mod_score <- vapply(
+          mod_list,
+          function(m) calc_modularity(m$forest.wt, seed = seed),
+          numeric(1)
+        )
         names(mod_score) <- model_names
 
-        connect_list <- lapply(model_names, function(m) parse_model_pair(m))
+        connect_list <- lapply(seq_along(model_names), function(i) {
+          parse_model_pair(model_names[i], model = mod_list[[i]])
+        })
 
         dat_nms <- names(new_dat)
         connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
         dimnames(connection_score) <- list(dat_nms, dat_nms)
         for (i in seq_along(model_names)) {
-          pair <- parse_model_pair(model_names[i])
+          pair <- parse_model_pair(model_names[i], model = mod_list[[i]])
           if (length(pair) >= 2L) {
             ri <- match(pair[1], dat_nms)
             ci <- match(pair[2], dat_nms)
@@ -218,7 +235,6 @@ mrf3_init <- function(dat.list,
             }
           }
         }
-        diag(connection_score) <- NA_real_
       }
 
     } else {
@@ -231,17 +247,18 @@ mrf3_init <- function(dat.list,
 
       ## Compute modularity scores for weighting
       model_names <- names(mod_list)
-      mod_score <- vapply(mod_list, function(m) {
-        fw <- if (!is.null(m$forest.wt.oob)) m$forest.wt.oob else m$forest.wt
-        calc_modularity(fw, seed = seed)
-      }, numeric(1))
+      mod_score <- vapply(
+        mod_list,
+        function(m) calc_modularity(m$forest.wt, seed = seed),
+        numeric(1)
+      )
       names(mod_score) <- model_names
 
       dat_nms <- names(new_dat)
       connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
       dimnames(connection_score) <- list(dat_nms, dat_nms)
       for (i in seq_along(model_names)) {
-        pair <- parse_model_pair(model_names[i])
+        pair <- parse_model_pair(model_names[i], model = mod_list[[i]])
         if (length(pair) >= 2L) {
           ri <- match(pair[1], dat_nms)
           ci <- match(pair[2], dat_nms)
@@ -250,7 +267,6 @@ mrf3_init <- function(dat.list,
           }
         }
       }
-      diag(connection_score) <- NA_real_
     }
 
     oob_err <- NULL
@@ -295,8 +311,8 @@ mrf3_init <- function(dat.list,
         names(mod_score) <- model_names
 
         ## Parse model names to build connect_list
-        connect_list <- lapply(model_names, function(m) {
-          parse_model_pair(m)
+        connect_list <- lapply(seq_along(model_names), function(i) {
+          parse_model_pair(model_names[i], model = mod_list[[i]])
         })
 
         ## Build score matrix
@@ -304,7 +320,7 @@ mrf3_init <- function(dat.list,
         connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
         dimnames(connection_score) <- list(dat_nms, dat_nms)
         for (i in seq_along(model_names)) {
-          pair <- parse_model_pair(model_names[i])
+          pair <- parse_model_pair(model_names[i], model = mod_list[[i]])
           if (length(pair) >= 2L) {
             ri <- match(pair[1], dat_nms)
             ci <- match(pair[2], dat_nms)
@@ -313,7 +329,6 @@ mrf3_init <- function(dat.list,
             }
           }
         }
-        diag(connection_score) <- NA_real_
       }
     } else {
       ## User-provided connect_list — fit selected connections only
@@ -338,7 +353,7 @@ mrf3_init <- function(dat.list,
       connection_score <- matrix(NA_real_, nrow = length(dat_nms), ncol = length(dat_nms))
       dimnames(connection_score) <- list(dat_nms, dat_nms)
       for (i in seq_along(model_names)) {
-        pair <- parse_model_pair(model_names[i])
+        pair <- parse_model_pair(model_names[i], model = mod_list[[i]])
         if (length(pair) >= 2L) {
           ri <- match(pair[1], dat_nms)
           ci <- match(pair[2], dat_nms)
@@ -347,11 +362,13 @@ mrf3_init <- function(dat.list,
           }
         }
       }
-      diag(connection_score) <- NA_real_
     }
 
-    oob_err <- purrr::map(mod_list, ~get_r_sq(.))
-    oob_err <- Reduce("+", oob_err)
+    # Keep the initialization error on the same scale used by raw-IMD
+    # variable filtering: feature-level normalized OOB MSE, then averaged
+    # across directed forests.
+    oob_err <- mean(vapply(mod_list, get_oob_nmse, numeric(1)), na.rm = TRUE)
+    if (!is.finite(oob_err)) oob_err <- NA_real_
   }
 
   if (!return_data) dat_fit <- NULL

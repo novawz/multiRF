@@ -9,7 +9,7 @@ cluster_shared_similarity(
   mode = c("average", "ao_reg"),
   dat_use = "ALL",
   k = NULL,
-  method = c("PAM", "Spectral"),
+  method = c("Spectral", "PAM"),
   tune_method = "silhouette",
   gap_w = "uniform",
   similarity_type = c("second", "first"),

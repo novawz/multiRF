@@ -12,14 +12,97 @@
 #' @keywords internal
 resolve_param <- function(value, p, default, name = "param") {
   if (is.null(value)) return(max(1L, as.integer(default)))
-  if (is.numeric(value)) return(max(1L, as.integer(value)))
+  if (is.numeric(value)) {
+    if (length(value) != 1L || !is.finite(value) || value != floor(value)) {
+      stop("`", name, "` must be one finite integer.")
+    }
+    return(max(1L, as.integer(value)))
+  }
   if (is.character(value)) {
+    if (length(value) != 1L || is.na(value)) {
+      stop("`", name, "` formula must be one non-missing string.")
+    }
     expr <- tryCatch(parse(text = value)[[1]], error = function(e) NULL)
     if (is.null(expr)) stop("Cannot parse ", name, " formula: ", value)
     val <- eval(expr, envir = list(p = p))
+    if (length(val) != 1L || !is.numeric(val) || !is.finite(val)) {
+      stop("`", name, "` formula must evaluate to one finite number.")
+    }
     return(max(1L, as.integer(ceiling(val))))
   }
   stop("`", name, "` must be NULL, an integer, or a formula string like \"sqrt(p)\" or \"p/3\".")
+}
+
+.native_integer_scalar <- function(value, label, lower = 0L) {
+  if (length(value) != 1L || !is.numeric(value) || !is.finite(value) ||
+      value != floor(value) || value < lower || value > .Machine$integer.max) {
+    qualifier <- if (lower == 1L) "positive" else "non-negative"
+    stop("`", label, "` must be one ", qualifier, " integer.")
+  }
+  as.integer(value)
+}
+
+.native_nonnegative_scalar <- function(value, label) {
+  if (length(value) != 1L || !is.numeric(value) || !is.finite(value) || value < 0) {
+    stop("`", label, "` must be one finite non-negative number.")
+  }
+  as.double(value)
+}
+
+.native_seed_scalar <- function(value) {
+  if (length(value) != 1L || !is.numeric(value) || !is.finite(value) ||
+      value != floor(value) || abs(value) > .Machine$integer.max) {
+    stop("`seed` must be one finite integer.")
+  }
+  as.integer(value)
+}
+
+.native_logical_scalar <- function(value, label) {
+  if (length(value) != 1L || !is.logical(value) || is.na(value)) {
+    stop("`", label, "` must be TRUE or FALSE.")
+  }
+  value
+}
+
+.native_forest_wt_mode <- function(forest.wt) {
+  forest.wt <- match.arg(forest.wt, c("all", "inbag", "oob"))
+  list(name = forest.wt, code = match(forest.wt, c("all", "inbag", "oob")) - 1L)
+}
+
+.as_native_numeric_frame <- function(x, label) {
+  x <- as.data.frame(x, check.names = FALSE)
+  if (nrow(x) < 2L || ncol(x) < 1L) {
+    stop("`", label, "` must contain at least two samples and one feature.")
+  }
+  if (!all(vapply(x, is.numeric, logical(1)))) {
+    stop("All columns in `", label, "` must be numeric for the native engine.")
+  }
+  if (any(!is.finite(as.matrix(x)))) {
+    stop("`", label, "` contains NA, NaN, or infinite values.")
+  }
+  if (anyNA(rownames(x)) || any(rownames(x) == "") || anyDuplicated(rownames(x))) {
+    stop("`", label, "` must have unique, non-missing sample names.")
+  }
+  x
+}
+
+.resolve_variable_weights <- function(wt, feature_names, label) {
+  if (is.null(wt)) return(NULL)
+  wt_names <- names(wt)
+  if (!is.null(wt_names)) {
+    if (anyDuplicated(wt_names) || !setequal(wt_names, feature_names)) {
+      stop("Named `", label, "` must contain each corresponding feature exactly once.")
+    }
+    wt <- wt[match(feature_names, wt_names)]
+  }
+  wt <- as.numeric(wt)
+  if (length(wt) != length(feature_names)) {
+    stop("`", label, "` must have length ", length(feature_names), ".")
+  }
+  if (any(!is.finite(wt)) || any(wt < 0) || sum(wt) <= 0) {
+    stop("`", label, "` must be finite, non-negative, and contain a positive value.")
+  }
+  wt / sum(wt)
 }
 
 #' Fit an unsupervised random forest (native C++ engine)
@@ -32,7 +115,12 @@ resolve_param <- function(value, p, default, name = "param") {
 #' @param X Data frame or matrix of features (n x p).
 #' @param ntree Number of trees.
 #' @param ytry Number of candidate pseudo-Y columns per split. Default `NULL` = 15.
+#' @param forest.wt Forest-weight mode: `"all"` uses every sample in a
+#' terminal node, `"inbag"` uses bootstrap donors, and `"oob"` uses only
+#' trees in which the target sample is out of bag.
 #' @param proximity Proximity output mode.
+#' @param nsplit Number of candidate cutpoints per pseudo-predictor; `0` scans
+#' all distinct cutpoints.
 #' @param nodesize Minimum terminal node size.
 #' @param max_depth Maximum tree depth (0 = unlimited).
 #' @param samptype Sampling scheme: `"swor"` or `"swr"`.
@@ -45,25 +133,39 @@ resolve_param <- function(value, p, default, name = "param") {
 #' @return A list with `forest.wt`, `proximity`, `membership`, `xvar`,
 #'   `xvar.names`, `ntree`, and `engine = "multiRF"`.
 #' @keywords internal
-fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
+fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL, nsplit = 10L,
+                                 forest.wt = "all",
                                  proximity = c("all", "inbag", "oob", "none"),
-                                 nodesize = 3L, max_depth = 0L, seed = -1L,
+                                 nodesize = 3L, max_depth = 0L, seed = 529L,
                                  samptype = c("swor", "swr"),
                                  nthread = getOption("multiRF.nthread", 0L),
                                  enhanced_prox = FALSE,
                                  sibling_gamma = 0.5,
                                  leaf_embed_dim = 10L) {
 
-  X <- as.data.frame(X, check.names = FALSE)
+  X <- .as_native_numeric_frame(X, "X")
+  ntree <- .native_integer_scalar(ntree, "ntree", 1L)
+  nodesize <- .native_integer_scalar(nodesize, "nodesize", 1L)
+  max_depth <- .native_integer_scalar(max_depth, "max_depth", 0L)
+  nthread <- .native_integer_scalar(nthread, "nthread", 0L)
+  seed <- .native_seed_scalar(seed)
+  enhanced_prox <- .native_logical_scalar(enhanced_prox, "enhanced_prox")
+  leaf_embed_dim <- .native_integer_scalar(leaf_embed_dim, "leaf_embed_dim", 1L)
+  sibling_gamma <- .native_nonnegative_scalar(sibling_gamma, "sibling_gamma")
   n <- nrow(X)
   all_names <- colnames(X)
   X_mat <- as.matrix(X)
   proximity <- match.arg(proximity)
   prox_mode <- if (proximity == "none") -1L else match(proximity, c("all", "inbag", "oob")) - 1L
+  fw_mode <- .native_forest_wt_mode(forest.wt)
+  nsplit <- .native_integer_scalar(nsplit, "nsplit", 0L)
 
   # Default ytry = 15 for unsupervised; accept string formulas like "sqrt(p)"
   p_unsup <- ncol(X_mat)
-  ytry_int <- resolve_param(ytry, p = p_unsup, default = 15L, name = "ytry")
+  ytry_int <- min(
+    p_unsup,
+    resolve_param(ytry, p = p_unsup, default = 15L, name = "ytry")
+  )
 
   # Map samptype string to integer: 0 = swor, 1 = swr
   samptype <- match.arg(samptype)
@@ -96,7 +198,9 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
     prox_mode = as.integer(prox_mode),
     embed = embed_mat,
     sibling_gamma = as.double(sibling_gamma),
-    enhanced_prox_mode = if (isTRUE(enhanced_prox)) 1L else 0L
+    enhanced_prox_mode = if (isTRUE(enhanced_prox)) 1L else 0L,
+    forest_wt_mode = as.integer(fw_mode$code),
+    nsplit = nsplit
   )
 
   sample_names <- rownames(X)
@@ -107,6 +211,8 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
     rownames(res$enhanced_prox) <- colnames(res$enhanced_prox) <- sample_names
   }
   rownames(res$membership) <- sample_names
+  inbag_out <- res$inbag
+  rownames(inbag_out) <- sample_names
 
   # Remap membership: 0-indexed node index -> sequential leaf ID (DFS order)
   mem <- res$membership
@@ -134,7 +240,7 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
   eprox_out <- if (isTRUE(enhanced_prox) && !is.null(res$enhanced_prox) &&
                     nrow(res$enhanced_prox) == n) res$enhanced_prox else NULL
 
-  # IMD-X weights (variable-level importance from split scores)
+  # Raw IMD-X weights (per-tree inverse minimal depth, averaged over trees)
   imd_x <- as.numeric(res$imd_x)
   names(imd_x) <- all_names
   imd_weights <- list(X = imd_x)
@@ -148,15 +254,31 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
     proximity  = res$proximity,
     enhanced_prox = eprox_out,
     membership = mem,
+    inbag      = inbag_out,
     xvar       = X,
     yvar       = X,
     xvar.names = all_names,
     ntree      = as.integer(ntree),
+    ytry       = as.integer(ytry_int),
+    nsplit     = nsplit,
+    nodesize   = as.integer(nodesize),
+    max_depth  = as.integer(max_depth),
+    nthread    = as.integer(nthread),
+    samptype   = samptype,
+    seed       = as.integer(seed),
+    forest.wt.mode = fw_mode$name,
+    proximity.mode = proximity,
     tree_info  = tree_info,
     n          = n,
     engine     = "multiRF",
     imd_weights = imd_weights,
-    imd_weights_per_tree = imd_weights_per_tree
+    imd_weights_per_tree = imd_weights_per_tree,
+    structural_params = list(
+      ntree = as.integer(ntree), ytry = as.integer(ytry_int), nsplit = nsplit,
+      nodesize = as.integer(nodesize), max_depth = as.integer(max_depth),
+      nthread = as.integer(nthread), samptype = samptype,
+      seed = as.integer(seed), forest.wt = fw_mode$name, proximity = proximity
+    )
   )
   out$forest <- list(nativeArray = NULL)
   out$node.stats <- NULL
@@ -181,6 +303,7 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
 #'   a formula string (`"sqrt(p)"`, `"p/3"`), or `NULL` for the default
 #'   (`ceiling(qy/3)`). In formulas, `p` is the number of Y columns.
 #' @param nsplit Number of candidate numeric cutpoints per split variable.
+#' @param forest.wt Forest-weight mode: `"all"`, `"inbag"`, or `"oob"`.
 #' @param proximity Proximity output mode.
 #' @param nodesize Minimum terminal node size. Default: 5.
 #' @param max_depth Maximum tree depth (0 = unlimited). Default: 0.
@@ -191,6 +314,8 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
 #'   enhanced proximity.
 #' @param leaf_embed_dim Embedding dimension used by enhanced proximity.
 #' @param seed Random seed.
+#' @param xvar.wt Optional non-negative predictor sampling weights.
+#' @param yvar.wt Optional non-negative response sampling weights.
 #' @return A list compatible with rfsrc output, containing:
 #'   \describe{
 #'     \item{forest.wt}{n x n forest weight matrix}
@@ -205,21 +330,34 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL,
 #' @keywords internal
 fit_mv_forest <- function(X, Y, ntree = 500L,
                            mtry = NULL, ytry = NULL, nsplit = 10L,
+                           forest.wt = "all",
                            proximity = c("all", "inbag", "oob", "none"),
-                           nodesize = 5L, max_depth = 0L, seed = -1L,
+                           nodesize = 5L, max_depth = 0L, seed = 529L,
                            samptype = c("swor", "swr"),
                            nthread = getOption("multiRF.nthread", 0L),
+                           xvar.wt = NULL, yvar.wt = NULL,
                            enhanced_prox = FALSE,
                            sibling_gamma = 0.5,
                            leaf_embed_dim = 10L) {
 
-  X <- as.data.frame(X, check.names = FALSE)
-  Y <- as.data.frame(Y, check.names = FALSE)
+  X <- .as_native_numeric_frame(X, "X")
+  Y <- .as_native_numeric_frame(Y, "Y")
+  ntree <- .native_integer_scalar(ntree, "ntree", 1L)
+  nodesize <- .native_integer_scalar(nodesize, "nodesize", 1L)
+  max_depth <- .native_integer_scalar(max_depth, "max_depth", 0L)
+  nthread <- .native_integer_scalar(nthread, "nthread", 0L)
+  seed <- .native_seed_scalar(seed)
+  enhanced_prox <- .native_logical_scalar(enhanced_prox, "enhanced_prox")
+  leaf_embed_dim <- .native_integer_scalar(leaf_embed_dim, "leaf_embed_dim", 1L)
+  sibling_gamma <- .native_nonnegative_scalar(sibling_gamma, "sibling_gamma")
   proximity <- match.arg(proximity)
   # -1 = skip proximity, 0 = all, 1 = inbag, 2 = oob
   prox_mode <- if (proximity == "none") -1L else match(proximity, c("all", "inbag", "oob")) - 1L
+  fw_mode <- .native_forest_wt_mode(forest.wt)
 
-  stopifnot(nrow(X) == nrow(Y))
+  if (nrow(X) != nrow(Y) || !identical(rownames(X), rownames(Y))) {
+    stop("`X` and `Y` must contain identical samples in identical row order.")
+  }
 
   X_mat <- as.matrix(X)
   Y_mat <- as.matrix(Y)
@@ -227,26 +365,40 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   # Resolve mtry and ytry: accept integer, formula string ("sqrt(p)", "p/3"), or NULL
   px <- ncol(X_mat)
   qy <- ncol(Y_mat)
-  mtry <- resolve_param(mtry, p = px, default = ceiling(px / 3), name = "mtry")
+  mtry <- min(px, resolve_param(mtry, p = px, default = ceiling(px / 3), name = "mtry"))
   # Default ytry = ceiling(qy/3), analogous to mtry's ceiling(px/3) heuristic.
-  ytry <- resolve_param(ytry, p = qy, default = ceiling(qy / 3), name = "ytry")
+  ytry <- min(qy, resolve_param(ytry, p = qy, default = ceiling(qy / 3), name = "ytry"))
+  nsplit <- .native_integer_scalar(nsplit, "nsplit", 0L)
+  xvar.wt <- .resolve_variable_weights(xvar.wt, colnames(X), "xvar.wt")
+  yvar.wt <- .resolve_variable_weights(yvar.wt, colnames(Y), "yvar.wt")
 
   # Map samptype string to integer: 0 = swor, 1 = swr
   samptype <- match.arg(samptype)
   samptype_int <- if (samptype == "swr") 1L else 0L
 
-  # Build embedding for enhanced proximity (PCA on combined X+Y, computed once)
+  # Build predictor and response PCA embeddings separately. Enhanced proximity
+  # averages their sibling-leaf Spearman correlations, matching the legacy R
+  # `build_embedding_list(symm = TRUE)` implementation.
   embed_mat <- NULL
+  embed_split <- 0L
   if (isTRUE(enhanced_prox)) {
-    embed_k <- max(1L, min(as.integer(leaf_embed_dim),
-                            ncol(X_mat) + ncol(Y_mat) - 1L,
-                            nrow(X_mat) - 1L))
-    embed_mat <- tryCatch({
-      pc <- stats::prcomp(cbind(X_mat, Y_mat), center = TRUE, scale. = TRUE, rank. = embed_k)
-      pc$x[, seq_len(min(embed_k, ncol(pc$x))), drop = FALSE]
-    }, error = function(e) {
-      scale(cbind(X_mat, Y_mat))[, seq_len(embed_k), drop = FALSE]
-    })
+    build_embed <- function(dat) {
+      embed_k <- max(1L, min(
+        as.integer(leaf_embed_dim), ncol(dat), nrow(dat) - 1L
+      ))
+      tryCatch({
+        pc <- stats::prcomp(
+          dat, center = TRUE, scale. = TRUE, rank. = embed_k
+        )
+        pc$x[, seq_len(min(embed_k, ncol(pc$x))), drop = FALSE]
+      }, error = function(e) {
+        scale(dat)[, seq_len(embed_k), drop = FALSE]
+      })
+    }
+    embed_x <- build_embed(X_mat)
+    embed_y <- build_embed(Y_mat)
+    embed_split <- ncol(embed_x)
+    embed_mat <- cbind(embed_x, embed_y)
   }
 
   # C++ engine
@@ -264,8 +416,12 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
     samptype = samptype_int,
     prox_mode = as.integer(prox_mode),
     embed = embed_mat,
+    embed_split = as.integer(embed_split),
     sibling_gamma = as.double(sibling_gamma),
-    enhanced_prox_mode = if (isTRUE(enhanced_prox)) 1L else 0L
+    enhanced_prox_mode = if (isTRUE(enhanced_prox)) 1L else 0L,
+    forest_wt_mode = as.integer(fw_mode$code),
+    xvar_wt = xvar.wt,
+    yvar_wt = yvar.wt
   )
 
   # Set row/col names
@@ -358,9 +514,26 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
     mtry       = as.integer(mtry),
     ytry       = as.integer(ytry),
     nsplit     = as.integer(nsplit),
+    nodesize   = as.integer(nodesize),
+    max_depth  = as.integer(max_depth),
+    nthread    = as.integer(nthread),
+    samptype   = samptype,
+    seed       = as.integer(seed),
+    forest.wt.mode = fw_mode$name,
+    proximity.mode = proximity,
+    xvar.wt    = xvar.wt,
+    yvar.wt    = yvar.wt,
     tree_info  = tree_info,
     n          = nrow(X),
-    engine     = "multiRF"
+    engine     = "multiRF",
+    structural_params = list(
+      ntree = as.integer(ntree), mtry = as.integer(mtry),
+      ytry = as.integer(ytry), nsplit = as.integer(nsplit),
+      nodesize = as.integer(nodesize), max_depth = as.integer(max_depth),
+      nthread = as.integer(nthread), samptype = samptype,
+      seed = as.integer(seed), forest.wt = fw_mode$name, proximity = proximity,
+      xvar.wt = xvar.wt, yvar.wt = yvar.wt
+    )
   )
 
   # Compatibility: create minimal forest$nativeArray stub
@@ -377,11 +550,13 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
 #' then reconstructs training-set class probabilities and labels.
 #'
 #' @keywords internal
-fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL,
+fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL, nsplit = 10L,
+                             forest.wt = "all",
                              proximity = c("all", "inbag", "oob", "none"),
-                             nodesize = 1L, max_depth = 0L, seed = -1L,
+                             nodesize = 1L, max_depth = 0L, seed = 529L,
                              samptype = c("swor", "swr"),
-                             nthread = getOption("multiRF.nthread", 0L)) {
+                             nthread = getOption("multiRF.nthread", 0L),
+                             xvar.wt = NULL) {
 
   X <- as.data.frame(X, check.names = FALSE)
 
@@ -403,18 +578,22 @@ fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL,
 
   y_mat <- stats::model.matrix(~ y_fac - 1L)
   colnames(y_mat) <- levels(y_fac)
+  rownames(y_mat) <- rownames(X)
   fit <- fit_mv_forest(
     X = X,
     Y = y_mat,
     ntree = ntree,
     mtry = mtry,
     ytry = ncol(y_mat),
+    nsplit = nsplit,
+    forest.wt = forest.wt,
     proximity = proximity,
     nodesize = nodesize,
     max_depth = max_depth,
     seed = seed,
     samptype = match.arg(samptype),
-    nthread = nthread
+    nthread = nthread,
+    xvar.wt = xvar.wt
   )
 
   fw <- fit$forest.wt

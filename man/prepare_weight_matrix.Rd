@@ -22,7 +22,7 @@ prepare_weight_list(W_list, ...)
 
 adjust_weight_matrix(W, zero_diag = TRUE, eps = 1e-08)
 
-truncate_top_v_rows(W, top_v = NULL, keep_ties = TRUE)
+truncate_top_v_rows(W, top_v = NULL, keep_ties = TRUE, sparse = FALSE)
 
 row_normalize_weights(W, eps = 1e-12)
 }
@@ -44,6 +44,9 @@ row_normalize_weights(W, eps = 1e-12)
 \item{W_list}{A named list of square numeric weight matrices.}
 
 \item{...}{Additional arguments passed to \code{prepare_weight_matrix()}.}
+
+\item{sparse}{Logical; whether \code{truncate_top_v_rows()} should return a sparse
+matrix.}
 }
 \value{
 A processed square numeric matrix.

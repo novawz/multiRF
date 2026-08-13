@@ -40,8 +40,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // fit_mv_forest_cpp
-List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y, int ntree, int mtry, int ytry, int nsplit, int nodesize_min, int max_depth, int seed, int nthread, int samptype, int prox_mode, Nullable<NumericMatrix> embed, double sibling_gamma, int enhanced_prox_mode);
-RcppExport SEXP _multiRF_fit_mv_forest_cpp(SEXP XSEXP, SEXP YSEXP, SEXP ntreeSEXP, SEXP mtrySEXP, SEXP ytrySEXP, SEXP nsplitSEXP, SEXP nodesize_minSEXP, SEXP max_depthSEXP, SEXP seedSEXP, SEXP nthreadSEXP, SEXP samptypeSEXP, SEXP prox_modeSEXP, SEXP embedSEXP, SEXP sibling_gammaSEXP, SEXP enhanced_prox_modeSEXP) {
+List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y, int ntree, int mtry, int ytry, int nsplit, int nodesize_min, int max_depth, int seed, int nthread, int samptype, int prox_mode, Nullable<NumericMatrix> embed, int embed_split, double sibling_gamma, int enhanced_prox_mode, int forest_wt_mode, Nullable<NumericVector> xvar_wt, Nullable<NumericVector> yvar_wt);
+RcppExport SEXP _multiRF_fit_mv_forest_cpp(SEXP XSEXP, SEXP YSEXP, SEXP ntreeSEXP, SEXP mtrySEXP, SEXP ytrySEXP, SEXP nsplitSEXP, SEXP nodesize_minSEXP, SEXP max_depthSEXP, SEXP seedSEXP, SEXP nthreadSEXP, SEXP samptypeSEXP, SEXP prox_modeSEXP, SEXP embedSEXP, SEXP embed_splitSEXP, SEXP sibling_gammaSEXP, SEXP enhanced_prox_modeSEXP, SEXP forest_wt_modeSEXP, SEXP xvar_wtSEXP, SEXP yvar_wtSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -58,15 +58,19 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type samptype(samptypeSEXP);
     Rcpp::traits::input_parameter< int >::type prox_mode(prox_modeSEXP);
     Rcpp::traits::input_parameter< Nullable<NumericMatrix> >::type embed(embedSEXP);
+    Rcpp::traits::input_parameter< int >::type embed_split(embed_splitSEXP);
     Rcpp::traits::input_parameter< double >::type sibling_gamma(sibling_gammaSEXP);
     Rcpp::traits::input_parameter< int >::type enhanced_prox_mode(enhanced_prox_modeSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_mv_forest_cpp(X, Y, ntree, mtry, ytry, nsplit, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode));
+    Rcpp::traits::input_parameter< int >::type forest_wt_mode(forest_wt_modeSEXP);
+    Rcpp::traits::input_parameter< Nullable<NumericVector> >::type xvar_wt(xvar_wtSEXP);
+    Rcpp::traits::input_parameter< Nullable<NumericVector> >::type yvar_wt(yvar_wtSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_mv_forest_cpp(X, Y, ntree, mtry, ytry, nsplit, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, embed_split, sibling_gamma, enhanced_prox_mode, forest_wt_mode, xvar_wt, yvar_wt));
     return rcpp_result_gen;
 END_RCPP
 }
 // fit_mv_forest_unsup_cpp
-List fit_mv_forest_unsup_cpp(NumericMatrix data, int ntree, int ytry, int nodesize_min, int max_depth, int seed, int nthread, int samptype, int prox_mode, Nullable<NumericMatrix> embed, double sibling_gamma, int enhanced_prox_mode);
-RcppExport SEXP _multiRF_fit_mv_forest_unsup_cpp(SEXP dataSEXP, SEXP ntreeSEXP, SEXP ytrySEXP, SEXP nodesize_minSEXP, SEXP max_depthSEXP, SEXP seedSEXP, SEXP nthreadSEXP, SEXP samptypeSEXP, SEXP prox_modeSEXP, SEXP embedSEXP, SEXP sibling_gammaSEXP, SEXP enhanced_prox_modeSEXP) {
+List fit_mv_forest_unsup_cpp(NumericMatrix data, int ntree, int ytry, int nodesize_min, int max_depth, int seed, int nthread, int samptype, int prox_mode, Nullable<NumericMatrix> embed, double sibling_gamma, int enhanced_prox_mode, int forest_wt_mode, int nsplit);
+RcppExport SEXP _multiRF_fit_mv_forest_unsup_cpp(SEXP dataSEXP, SEXP ntreeSEXP, SEXP ytrySEXP, SEXP nodesize_minSEXP, SEXP max_depthSEXP, SEXP seedSEXP, SEXP nthreadSEXP, SEXP samptypeSEXP, SEXP prox_modeSEXP, SEXP embedSEXP, SEXP sibling_gammaSEXP, SEXP enhanced_prox_modeSEXP, SEXP forest_wt_modeSEXP, SEXP nsplitSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -82,7 +86,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< Nullable<NumericMatrix> >::type embed(embedSEXP);
     Rcpp::traits::input_parameter< double >::type sibling_gamma(sibling_gammaSEXP);
     Rcpp::traits::input_parameter< int >::type enhanced_prox_mode(enhanced_prox_modeSEXP);
-    rcpp_result_gen = Rcpp::wrap(fit_mv_forest_unsup_cpp(data, ntree, ytry, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode));
+    Rcpp::traits::input_parameter< int >::type forest_wt_mode(forest_wt_modeSEXP);
+    Rcpp::traits::input_parameter< int >::type nsplit(nsplitSEXP);
+    rcpp_result_gen = Rcpp::wrap(fit_mv_forest_unsup_cpp(data, ntree, ytry, nodesize_min, max_depth, seed, nthread, samptype, prox_mode, embed, sibling_gamma, enhanced_prox_mode, forest_wt_mode, nsplit));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -114,8 +120,8 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_multiRF_build_tree_network_cpp", (DL_FUNC) &_multiRF_build_tree_network_cpp, 5},
     {"_multiRF_compute_split_stats_cpp", (DL_FUNC) &_multiRF_compute_split_stats_cpp, 4},
-    {"_multiRF_fit_mv_forest_cpp", (DL_FUNC) &_multiRF_fit_mv_forest_cpp, 15},
-    {"_multiRF_fit_mv_forest_unsup_cpp", (DL_FUNC) &_multiRF_fit_mv_forest_unsup_cpp, 12},
+    {"_multiRF_fit_mv_forest_cpp", (DL_FUNC) &_multiRF_fit_mv_forest_cpp, 19},
+    {"_multiRF_fit_mv_forest_unsup_cpp", (DL_FUNC) &_multiRF_fit_mv_forest_unsup_cpp, 14},
     {"_multiRF_compute_oob_forest_wt_cpp", (DL_FUNC) &_multiRF_compute_oob_forest_wt_cpp, 2},
     {"_multiRF_tsne_cost_gradient_cpp", (DL_FUNC) &_multiRF_tsne_cost_gradient_cpp, 2},
     {NULL, NULL, 0}

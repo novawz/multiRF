@@ -1,3 +1,72 @@
+.inherit_specific_forest_args <- function(shared_specific_args, ntree,
+                                          samptype, ytry, proximity, dots) {
+  residual_defaults <- list(
+    specific_ntree = as.integer(ntree),
+    specific_samptype = samptype,
+    specific_ytry = ytry,
+    specific_proximity = proximity,
+    specific_nsplit = if (is.null(dots$nsplit)) 10L else as.integer(dots$nsplit),
+    specific_nthread = if (is.null(dots$nthread)) {
+      as.integer(getOption("multiRF.nthread", 0L))
+    } else {
+      as.integer(dots$nthread)
+    },
+    specific_nodesize = if (is.null(dots$nodesize)) 5L else as.integer(dots$nodesize),
+    specific_max_depth = if (!is.null(dots$max_depth)) {
+      as.integer(dots$max_depth)
+    } else if (!is.null(dots$nodedepth)) {
+      as.integer(dots$nodedepth)
+    } else {
+      0L
+    },
+    specific_forest_wt = "all"
+  )
+  for (nm in names(residual_defaults)) {
+    if (is.null(shared_specific_args[[nm]])) {
+      shared_specific_args[[nm]] <- residual_defaults[[nm]]
+    }
+  }
+  shared_specific_args
+}
+
+.inherit_sub_mrf_args <- function(sub_mrf_args, ntree, samptype, ytry, dots) {
+  if (is.null(sub_mrf_args)) sub_mrf_args <- list()
+  if (!is.list(sub_mrf_args)) stop("`sub_mrf_args` must be a named list.")
+
+  n_sub <- if (is.null(sub_mrf_args$n_sub)) 15L else as.integer(sub_mrf_args$n_sub)[1L]
+  if (!is.finite(n_sub) || n_sub < 1L) stop("`sub_mrf_args$n_sub` must be >= 1.")
+
+  inherited <- list(
+    n_sub = n_sub,
+    ntree_full = as.integer(ntree),
+    ntree_per_sub = as.integer(ceiling(ntree / n_sub)),
+    ytry = ytry,
+    samptype = samptype,
+    nsplit = if (is.null(dots$nsplit)) 10L else as.integer(dots$nsplit),
+    nthread = if (is.null(dots$nthread)) {
+      as.integer(getOption("multiRF.nthread", 0L))
+    } else {
+      as.integer(dots$nthread)
+    },
+    nodesize = if (is.null(dots$nodesize)) 5L else as.integer(dots$nodesize),
+    max_depth = if (!is.null(dots$max_depth)) {
+      as.integer(dots$max_depth)
+    } else if (!is.null(dots$nodedepth)) {
+      as.integer(dots$nodedepth)
+    } else {
+      0L
+    }
+  )
+  for (nm in names(inherited)) {
+    if (is.null(sub_mrf_args[[nm]])) sub_mrf_args[[nm]] <- inherited[[nm]]
+  }
+  for (nm in intersect(c("mtry", "engine"), names(dots))) {
+    if (is.null(sub_mrf_args[[nm]])) sub_mrf_args[[nm]] <- dots[[nm]]
+  }
+  sub_mrf_args
+}
+
+
 #' Stage-based multiRF fitting pipeline
 #'
 #' @param dat.list A named list of omics matrices (samples in rows, features in columns).
@@ -7,8 +76,8 @@
 #'   to the engine default.
 #' @param samptype Sampling scheme passed to forest fitting: `"swor"` or `"swr"`.
 #' @param connect_list Optional predefined connections (`list(c(response, predictor), ...)`).
-#' If `NULL`, directional connections are selected automatically by `find_connection()`
-#' from fitted forests.
+#' If `NULL`, all directed pairwise connections are retained and their
+#' modularity scores are used as soft fusion weights.
 #' @param filter_mode Feature filtering mode passed to `filter_omics()`.
 #' @param filter_method Feature dispersion metric passed to `filter_omics()`.
 #' @param top_n_by_type Optional auto-filter overrides.
@@ -22,21 +91,23 @@
 #' shared fraction (`1 - ||R||_F^2 / ||X||_F^2`) is also computed by
 #' `get_shared_frac()` and attached as `shared_frac`.
 #' By default, this function passes `specific_top_v = selected_fused_top_v`
-#' into this branch.
+#' into this branch. Residual unsupervised forests inherit the main `ntree`,
+#' `samptype`, `ytry`, `proximity`, `nsplit`, `nthread`, `nodesize`, and maximum
+#' depth settings unless a corresponding `specific_*` value is supplied here.
 #' @param clustering_args A named list of additional arguments passed to
 #' the shared/specific clustering stage.
 #' @param run_imd Logical; whether to run `get_multi_weights()` as a pipeline stage.
 #' @param run_cluster_imd Logical; whether to run `cluster_imd()` after global
-#' IMD when `run_imd = TRUE`. If `NULL` (default), inherits from `run_imd`.
-#' Set to `FALSE` to compute global IMD weights only without the per-cluster
-#' refit, which can be very memory-intensive for sub-MRF models.
+#' IMD when `run_imd = TRUE`. The default is `FALSE`; set it explicitly to
+#' `TRUE` to request the cluster-specific stage.
 #' @param imd_args A named list of additional arguments passed to `get_multi_weights()`.
 #' By default, this function sets `parallel = TRUE` for IMD unless overridden here.
 #' @param run_variable_selection Logical; whether to run variable selection
 #' using `mrf3_vs()` after IMD weights are available.
 #' @param variable_selection_args A named list of additional arguments passed to
-#' `mrf3_vs()`. `re_fit` is managed by workflow and ignored if provided:
-#' it is forced to `TRUE` when `run_robust_clustering = TRUE`, otherwise `FALSE`.
+#' `mrf3_vs()`. The workflow defaults to raw-IMD filtering.
+#' An explicit `re_fit` is honored unless `run_robust_clustering = TRUE`, which
+#' requires and therefore forces refitting.
 #' @param run_robust_clustering Logical; whether to run a robust clustering
 #' branch that first selects variables from IMD weights and then re-clusters.
 #' @param robust_clustering_args A named list of clustering arguments
@@ -47,21 +118,30 @@
 #' `cluster_imd()` when `run_imd = TRUE`.
 #' By default, this function reuses cluster labels from
 #' `clusters`.
+#' @param select_connection Logical; whether to opt into the legacy
+#' quality-based direction-selection step. The default `FALSE` preserves all
+#' directed connections for modularity-weighted fusion.
 #' @param top_v Optional unified top-v cutoff applied to both `model_top_v`
 #' and `fused_top_v`.
 #' @param model_top_v Model-level top-v cutoff used on each single-model
-#' forest weight matrix before fusion. Default `Inf` = no truncation (use all
-#' weights). Set to `NULL` to auto-tune via `tune_model_top_v()`.
+#' forest weight matrix before fusion. The default `NULL` auto-tunes via
+#' `tune_model_top_v()`; use `Inf` for no truncation. A
+#' selected or fixed value at least `0.8 * n` is treated as no truncation.
 #' @param recon_fusion Reconstruction fusion mode passed to `get_reconstr_matrix()`:
 #' `"weighted"` (default) or `"uniform"`.
+#' @param global_fusion Global fusion across response blocks. `"average"`
+#' implements Eq. 8; `"pmin"` is an optional intersection extension and disables
+#' fused top-v tuning.
 #' @param score_power Exponent applied to connection scores for weighted reconstruction.
 #' @param score_floor Non-negative floor applied to connection scores before weighting.
 #' @param fallback_uniform Logical; whether weighted reconstruction falls back to uniform averaging when scores are unavailable.
 #' @param fused_top_v Row-wise top-v truncation for fused weights. Default `NULL`
-#' = auto-tune via `tune_fused_top_v()`. Set to `Inf` for no truncation, `FALSE` to skip entirely.
+#' = auto-tune via `tune_fused_top_v()`. Set to `Inf` for no truncation or
+#' `FALSE` to skip it. Values at least `0.8 * n` are treated as no truncation.
 #' @param fused_row_normalize Logical; whether to row-normalize fused weights after optional truncation.
 #' @param fused_keep_ties Logical; whether fused top-v truncation keeps ties at cutoff.
-#' @param top_v_method Strategy used when auto-selecting `top_v`.
+#' @param top_v_method Strategy used when auto-selecting `top_v`:
+#' `"entropy_elbow"` (default workflow) or `"neff"`.
 #' @param neff_quantile Quantile of effective neighborhood size used by the
 #'   `"neff"` top-v rule.
 #' @param model_top_v_tune_args A named list of additional arguments passed to
@@ -79,10 +159,12 @@
 #' @param seed Random seed.
 #' @param ... Additional arguments passed to `mrf3_init()`.
 #'
-#' @return A compact `mrf3_fit` object with top-level components:
-#' `config`, `init`, `tuning`, `reconstruction`, `clusters`,
-#' `shared`, `specific`, `imd`, `cluster_imd`,
-#' `variable_selection`, `robust_clustering`, and optional `data`.
+#' @return An `mrf3_fit` list with flat top-level components. Core fields are
+#' `config`, `models`, `connection`, `connection_score`, `model_top_v`,
+#' `fused_top_v`, `tuning_detail`, `reconstruction`, `clusters`, `shared`, and
+#' `specific`. Optional stages populate `imd`, `cluster_imd`, `selected_vars`,
+#' `selected_weights`, `selected_data`, `vs_detail`, `robust_clusters`, and
+#' `robust_detail`; `data` is included when `return_data = TRUE`.
 #' @export
 mrf3_fit <- function(dat.list,
                           ntree = 500,
@@ -141,7 +223,6 @@ mrf3_fit <- function(dat.list,
   if (!is.null(dots$clustering_strategy)) dots$clustering_strategy <- NULL
   if (!is.null(dots$run_shared_specific)) dots$run_shared_specific <- NULL
   if (!is.null(dots$run_specific_clustering)) dots$run_specific_clustering <- NULL
-  if (!is.null(variable_selection_args$re_fit)) variable_selection_args$re_fit <- NULL
   ## robust_clustering_args is now a formal parameter; ignore stale dots entry
   if (!is.null(dots$robust_clustering_args)) dots$robust_clustering_args <- NULL
   if (!is.null(dots$clustering_args)) dots$clustering_args <- NULL
@@ -197,6 +278,19 @@ mrf3_fit <- function(dat.list,
   # Stage 1: initialization through mrf3_init
   if (verbose) message("Fitting forests..")
 
+  # A sub-MRF is an alternative representation of the same forest, not a
+  # separate set of hidden defaults. Inherit the main tree/sampling controls;
+  # explicit sub_mrf_args continue to take precedence.
+  if (isTRUE(dots$sub_mrf)) {
+    dots$sub_mrf_args <- .inherit_sub_mrf_args(
+      sub_mrf_args = dots$sub_mrf_args,
+      ntree = ntree,
+      samptype = samptype,
+      ytry = ytry,
+      dots = dots
+    )
+  }
+
   ## When IMD is needed and sub_mrf is active, inject compute_imd = TRUE
   ## into the sub_mrf_args so IMD is pre-computed during fitting.
   need_imd_early <- isTRUE(run_imd) || isTRUE(run_variable_selection) || isTRUE(run_robust_clustering)
@@ -208,6 +302,17 @@ mrf3_fit <- function(dat.list,
 
   # Skip proximity computation when clustering doesn't need it
   prox_arg <- if (main_clustering == "similarity") "none" else "all"
+
+  # Residual unsupervised forests use the same stochastic/tree structure as
+  # the main forests unless the caller explicitly overrides a specific_* value.
+  shared_specific_args <- .inherit_specific_forest_args(
+    shared_specific_args = shared_specific_args,
+    ntree = ntree,
+    samptype = samptype,
+    ytry = ytry,
+    proximity = prox_arg,
+    dots = dots
+  )
 
   # When enhanced_proximity is requested and the native engine is active,
   # compute enhanced proximity inside C++ during tree building.
@@ -232,6 +337,14 @@ mrf3_fit <- function(dat.list,
     }
     if (!is.null(dots$leaf_embed_dim) && is.null(shared_specific_args$leaf_embed_dim)) {
       shared_specific_args$leaf_embed_dim <- dots$leaf_embed_dim
+    }
+    if (isTRUE(dots$sub_mrf)) {
+      sma <- dots$sub_mrf_args
+      if (is.null(sma$enhanced)) sma$enhanced <- TRUE
+      if (is.null(sma$enhanced_prox)) sma$enhanced_prox <- TRUE
+      if (is.null(sma$sibling_gamma) && !is.null(dots$sibling_gamma)) sma$sibling_gamma <- dots$sibling_gamma
+      if (is.null(sma$leaf_embed_dim) && !is.null(dots$leaf_embed_dim)) sma$leaf_embed_dim <- dots$leaf_embed_dim
+      dots$sub_mrf_args <- sma
     }
   }
 
@@ -281,14 +394,20 @@ mrf3_fit <- function(dat.list,
     "single_block"
   } else if (!is.null(connect_list)) {
     "provided"
+  } else if (isTRUE(select_connection)) {
+    "selected"
   } else {
-    "auto"
+    "all_directed"
   }
   conn_note <- switch(
     conn_strategy,
     single_block = "Single-block mode: connection fixed to itself.",
     provided = "Using user-provided connect_list.",
-    auto = "Auto-selected by forest-weight quality ranking."
+    selected = "Legacy quality-based connection selection was requested.",
+    all_directed = paste(
+      "All directed connections retained; modularity is used only as a",
+      "soft fusion weight."
+    )
   )
   stage_connection <- list(
     strategy = conn_strategy,
@@ -314,7 +433,7 @@ mrf3_fit <- function(dat.list,
     NULL
   }
 
-  disable_fused_top_v <- isFALSE(fused_top_v)
+  disable_fused_top_v <- isFALSE(fused_top_v) || identical(global_fusion, "pmin")
 
   top_v_method <- match.arg(top_v_method)
   top_v_main <- resolve_top_v_values(
@@ -322,6 +441,10 @@ mrf3_fit <- function(dat.list,
     mod_input = mod_list,
     connection_input = connect_for_downstream,
     connection_score = stage_connection$score,
+    recon_fusion = recon_fusion,
+    score_power = score_power,
+    score_floor = score_floor,
+    fallback_uniform = fallback_uniform,
     model_top_v_input = model_top_v,
     fused_top_v_input = fused_top_v,
     disable_fused_top_v = disable_fused_top_v,
@@ -409,9 +532,13 @@ mrf3_fit <- function(dat.list,
                                        seed = seed)
             iw <- imp_out$imp_ls
           }
-          m_name_sep <- rev(unlist(stringr::str_split(m_name, "_")))
-          names(iw) <- m_name_sep
-          iw
+          side_names <- names(iw)
+          if (is.null(side_names)) side_names <- c("X", "Y")[seq_along(iw)]
+          block_map <- .imd_model_block_map(
+            mod, model_name = m_name, sides = side_names,
+            dat_names = names(dat_fit)
+          )
+          .rename_imd_sides(iw, block_map)
         })
 
         ## Merge across connections: average per block
@@ -419,10 +546,16 @@ mrf3_fit <- function(dat.list,
         weight_list <- lapply(block_names, function(bn) {
           ww <- purrr::compact(purrr::map(weight_l, bn))
           if (length(ww) == 0L) return(setNames(numeric(ncol(dat_fit[[bn]])), colnames(dat_fit[[bn]])))
-          w <- Reduce("+", ww) / length(ww)
-          denom <- sqrt(sum(w^2))
-          if (is.finite(denom) && denom > 0) w <- w / denom
-          w
+          target <- colnames(dat_fit[[bn]])
+          ww <- lapply(ww, function(w) {
+            if (is.null(names(w)) || anyDuplicated(names(w)) || !setequal(names(w), target)) {
+              stop("IMD features for block `", bn, "` do not match the fitted data columns.")
+            }
+            w[target]
+          })
+          # Eq. 8 forest IMD is already on [0, 1]. Keep its raw scale for
+          # filtering, mixture fitting, and transformation.
+          Reduce("+", ww) / length(ww)
         })
         names(weight_list) <- block_names
         stage_imd <- list(weight_list = weight_list, weight_list_init = NULL, net = NULL)
@@ -434,6 +567,7 @@ mrf3_fit <- function(dat.list,
         dat.list = dat_fit,
         ytry = ytry,
         parallel = TRUE,
+        normalized = FALSE,
         seed = seed
       )
       final_imd_args <- utils::modifyList(default_imd_args, imd_args)
@@ -445,7 +579,7 @@ mrf3_fit <- function(dat.list,
     if (isTRUE(run_imd) && do_cluster_imd) {
       cluster_labels <- NULL
       if (!is.null(main_clusters)) {
-        cluster_labels <- main_clusters
+        cluster_labels <- if (is.list(main_clusters)) main_clusters$shared else main_clusters
       }
       if (!is.null(cluster_imd_args$cluster)) {
         cluster_labels <- cluster_imd_args$cluster
@@ -496,41 +630,32 @@ mrf3_fit <- function(dat.list,
       if (verbose) message("Variable selection..")
       force_refit <- isTRUE(run_robust_clustering)
       vs_defaults <- list(
-        method = "test",
+        method = "filter",
         re_fit = force_refit,
         re_weights = FALSE,
-        normalized = TRUE
+        normalized = FALSE,
+        seed = seed
       )
       final_vs_args <- utils::modifyList(vs_defaults, variable_selection_args)
-      final_vs_args$re_fit <- force_refit
-      if (identical(as.character(final_vs_args$method)[1], "filter") && !isTRUE(final_vs_args$re_fit)) {
-        warning(
-          "`mrf3_vs(method = 'filter')` performs iterative refits. ",
-          "Switching to `method = 'thres'` for no-refit pipeline mode.",
-          call. = FALSE
-        )
-        final_vs_args$method <- "thres"
-      }
+      # Robust clustering needs a refitted model. Otherwise honor an explicit
+      # user request for a final refit (default remains FALSE).
+      if (force_refit) final_vs_args$re_fit <- TRUE
 
-      ## `method = 'test'` requires per-tree weight distributions (weight_list_init).
-      ## Sub-MRF pre-computed IMD does not produce these, so fall back to 'mixture'.
-      if (identical(as.character(final_vs_args$method)[1], "test") &&
-          is.null(stage_imd$weight_list_init)) {
-        if (verbose) message("  Falling back to method = 'mixture'.")
-        final_vs_args$method <- "mixture"
-      }
-
+      # Pass a workflow-shaped object so `signal = "specific"` and
+      # `signal = "all"` route to residual IMD instead of silently reusing
+      # shared IMD. This also gives mrf3_vs access to raw per-tree IMD.
       mod_vs <- list(
         imd = stage_imd$weight_list,
-        imd_ls = stage_imd$weight_list_init,
+        imd_init = stage_imd$weight_list_init,
         connection = connect_for_downstream,
-        ytry = ytry,
-        ntree = ntree,
+        config = list(ytry = ytry, ntree = ntree),
         type = type,
         oob_err = oob_err,
-        mod = mod_list
+        models = mod_list,
+        specific = main_specific,
+        data = dat_fit
       )
-      class(mod_vs) <- "mrf3"
+      class(mod_vs) <- c("mrf3_fit", "list")
       vs_fit <- do.call(mrf3_vs, c(list(mod = mod_vs, dat.list = dat_fit), final_vs_args))
       dat_selected <- lapply(vs_fit$dat.list, function(x) {
         if (is.null(x)) {
@@ -551,14 +676,20 @@ mrf3_fit <- function(dat.list,
         )
       })
       stage_variable_selection <- list(
-        method = as.character(final_vs_args$method)[1],
-        re_fit = isTRUE(final_vs_args$re_fit),
+        method = if (!is.null(vs_fit$selection_method)) {
+          as.character(vs_fit$selection_method)[1]
+        } else {
+          as.character(final_vs_args$method)[1]
+        },
+        signal = if (!is.null(vs_fit$signal)) vs_fit$signal else "shared",
+        re_fit = isTRUE(vs_fit$refit_performed),
         args = final_vs_args,
         summary = do.call(rbind, summary_rows),
         selected_vars = lapply(dat_selected, colnames),
+        selected_weights = vs_fit$selected_weights,
         dat_selected = dat_selected,
         vs_fit = if (isTRUE(compact_output)) NULL else vs_fit,
-        mod_list = if (isTRUE(final_vs_args$re_fit)) vs_fit$mod else mod_list,
+        mod_list = if (isTRUE(vs_fit$refit_performed)) vs_fit$mod else mod_list,
         connection = if (!is.null(vs_fit$connection)) vs_fit$connection else connect_for_downstream
       )
     }
@@ -573,6 +704,11 @@ mrf3_fit <- function(dat.list,
     } else if (is.null(stage_variable_selection$dat_selected)) {
       warning(
         "`run_robust_clustering = TRUE` requires variable-selection output from `mrf3_vs`. Skipping robust clustering.",
+        call. = FALSE
+      )
+    } else if (any(vapply(stage_variable_selection$dat_selected, ncol, integer(1)) == 0L)) {
+      warning(
+        "Robust clustering was skipped because variable selection returned an empty block.",
         call. = FALSE
       )
     } else {
@@ -705,11 +841,13 @@ mrf3_fit <- function(dat.list,
 
     ## ---------- Variable Selection ----------
     selected_vars = if (!is.null(stage_variable_selection)) stage_variable_selection$selected_vars else NULL,
+    selected_weights = if (!is.null(stage_variable_selection)) stage_variable_selection$selected_weights else NULL,
     selected_data = if (!is.null(stage_variable_selection)) stage_variable_selection$dat_selected else NULL,
     vs_summary = if (!is.null(stage_variable_selection)) stage_variable_selection$summary else NULL,
     vs_detail = if (!is.null(stage_variable_selection)) {
       list(
         method = stage_variable_selection$method,
+        signal = stage_variable_selection$signal,
         re_fit = stage_variable_selection$re_fit,
         args = stage_variable_selection$args,
         vs_fit = stage_variable_selection$vs_fit,

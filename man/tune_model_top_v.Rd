@@ -12,7 +12,7 @@ tune_model_top_v(
   k = NULL,
   sample_n = NULL,
   sample_frac = NULL,
-  auto_sample_n = TRUE,
+  auto_sample_n = FALSE,
   max_candidates = 20,
   reuse_tuned_k = TRUE,
   parallel = TRUE,
@@ -27,8 +27,8 @@ tune_model_top_v(
 \item{mod}{A fitted \code{mrf3} model object.}
 
 \item{tmin}{Minimum model-level top-v cutoff to evaluate.
-The effective upper bound is fixed to \code{ceiling(0.2 * n)} where \code{n} is
-sample size.}
+The effective upper bound is the sample size, allowing the
+\code{v >= 0.8 * n} no-truncation rule to be evaluated.}
 
 \item{by}{Base step size for model-level top-v grid construction.}
 

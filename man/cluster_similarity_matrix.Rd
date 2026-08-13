@@ -7,7 +7,7 @@
 cluster_similarity_matrix(
   S,
   k = NULL,
-  method = c("PAM", "Spectral"),
+  method = c("Spectral", "PAM"),
   tune_method = "silhouette",
   gap_w = "uniform",
   ...

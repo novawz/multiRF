@@ -14,6 +14,8 @@
 #'
 #' @param x An `mrf3_fit`, `mrf3`, `reconstr`, or `prox` object.
 #' @param which For `mrf3_fit`: `"main"` (default) or `"robust"`.
+#' @param block Optional block name. For an `mrf3_fit` main result, returns the
+#'   corresponding block-specific labels instead of the shared labels.
 #' @param ... Additional arguments (unused).
 #'
 #' @return A named vector of cluster assignments, or `NULL` if not available.
@@ -68,7 +70,9 @@ get_weights <- function(x, cluster = NULL, ...) {
     return(x$by_cluster[[cl]]$imd$weight_list)
   }
   if (inherits(x, "mrf3_fit")) {
-    return(x$imd)
+    # `$imd` is the current workflow field; retain `$weights` support for
+    # compact/legacy mrf3_fit objects created by earlier package versions.
+    return(if (!is.null(x$imd)) x$imd else x$weights)
   }
   if (inherits(x, "mrf3")) {
     return(if (!is.null(x$imd)) x$imd else x$weights)

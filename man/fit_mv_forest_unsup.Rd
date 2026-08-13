@@ -8,10 +8,12 @@ fit_mv_forest_unsup(
   X,
   ntree = 500L,
   ytry = NULL,
+  nsplit = 10L,
+  forest.wt = "all",
   proximity = c("all", "inbag", "oob", "none"),
   nodesize = 3L,
   max_depth = 0L,
-  seed = -1L,
+  seed = 529L,
   samptype = c("swor", "swr"),
   nthread = getOption("multiRF.nthread", 0L),
   enhanced_prox = FALSE,
@@ -25,6 +27,13 @@ fit_mv_forest_unsup(
 \item{ntree}{Number of trees.}
 
 \item{ytry}{Number of candidate pseudo-Y columns per split. Default \code{NULL} = 15.}
+
+\item{nsplit}{Number of candidate cutpoints per pseudo-predictor; \code{0} scans
+all distinct cutpoints.}
+
+\item{forest.wt}{Forest-weight mode: \code{"all"} uses every sample in a
+terminal node, \code{"inbag"} uses bootstrap donors, and \code{"oob"} uses only
+trees in which the target sample is out of bag.}
 
 \item{proximity}{Proximity output mode.}
 
