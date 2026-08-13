@@ -10,6 +10,49 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+<style type="text/css">
+#TOC {
+  box-sizing: border-box;
+  margin-left: 0;
+  max-width: 100%;
+  width: auto;
+}
+img {
+  box-sizing: border-box;
+  display: block;
+  height: auto;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 100%;
+}
+pre,
+div.sourceCode {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+div.sourceCode {
+  overflow-x: auto;
+}
+table {
+  max-width: 100%;
+  width: 100%;
+}
+table th,
+table td {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+@media screen and (max-width: 760px) {
+  body {
+    padding-left: 1em;
+    padding-right: 1em;
+  }
+  #TOC {
+    width: 100%;
+  }
+}
+</style>
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -408,9 +451,10 @@ call. The remaining `r sum(clinical_demo$sample_type == "Solid Tissue Normal")`
 adjacent-normal samples had no tumor-subtype label and are excluded from this
 comparison. The same native t-SNE coordinates are used in panels a and b;
 only the coloring changes. Panel c uses `plot_cluster_composition()` to show
-the exact within-cluster composition.
+the exact within-cluster composition. Both displays use package plotting
+functions; the assembly code is hidden here to keep the vignette concise.
 
-```{r pam50-comparison, fig.width=9.2, fig.height=3.8, dpi=180, fig.cap="Relationship between the multiRF shared partition and PAM50 annotations in the demonstration subset. (a, b) The same native t-SNE embedding of the learned shared similarity for 94 primary tumors, colored by multiRF cluster (a) or PAM50 annotation (b). t-SNE is used only for visualization. (c) Within-cluster PAM50 composition; labels show sample count and row percentage."}
+```{r pam50-comparison, echo=FALSE, fig.width=7.2, fig.height=7.0, dpi=180, fig.cap="Relationship between the multiRF shared partition and PAM50 annotations in the demonstration subset. (a, b) The same native t-SNE embedding of the learned shared similarity for 94 primary tumors, colored by multiRF cluster (a) or PAM50 annotation (b). t-SNE is used only for visualization. (c) Within-cluster PAM50 composition; labels show sample count and row percentage."}
 cluster_palette <- c(
   "C1" = "#484878", "C2" = "#7884B4", "C3" = "#B4C0E4"
 )
@@ -461,13 +505,21 @@ p_composition <- plot_cluster_composition(
   base_size = 8.5
 )
 
-ggpubr::ggarrange(
+p_embedding_row <- ggpubr::ggarrange(
   p_cluster_tsne,
   p_pam50_tsne,
+  ncol = 2,
+  widths = c(1, 1.12),
+  labels = c("a", "b"),
+  font.label = list(size = 10, face = "bold")
+)
+
+ggpubr::ggarrange(
+  p_embedding_row,
   p_composition,
-  ncol = 3,
-  widths = c(1, 1.15, 1.2),
-  labels = c("a", "b", "c"),
+  ncol = 1,
+  heights = c(1.65, 1),
+  labels = c("", "c"),
   font.label = list(size = 10, face = "bold")
 )
 ```
