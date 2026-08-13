@@ -1,3 +1,9 @@
+# multiRF 0.2.2
+
+- Added `plot_cluster_composition()` for auditable cluster-by-annotation
+  composition heatmaps with counts, normalized percentages, and consistent
+  package styling.
+
 # multiRF 0.2.1
 
 - **Fix**: Corrected the default `ytry` for supervised multivariate regression.

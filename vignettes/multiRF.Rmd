@@ -389,22 +389,6 @@ S_pam50 <- S_shared[tumor_eval, tumor_eval, drop = FALSE]
 pam50_eval <- droplevels(pam50[tumor_eval])
 cluster_eval <- droplevels(shared_cluster[tumor_eval])
 
-pam50_counts <- as.data.frame(
-  table(Cluster = cluster_eval, PAM50 = pam50_eval),
-  stringsAsFactors = FALSE
-)
-names(pam50_counts)[3L] <- "samples"
-pam50_counts$fraction <- ave(
-  pam50_counts$samples,
-  pam50_counts$Cluster,
-  FUN = function(x) x / sum(x)
-)
-pam50_counts$label <- ifelse(
-  pam50_counts$samples > 0L,
-  sprintf("%d\n%.0f%%", pam50_counts$samples, 100 * pam50_counts$fraction),
-  ""
-)
-
 pam50_k3 <- cluster_metrics(cluster_eval, pam50_eval)
 cluster_k5 <- factor(spectral_cl(S_shared, k_tune = 5L)$cl)
 pam50_k5 <- cluster_metrics(cluster_k5[tumor_eval], pam50_eval)
@@ -423,7 +407,8 @@ All `r sum(tumor_eval)` primary tumors in the demonstration subset had a PAM50
 call. The remaining `r sum(clinical_demo$sample_type == "Solid Tissue Normal")`
 adjacent-normal samples had no tumor-subtype label and are excluded from this
 comparison. The same native t-SNE coordinates are used in panels a and b;
-only the coloring changes. Panel c shows the exact within-cluster composition.
+only the coloring changes. Panel c uses `plot_cluster_composition()` to show
+the exact within-cluster composition.
 
 ```{r pam50-comparison, fig.width=9.2, fig.height=3.8, dpi=180, fig.cap="Relationship between the multiRF shared partition and PAM50 annotations in the demonstration subset. (a, b) The same native t-SNE embedding of the learned shared similarity for 94 primary tumors, colored by multiRF cluster (a) or PAM50 annotation (b). t-SNE is used only for visualization. (c) Within-cluster PAM50 composition; labels show sample count and row percentage."}
 cluster_palette <- c(
@@ -468,35 +453,13 @@ p_pam50_tsne <- plot_tsne(
   ggplot2::guides(fill = ggplot2::guide_legend(nrow = 3, byrow = TRUE)) +
   ggplot2::theme(legend.key.height = grid::unit(0.32, "lines"))
 
-p_composition <- ggplot2::ggplot(
-  pam50_counts,
-  ggplot2::aes(PAM50, Cluster, fill = fraction)
-) +
-  ggplot2::geom_tile(colour = "white", linewidth = 0.5) +
-  ggplot2::geom_text(
-    ggplot2::aes(label = label, colour = fraction > 0.45),
-    size = 2.5, lineheight = 0.9, show.legend = FALSE
-  ) +
-  ggplot2::scale_fill_gradientn(
-    colours = c("#F7FBFF", "#B4C0E4", "#484878"),
-    limits = c(0, 1),
-    name = "Within-cluster\nfraction"
-  ) +
-  ggplot2::scale_colour_manual(values = c("FALSE" = "#272727", "TRUE" = "white")) +
-  ggplot2::coord_equal() +
-  ggplot2::labs(
-    title = "PAM50 composition",
-    x = NULL, y = "multiRF cluster"
-  ) +
-  ggplot2::theme_classic(base_size = 8.5, base_family = "sans") +
-  ggplot2::theme(
-    axis.line = ggplot2::element_blank(),
-    axis.ticks = ggplot2::element_blank(),
-    axis.text.x = ggplot2::element_text(angle = 35, hjust = 1),
-    plot.title = ggplot2::element_text(face = "bold", size = 9),
-    legend.title = ggplot2::element_text(size = 8),
-    legend.text = ggplot2::element_text(size = 7.5)
-  )
+p_composition <- plot_cluster_composition(
+  cluster = cluster_eval,
+  annotation = pam50_eval,
+  main = "PAM50 composition",
+  ylab = "multiRF cluster",
+  base_size = 8.5
+)
 
 ggpubr::ggarrange(
   p_cluster_tsne,

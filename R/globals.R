@@ -7,7 +7,8 @@ if (getRversion() >= "2.15.1") {
       "Var_names", "Weights", "y", "data", "shared_frac", "variable",
       "abs_weight", "block", "branch", "omics", "cluster", "x",
       "k", "obj", "sil", "dim1", "dim2", "group", "variable_panel",
-      "weight"
+      "weight", "annotation", "count", "fraction", "value", "label",
+      "text_on_dark"
     )
   )
 }

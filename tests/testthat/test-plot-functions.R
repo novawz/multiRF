@@ -7,6 +7,77 @@ test_that("plot theme and palette are stable and composable", {
   expect_s3_class(multiRF:::theme_mrf3(), "theme")
 })
 
+test_that("plot_cluster_composition returns auditable row composition", {
+  cluster <- factor(c("C1", "C1", "C1", "C2", "C2"), levels = c("C1", "C2", "C3"))
+  annotation <- factor(
+    c("A", "A", "B", "B", "C"),
+    levels = c("A", "B", "C", "D")
+  )
+  p <- plot_cluster_composition(cluster, annotation, drop = FALSE)
+  expect_s3_class(p, "ggplot")
+  expect_identical(levels(p$data$cluster), c("C1", "C2", "C3"))
+  expect_identical(levels(p$data$annotation), c("A", "B", "C", "D"))
+  expect_equal(nrow(p$data), 12L)
+  expect_equal(
+    unname(as.numeric(tapply(p$data$fraction, p$data$cluster, sum))),
+    c(1, 1, 0)
+  )
+  cell <- p$data[p$data$cluster == "C1" & p$data$annotation == "A", ]
+  expect_identical(cell$count, 2L)
+  expect_equal(cell$fraction, 2 / 3)
+  expect_identical(cell$label, "2\n67%")
+  expect_true(all(p$data$label[p$data$count == 0L] == ""))
+  expect_equal(p$scales$get_scales("fill")$limits, c(0, 1))
+})
+
+test_that("plot_cluster_composition supports normalization choices", {
+  cluster <- c("C1", "C1", "C2", "C2", "C2")
+  annotation <- c("A", "B", "A", "A", "B")
+
+  p_annotation <- plot_cluster_composition(
+    cluster, annotation, normalize = "annotation", label = "percent"
+  )
+  expect_equal(
+    unname(as.numeric(tapply(
+      p_annotation$data$fraction, p_annotation$data$annotation, sum
+    ))),
+    c(1, 1)
+  )
+
+  p_total <- plot_cluster_composition(cluster, annotation, normalize = "total")
+  expect_equal(sum(p_total$data$fraction), 1)
+
+  p_count <- plot_cluster_composition(
+    cluster, annotation, normalize = "none", label = "count"
+  )
+  expect_identical(p_count$data$value, p_count$data$count)
+  expect_true(all(is.na(p_count$data$fraction)))
+  expect_null(p_count$scales$get_scales("fill")$limits)
+  expect_error(
+    plot_cluster_composition(cluster, annotation, normalize = "none"),
+    "Percentage labels require"
+  )
+})
+
+test_that("plot_cluster_composition validates paired labels", {
+  p <- plot_cluster_composition(
+    factor(c("C1", NA, "C2"), levels = c("C1", "C2")),
+    factor(c("A", "B", "A"), levels = c("A", "B"))
+  )
+  expect_equal(sum(p$data$count), 2L)
+  expect_error(
+    plot_cluster_composition(c("C1", NA), c("A", "B"), na.rm = FALSE),
+    "Missing labels"
+  )
+  expect_error(plot_cluster_composition(c("C1"), c("A", "B")), "same length")
+  expect_error(plot_cluster_composition(character(), character()), "must not be empty")
+  expect_error(plot_cluster_composition(matrix("C1"), "A"), "atomic vector")
+  expect_error(plot_cluster_composition("C1", "A", colours = "red"), "at least two")
+  expect_error(plot_cluster_composition("", "A"), "must not be blank")
+  expect_error(plot_cluster_composition("C1", "A", base_size = "large"), "base_size")
+  expect_error(plot_cluster_composition("C1", "A", percent_digits = 7), "0 to 6")
+})
+
 test_that("plot_weights validates inputs and returns one faceted ggplot", {
   weights <- list(
     gene = stats::setNames(c(0.8, 0.4, 0.2), c("G1", "G2", "G3")),
