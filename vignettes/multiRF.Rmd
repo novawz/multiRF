@@ -331,6 +331,219 @@ shared and specific branches:
 | `"proximity"` | Same-terminal-node frequency | PAM |
 | `"enhanced_proximity"` | Proximity plus sibling-leaf correction | PAM |
 
+The fitted example already contains one shared partition and one
+residual-specific partition for each omics block. The first figure shows the
+first two coordinates of the spectral embedding actually used by the
+clustering stage; it does not introduce a second dimensionality-reduction
+method. Cluster numbers and colors are local to each panel and should not be
+interpreted as matched biological classes across signal components.
+
+```{r clustering-embeddings, fig.width=8.2, fig.height=5.8, dpi=160, fig.cap="Shared and residual-specific clustering in the fitted TCGA BRCA demonstration subset (n = 100 samples). Points are samples and colors denote the partition returned for each signal component. Labels mark cluster centroids in the first two spectral coordinates."}
+component_results <- list(
+  "Shared signal" = list(
+    embed = fit$shared$clustering$embed,
+    cluster = get_clusters(fit)
+  ),
+  "Gene-specific" = list(
+    embed = fit$specific$clustering$by_omics$gene$embed,
+    cluster = get_clusters(fit, block = "gene")
+  ),
+  "Methylation-specific" = list(
+    embed = fit$specific$clustering$by_omics$methy$embed,
+    cluster = get_clusters(fit, block = "methy")
+  ),
+  "miRNA-specific" = list(
+    embed = fit$specific$clustering$by_omics$mirna$embed,
+    cluster = get_clusters(fit, block = "mirna")
+  )
+)
+
+embedding_df <- do.call(rbind, lapply(names(component_results), function(component) {
+  result <- component_results[[component]]
+  data.frame(
+    sample = demo_ids,
+    spectral_1 = result$embed[, 1L],
+    spectral_2 = result$embed[, 2L],
+    cluster = factor(result$cluster),
+    component = component,
+    row.names = NULL
+  )
+}))
+embedding_df$component <- factor(
+  embedding_df$component,
+  levels = names(component_results)
+)
+
+cluster_centroids <- stats::aggregate(
+  cbind(spectral_1, spectral_2) ~ component + cluster,
+  data = embedding_df,
+  FUN = mean
+)
+cluster_palette <- c("1" = "#0F4D92", "2" = "#42949E", "3" = "#E28E2C")
+
+p_embedding <- ggplot2::ggplot(
+  embedding_df,
+  ggplot2::aes(spectral_1, spectral_2, fill = cluster)
+) +
+  ggplot2::geom_point(
+    shape = 21, size = 2.0, alpha = 0.88,
+    colour = "white", stroke = 0.25
+  ) +
+  ggplot2::geom_text(
+    data = cluster_centroids,
+    ggplot2::aes(spectral_1, spectral_2, label = cluster),
+    inherit.aes = FALSE,
+    colour = "#272727", fontface = "bold", size = 3.0
+  ) +
+  ggplot2::facet_wrap(~component, ncol = 2) +
+  ggplot2::scale_fill_manual(values = cluster_palette, drop = FALSE) +
+  ggplot2::coord_equal() +
+  ggplot2::labs(
+    x = "Spectral coordinate 1",
+    y = "Spectral coordinate 2",
+    fill = "Cluster"
+  ) +
+  ggplot2::theme_classic(base_size = 9, base_family = "Arial") +
+  ggplot2::theme(
+    axis.line = ggplot2::element_line(linewidth = 0.35, colour = "#272727"),
+    axis.ticks = ggplot2::element_line(linewidth = 0.35, colour = "#272727"),
+    strip.background = ggplot2::element_blank(),
+    strip.text = ggplot2::element_text(face = "bold", size = 9),
+    legend.position = "top",
+    legend.title = ggplot2::element_text(size = 8.5),
+    legend.text = ggplot2::element_text(size = 8),
+    panel.spacing = grid::unit(1.0, "lines")
+  )
+
+p_embedding
+```
+
+The next figure provides a complementary check. The heatmap displays the
+learned shared similarity after ordering samples by the returned partition;
+the adjacent lollipop chart reports the number of samples assigned to every
+shared and block-specific cluster. These are descriptive diagnostics for this
+small demonstration subset, not estimates of population prevalence. The
+white heatmap diagonal is intentional because self-similarity is excluded.
+
+```{r clustering-summary, fig.width=8.2, fig.height=4.5, dpi=160, fig.cap="Similarity structure and cluster sizes for the fitted demonstration subset (n = 100 samples). (a) Shared sample similarity ordered by shared-cluster assignment; self-similarity is excluded. (b) Sample counts for the shared and residual-specific partitions."}
+shared_cluster <- factor(get_clusters(fit))
+shared_order <- order(shared_cluster)
+shared_similarity <- fit$shared$clustering$similarity[
+  shared_order, shared_order, drop = FALSE
+]
+
+n_demo <- nrow(shared_similarity)
+heatmap_df <- expand.grid(
+  row = seq_len(n_demo),
+  column = seq_len(n_demo)
+)
+heatmap_df$similarity <- as.vector(shared_similarity)
+
+shared_sizes <- table(shared_cluster[shared_order])
+cluster_boundaries <- cumsum(as.numeric(shared_sizes))
+cluster_midpoints <- cluster_boundaries - as.numeric(shared_sizes) / 2
+boundary_lines <- utils::head(cluster_boundaries, -1L) + 0.5
+cluster_axis_labels <- paste("Cluster", names(shared_sizes))
+
+p_similarity <- ggplot2::ggplot(
+  heatmap_df,
+  ggplot2::aes(column, row, fill = similarity)
+) +
+  ggplot2::geom_raster() +
+  ggplot2::geom_vline(
+    xintercept = boundary_lines,
+    colour = "white", linewidth = 0.35
+  ) +
+  ggplot2::geom_hline(
+    yintercept = boundary_lines,
+    colour = "white", linewidth = 0.35
+  ) +
+  ggplot2::scale_fill_gradientn(
+    colours = c("#F7FBFF", "#B9D8EA", "#42949E", "#0F4D92"),
+    name = "Similarity"
+  ) +
+  ggplot2::scale_x_continuous(
+    breaks = cluster_midpoints,
+    labels = cluster_axis_labels,
+    expand = c(0, 0)
+  ) +
+  ggplot2::scale_y_reverse(
+    breaks = cluster_midpoints,
+    labels = cluster_axis_labels,
+    expand = c(0, 0)
+  ) +
+  ggplot2::coord_equal() +
+  ggplot2::labs(
+    title = "Shared similarity ordered by cluster",
+    x = NULL, y = NULL
+  ) +
+  ggplot2::theme_classic(base_size = 8.5, base_family = "Arial") +
+  ggplot2::theme(
+    axis.line = ggplot2::element_blank(),
+    axis.ticks = ggplot2::element_blank(),
+    axis.text.x = ggplot2::element_text(angle = 25, hjust = 1),
+    plot.title = ggplot2::element_text(face = "bold", size = 9),
+    legend.position = "right",
+    legend.title = ggplot2::element_text(size = 8),
+    legend.text = ggplot2::element_text(size = 7.5)
+  )
+
+cluster_size_df <- do.call(rbind, lapply(names(component_results), function(component) {
+  counts <- table(factor(component_results[[component]]$cluster))
+  data.frame(
+    component = component,
+    cluster = factor(names(counts), levels = names(cluster_palette)),
+    samples = as.integer(counts),
+    row.names = NULL
+  )
+}))
+cluster_size_df$entry <- paste0(
+  cluster_size_df$component,
+  "  ·  C", cluster_size_df$cluster
+)
+cluster_size_df$entry <- factor(
+  cluster_size_df$entry,
+  levels = rev(cluster_size_df$entry)
+)
+
+p_cluster_size <- ggplot2::ggplot(
+  cluster_size_df,
+  ggplot2::aes(samples, entry, colour = cluster)
+) +
+  ggplot2::geom_segment(
+    ggplot2::aes(x = 0, xend = samples, yend = entry),
+    colour = "#D8D8D8", linewidth = 0.6
+  ) +
+  ggplot2::geom_point(size = 2.8) +
+  ggplot2::geom_text(
+    ggplot2::aes(label = samples),
+    hjust = -0.7, colour = "#272727", size = 2.8
+  ) +
+  ggplot2::scale_colour_manual(values = cluster_palette, drop = FALSE) +
+  ggplot2::coord_cartesian(
+    xlim = c(0, max(cluster_size_df$samples) * 1.18),
+    clip = "off"
+  ) +
+  ggplot2::labs(title = "Cluster sizes", x = "Samples", y = NULL) +
+  ggplot2::theme_classic(base_size = 8.5, base_family = "Arial") +
+  ggplot2::theme(
+    axis.line.y = ggplot2::element_blank(),
+    axis.ticks.y = ggplot2::element_blank(),
+    plot.title = ggplot2::element_text(face = "bold", size = 9),
+    legend.position = "none",
+    plot.margin = ggplot2::margin(5.5, 12, 5.5, 5.5)
+  )
+
+ggpubr::ggarrange(
+  p_similarity,
+  p_cluster_size,
+  ncol = 2,
+  widths = c(1.35, 1),
+  labels = c("a", "b"),
+  font.label = list(size = 10, face = "bold")
+)
+```
+
 The similarity workflow is the default. To compare representations on a full
 analysis, keep the data, tree settings, and positive seed fixed:
 
