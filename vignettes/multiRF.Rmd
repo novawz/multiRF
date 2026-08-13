@@ -109,7 +109,7 @@ raw IMD, and applies the mixture selector without a second forest fit.
 ```{r fit}
 fit <- mrf3(
   dat.list = brca_demo,
-  k = 3,
+  k = NULL,
   ntree = 40,
   filter_mode = "none",
   main_clustering = "similarity",
@@ -129,8 +129,10 @@ fit <- mrf3(
 )
 ```
 
-The mixture rule keeps this vignette fast. The adaptive OOB filtering
-rule is described in [Variable selection](#variable-selection).
+With `k = NULL`, cluster number is selected from the learned representation
+without using the clinical annotations introduced later. The mixture rule
+keeps this vignette fast. The adaptive OOB filtering rule is described in
+[Variable selection](#variable-selection).
 
 ```{r summarize-fit}
 summary(fit)
@@ -320,7 +322,7 @@ Standalone `mrf3_vs()` defaults to `re_fit = TRUE`. The staged workflow does
 not refit unless requested, except that `run_robust_clustering = TRUE` must and
 therefore does force a final refit.
 
-## Clustering modes
+## Clustering modes and PAM50 annotation
 
 The `main_clustering` argument applies the same representation choice to the
 shared and specific branches:
@@ -331,237 +333,191 @@ shared and specific branches:
 | `"proximity"` | Same-terminal-node frequency | PAM |
 | `"enhanced_proximity"` | Proximity plus sibling-leaf correction | PAM |
 
-The fitted example already contains one shared partition and one
-residual-specific partition for each omics block. The first figure shows the
-first two row-normalized spectral coordinates returned for visualization. The
-cluster labels come from PAM on the corresponding unnormalized spectral
-coordinates, so this plot is descriptive rather than a second clustering
-step. Cluster numbers and colors are local to each panel and should not be
-interpreted as matched biological classes across signal components.
+The evaluated fit selected three shared clusters by the eigengap of its learned
+similarity. The diagnostic below repeats that calculation over `k = 2, ..., 6`.
+It is retrospective to the fit and does not use PAM50 or any other clinical
+annotation.
 
-```{r clustering-embeddings, fig.width=8.2, fig.height=5.8, dpi=160, fig.cap="Shared and residual-specific clustering in the fitted TCGA BRCA demonstration subset (n = 100 samples). Points are samples in the first two row-normalized spectral coordinates; colors denote partitions fitted on the corresponding unnormalized coordinates. Labels mark visual centroids."}
-component_results <- list(
-  "Shared signal" = list(
-    embed = fit$shared$clustering$embed,
-    cluster = get_clusters(fit)
-  ),
-  "Gene-specific" = list(
-    embed = fit$specific$clustering$by_omics$gene$embed,
-    cluster = get_clusters(fit, block = "gene")
-  ),
-  "Methylation-specific" = list(
-    embed = fit$specific$clustering$by_omics$methy$embed,
-    cluster = get_clusters(fit, block = "methy")
-  ),
-  "miRNA-specific" = list(
-    embed = fit$specific$clustering$by_omics$mirna$embed,
-    cluster = get_clusters(fit, block = "mirna")
-  )
+```{r tune-k-diagnostic, fig.width=7.6, fig.height=3.3, dpi=160}
+k_diagnostic <- tune_k_clusters(
+  S_shared,
+  method = "Spectral",
+  k_tune = 2:6,
+  return_cluster = TRUE,
+  plot_k = TRUE
 )
-
-embedding_df <- do.call(rbind, lapply(names(component_results), function(component) {
-  result <- component_results[[component]]
-  data.frame(
-    sample = demo_ids,
-    spectral_1 = result$embed[, 1L],
-    spectral_2 = result$embed[, 2L],
-    cluster = factor(result$cluster),
-    component = component,
-    row.names = NULL
-  )
-}))
-embedding_df$component <- factor(
-  embedding_df$component,
-  levels = names(component_results)
-)
-
-cluster_centroids <- stats::aggregate(
-  cbind(spectral_1, spectral_2) ~ component + cluster,
-  data = embedding_df,
-  FUN = mean
-)
-cluster_palette <- c("1" = "#3182BD", "2" = "#33B5A5", "3" = "#E28E2C")
-
-p_embedding <- ggplot2::ggplot(
-  embedding_df,
-  ggplot2::aes(spectral_1, spectral_2, fill = cluster)
-) +
-  ggplot2::geom_point(
-    shape = 21, size = 2.0, alpha = 0.88,
-    colour = "white", stroke = 0.25
-  ) +
-  ggplot2::geom_text(
-    data = cluster_centroids,
-    ggplot2::aes(spectral_1, spectral_2, label = cluster),
-    inherit.aes = FALSE,
-    colour = "#272727", fontface = "bold", size = 3.0
-  ) +
-  ggplot2::facet_wrap(~component, ncol = 2) +
-  ggplot2::scale_fill_manual(values = cluster_palette, drop = FALSE) +
-  ggplot2::coord_equal() +
-  ggplot2::labs(
-    x = "Spectral coordinate 1",
-    y = "Spectral coordinate 2",
-    fill = "Cluster"
-  ) +
-  ggplot2::theme_classic(base_size = 9, base_family = "sans") +
-  ggplot2::theme(
-    axis.line = ggplot2::element_line(linewidth = 0.35, colour = "#272727"),
-    axis.ticks = ggplot2::element_line(linewidth = 0.35, colour = "#272727"),
-    strip.background = ggplot2::element_blank(),
-    strip.text = ggplot2::element_text(face = "bold", size = 9),
-    legend.position = "none",
-    legend.title = ggplot2::element_text(size = 8.5),
-    legend.text = ggplot2::element_text(size = 8),
-    panel.spacing = grid::unit(1.0, "lines")
-  )
-
-p_embedding
+stopifnot(k_diagnostic$best_k == length(unique(get_clusters(fit))))
 ```
 
-The next figure provides a complementary check. The heatmap displays the
-learned shared similarity after ordering samples by the returned partition;
-the adjacent lollipop chart reports the number of samples assigned to every
-shared and block-specific cluster. These are descriptive diagnostics for this
-small demonstration subset, not estimates of population prevalence. The
-white heatmap diagonal is intentional because self-similarity is excluded.
+### Post hoc comparison with PAM50
 
-```{r clustering-summary, fig.width=8.2, fig.height=4.5, dpi=160, fig.cap="Similarity structure and cluster sizes for the fitted demonstration subset (n = 100 samples). (a) Shared sample similarity ordered by shared-cluster assignment; self-similarity is excluded. (b) Sample counts for the shared and residual-specific partitions."}
-shared_cluster <- factor(get_clusters(fit))
-shared_order <- order(shared_cluster)
-shared_similarity <- fit$shared$clustering$similarity[
-  shared_order, shared_order, drop = FALSE
+PAM50 is used here only after fitting to annotate the unsupervised shared
+partition. It was not supplied to feature selection, forest construction,
+weight fusion, cluster-number tuning, or clustering. Because PAM50 itself is
+derived from gene expression and gene expression is one of the multiRF input
+blocks, this is a biological concordance check rather than an independent
+ground truth.
+
+```{r pam50-setup, include=FALSE}
+clinical_demo <- tcga_brca_clinical[
+  match(demo_ids, tcga_brca_clinical$sampleID),
+  , drop = FALSE
 ]
-
-n_demo <- nrow(shared_similarity)
-heatmap_df <- expand.grid(
-  row = seq_len(n_demo),
-  column = seq_len(n_demo)
+stopifnot(
+  !anyDuplicated(tcga_brca_clinical$sampleID),
+  identical(as.character(clinical_demo$sampleID), demo_ids)
 )
-heatmap_df$similarity <- as.vector(shared_similarity)
 
-shared_sizes <- table(shared_cluster[shared_order])
-cluster_boundaries <- cumsum(as.numeric(shared_sizes))
-cluster_midpoints <- cluster_boundaries - as.numeric(shared_sizes) / 2
-boundary_lines <- utils::head(cluster_boundaries, -1L) + 0.5
-cluster_axis_labels <- paste("Cluster", names(shared_sizes))
+pam50 <- factor(
+  clinical_demo$BRCA_Subtype_PAM50,
+  levels = c("Basal", "Her2", "LumA", "LumB", "Normal"),
+  labels = c(
+    "Basal-like", "HER2-enriched", "Luminal A", "Luminal B", "Normal-like"
+  )
+)
+tumor_eval <- clinical_demo$sample_type == "Primary Tumor" & !is.na(pam50)
 
-p_similarity <- ggplot2::ggplot(
-  heatmap_df,
-  ggplot2::aes(column, row, fill = similarity)
+shared_cluster_raw <- get_clusters(fit)
+shared_cluster <- factor(
+  shared_cluster_raw,
+  levels = sort(unique(shared_cluster_raw)),
+  labels = paste0("C", seq_along(sort(unique(shared_cluster_raw))))
+)
+names(shared_cluster) <- demo_ids
+
+S_pam50 <- S_shared[tumor_eval, tumor_eval, drop = FALSE]
+pam50_eval <- droplevels(pam50[tumor_eval])
+cluster_eval <- droplevels(shared_cluster[tumor_eval])
+
+pam50_counts <- as.data.frame(
+  table(Cluster = cluster_eval, PAM50 = pam50_eval),
+  stringsAsFactors = FALSE
+)
+names(pam50_counts)[3L] <- "samples"
+pam50_counts$fraction <- ave(
+  pam50_counts$samples,
+  pam50_counts$Cluster,
+  FUN = function(x) x / sum(x)
+)
+pam50_counts$label <- ifelse(
+  pam50_counts$samples > 0L,
+  sprintf("%d\n%.0f%%", pam50_counts$samples, 100 * pam50_counts$fraction),
+  ""
+)
+
+pam50_k3 <- cluster_metrics(cluster_eval, pam50_eval)
+cluster_k5 <- factor(spectral_cl(S_shared, k_tune = 5L)$cl)
+pam50_k5 <- cluster_metrics(cluster_k5[tumor_eval], pam50_eval)
+pam50_metrics <- rbind(
+  `Unsupervised k = 3` = pam50_k3,
+  `Fixed k = 5 sensitivity` = pam50_k5
+)
+pam50_metrics$resolution <- rownames(pam50_metrics)
+rownames(pam50_metrics) <- NULL
+pam50_metrics <- pam50_metrics[
+  , c("resolution", "n", "ari", "jaccard", "nmi", "purity")
+]
+```
+
+All `r sum(tumor_eval)` primary tumors in the demonstration subset had a PAM50
+call. The remaining `r sum(clinical_demo$sample_type == "Solid Tissue Normal")`
+adjacent-normal samples had no tumor-subtype label and are excluded from this
+comparison. The same native t-SNE coordinates are used in panels a and b;
+only the coloring changes. Panel c shows the exact within-cluster composition.
+
+```{r pam50-comparison, fig.width=9.2, fig.height=3.8, dpi=180, fig.cap="Relationship between the multiRF shared partition and PAM50 annotations in the demonstration subset. (a, b) The same native t-SNE embedding of the learned shared similarity for 94 primary tumors, colored by multiRF cluster (a) or PAM50 annotation (b). t-SNE is used only for visualization. (c) Within-cluster PAM50 composition; labels show sample count and row percentage."}
+cluster_palette <- c(
+  "C1" = "#484878", "C2" = "#7884B4", "C3" = "#B4C0E4"
+)
+pam50_palette <- c(
+  "Basal-like" = "#D24B40",
+  "HER2-enriched" = "#CC79A7",
+  "Luminal A" = "#3182BD",
+  "Luminal B" = "#56B4E9",
+  "Normal-like" = "#33B5A5"
+)
+
+p_cluster_tsne <- plot_tsne(
+  mod = list(dat = S_pam50),
+  group = cluster_eval,
+  seed = 529,
+  max_iter = 250,
+  learning_rate = 50,
+  label_group = TRUE,
+  size = 1.7,
+  shape = 21,
+  base_size = 8.5,
+  main = "multiRF shared clusters"
 ) +
-  ggplot2::geom_raster() +
-  ggplot2::geom_vline(
-    xintercept = boundary_lines,
-    colour = "white", linewidth = 0.35
-  ) +
-  ggplot2::geom_hline(
-    yintercept = boundary_lines,
-    colour = "white", linewidth = 0.35
+  ggplot2::scale_fill_manual(values = cluster_palette, drop = FALSE)
+
+p_pam50_tsne <- plot_tsne(
+  mod = list(dat = S_pam50),
+  group = pam50_eval,
+  seed = 529,
+  max_iter = 250,
+  learning_rate = 50,
+  label_group = FALSE,
+  position = "bottom",
+  size = 1.7,
+  shape = 21,
+  base_size = 8.5,
+  main = "PAM50 annotation"
+) +
+  ggplot2::scale_fill_manual(values = pam50_palette, drop = FALSE) +
+  ggplot2::guides(fill = ggplot2::guide_legend(nrow = 3, byrow = TRUE)) +
+  ggplot2::theme(legend.key.height = grid::unit(0.32, "lines"))
+
+p_composition <- ggplot2::ggplot(
+  pam50_counts,
+  ggplot2::aes(PAM50, Cluster, fill = fraction)
+) +
+  ggplot2::geom_tile(colour = "white", linewidth = 0.5) +
+  ggplot2::geom_text(
+    ggplot2::aes(label = label, colour = fraction > 0.45),
+    size = 2.5, lineheight = 0.9, show.legend = FALSE
   ) +
   ggplot2::scale_fill_gradientn(
-    colours = c("#F7FBFF", "#B9D8EA", "#42949E", "#0F4D92"),
-    name = "Similarity"
+    colours = c("#F7FBFF", "#B4C0E4", "#484878"),
+    limits = c(0, 1),
+    name = "Within-cluster\nfraction"
   ) +
-  ggplot2::scale_x_continuous(
-    breaks = cluster_midpoints,
-    labels = cluster_axis_labels,
-    expand = c(0, 0)
-  ) +
-  ggplot2::scale_y_reverse(
-    breaks = cluster_midpoints,
-    labels = cluster_axis_labels,
-    expand = c(0, 0)
-  ) +
+  ggplot2::scale_colour_manual(values = c("FALSE" = "#272727", "TRUE" = "white")) +
   ggplot2::coord_equal() +
   ggplot2::labs(
-    title = "Shared similarity ordered by cluster",
-    x = NULL, y = NULL
+    title = "PAM50 composition",
+    x = NULL, y = "multiRF cluster"
   ) +
   ggplot2::theme_classic(base_size = 8.5, base_family = "sans") +
   ggplot2::theme(
     axis.line = ggplot2::element_blank(),
     axis.ticks = ggplot2::element_blank(),
-    axis.text.x = ggplot2::element_text(angle = 25, hjust = 1),
+    axis.text.x = ggplot2::element_text(angle = 35, hjust = 1),
     plot.title = ggplot2::element_text(face = "bold", size = 9),
-    legend.position = "right",
     legend.title = ggplot2::element_text(size = 8),
     legend.text = ggplot2::element_text(size = 7.5)
   )
 
-cluster_size_df <- do.call(rbind, lapply(names(component_results), function(component) {
-  counts <- table(factor(component_results[[component]]$cluster))
-  data.frame(
-    component = component,
-    cluster = factor(names(counts), levels = names(cluster_palette)),
-    samples = as.integer(counts),
-    row.names = NULL
-  )
-}))
-cluster_size_df$entry <- paste0(
-  cluster_size_df$component,
-  "  ·  C", cluster_size_df$cluster
-)
-cluster_size_df$entry <- factor(
-  cluster_size_df$entry,
-  levels = rev(cluster_size_df$entry)
-)
-
-p_cluster_size <- ggplot2::ggplot(
-  cluster_size_df,
-  ggplot2::aes(samples, entry, colour = cluster)
-) +
-  ggplot2::geom_segment(
-    ggplot2::aes(x = 0, xend = samples, yend = entry),
-    colour = "#D8D8D8", linewidth = 0.6
-  ) +
-  ggplot2::geom_point(size = 2.8) +
-  ggplot2::geom_text(
-    ggplot2::aes(label = samples),
-    hjust = -0.7, colour = "#272727", size = 2.8
-  ) +
-  ggplot2::scale_colour_manual(values = cluster_palette, drop = FALSE) +
-  ggplot2::coord_cartesian(
-    xlim = c(0, max(cluster_size_df$samples) * 1.18),
-    clip = "off"
-  ) +
-  ggplot2::labs(title = "Cluster sizes", x = "Samples", y = NULL) +
-  ggplot2::theme_classic(base_size = 8.5, base_family = "sans") +
-  ggplot2::theme(
-    axis.line.y = ggplot2::element_blank(),
-    axis.ticks.y = ggplot2::element_blank(),
-    plot.title = ggplot2::element_text(face = "bold", size = 9),
-    legend.position = "none",
-    plot.margin = ggplot2::margin(5.5, 12, 5.5, 5.5)
-  )
-
 ggpubr::ggarrange(
-  p_similarity,
-  p_cluster_size,
-  ncol = 2,
-  widths = c(1.35, 1),
-  labels = c("a", "b"),
+  p_cluster_tsne,
+  p_pam50_tsne,
+  p_composition,
+  ncol = 3,
+  widths = c(1, 1.15, 1.2),
+  labels = c("a", "b", "c"),
   font.label = list(size = 10, face = "bold")
 )
 ```
 
-For exploratory visualization, `plot_tsne()` can embed the learned shared
-similarity directly with the native t-SNE engine. This view uses the returned
-cluster labels only for color and annotation; it is not an additional
-clustering step and should not replace the spectral coordinates above as the
-primary clustering diagnostic.
+The three-cluster partition captures a coarse organization of PAM50-related
+biology rather than a one-to-one recovery of five subtypes: C1 is almost
+entirely Basal-like, whereas C2 and C3 divide the luminal-rich samples. The
+agreement metrics are reported below. Fixing five clusters on the same learned
+similarity is included only as a sensitivity analysis and does not improve
+agreement.
 
-```{r shared-tsne, fig.width=5.2, fig.height=4.6, dpi=160, fig.cap="Native t-SNE view of the learned shared similarity for the demonstration subset. Colors and direct labels show the clusters returned before visualization."}
-plot_tsne(
-  fit,
-  group = factor(get_clusters(fit)),
-  source = "specific_shared",
-  seed = 529,
-  max_iter = 250,
-  learning_rate = 50,
-  label_group = TRUE,
-  main = "Shared-similarity t-SNE"
-)
+```{r pam50-metrics}
+knitr::kable(pam50_metrics, digits = 3)
 ```
 
 The similarity workflow is the default. To compare representations on a full
@@ -584,20 +540,10 @@ fit_enhanced <- mrf3(
 )
 ```
 
-If `k = NULL`, cluster number is tuned in the downstream clustering stage.
-For a fixed biological hypothesis, supply `k` explicitly as in the examples.
-The tuning diagnostic evaluates the requested candidate values and marks the
-selected value. It draws on the active graphics device and restores the prior
-base-graphics settings afterward.
-
-```{r tune-k-diagnostic, fig.width=7.6, fig.height=3.3, dpi=160}
-invisible(tune_k_clusters(
-  S_shared,
-  method = "Spectral",
-  k_tune = 2:6,
-  plot_k = TRUE
-))
-```
+If `k = NULL`, cluster number is tuned in the downstream clustering stage, as
+in the evaluated fit. For a fixed biological hypothesis, supply `k`
+explicitly. `tune_k_clusters()` draws its diagnostic on the active graphics
+device and restores the prior base-graphics settings afterward.
 
 The ggplot-based helpers can be composed or exported at final figure size. For
 example, `ggplot2::ggsave("shared-tsne.pdf", width = 85, height = 75,
