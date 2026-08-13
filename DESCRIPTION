@@ -12,48 +12,47 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Imports:
-    circlize,
     cluster,
     doParallel,
     dplyr,
     foreach,
     ggrepel,
     ggplot2,
-    ggpubr,
-    ggsci,
     graphics,
     grDevices,
+    grid,
     igraph,
     magrittr,
     Matrix,
     matrixStats,
-    maxstat,
     plyr,
     purrr,
-    RColorBrewer,
     Rcpp (>= 1.0.0),
-    Rtsne,
     stats,
     stringr,
-    survival,
-    survminer,
     tibble,
     tidyr,
     truncnorm,
-    umap,
     utils
 Depends:
     R (>= 4.3)
 LazyData: true
 LinkingTo: Rcpp
 Suggests: 
+    circlize,
+    ggpubr,
     InterSIM,
     janitor,
     knitr,
     mclust,
+    maxstat,
     pkgload,
     randomForestSRC,
+    Rtsne,
     rmarkdown,
+    survival,
+    survminer,
+    umap,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr, rmarkdown
 Config/testthat/edition: 3

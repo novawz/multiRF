@@ -11,7 +11,6 @@
 #' @importFrom grDevices colorRampPalette
 #' @importFrom stats as.formula ave cor density dgamma dist dnorm median model.matrix na.omit pnorm prcomp quantile reorder rnorm sd setNames var
 #' @importFrom utils combn tail
-#' @import circlize
 #' @import cluster
 #' @import tibble
 #' @import tidyr

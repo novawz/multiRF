@@ -6,7 +6,7 @@
 \alias{tune_k_clusters.mrf3}
 \alias{spectral_cl}
 \alias{pam_cl}
-\title{k clusters tuning function}
+\title{Tune the number of clusters}
 \usage{
 tune_k_clusters(x, ...)
 
@@ -47,9 +47,11 @@ pam_cl(
 
 \item{...}{Additional arguments passed to lower-level clustering functions.}
 
-\item{return_cluster}{A logical parameter that determine whether the clustering results to be returned}
+\item{return_cluster}{Logical; return the complete tuning result instead of
+only the selected number of clusters.}
 
-\item{plot_k}{A logical parameter that determine whether the plot of tuning should be showed}
+\item{plot_k}{Logical; draw the tuning criterion over the evaluated values
+of \code{k}.}
 
 \item{method}{Clustering backend: \code{"PAM"} or \code{"Spectral"}.}
 
@@ -57,7 +59,8 @@ pam_cl(
 
 \item{gap_w}{Weighting scheme for spectral eigengap (\code{"uniform"} or \code{"log"}).}
 
-\item{prox}{Logical; whether \code{x} is a proximity matrix (converted to dissimilarity for PAM).}
+\item{prox}{Logical; whether \code{x} is a proximity matrix (converted to a
+dissimilarity matrix for PAM).}
 
 \item{k_tune}{Candidate cluster counts to evaluate.}
 
@@ -71,8 +74,9 @@ pam_cl(
   }
 }
 \value{
-optimal number of k
+The selected number of clusters, or the complete clustering result
+when \code{return_cluster = TRUE}.
 }
 \description{
-k clusters tuning function
+Tune the number of clusters
 }

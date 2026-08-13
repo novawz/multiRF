@@ -6,7 +6,8 @@ if (getRversion() >= "2.15.1") {
       "Ranks", "to", "treeID", "tSNE1", "tSNE2", "umap1", "umap2",
       "Var_names", "Weights", "y", "data", "shared_frac", "variable",
       "abs_weight", "block", "branch", "omics", "cluster", "x",
-      "k", "obj", "sil"
+      "k", "obj", "sil", "dim1", "dim2", "group", "variable_panel",
+      "weight"
     )
   )
 }

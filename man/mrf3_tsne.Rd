@@ -11,7 +11,8 @@ mrf3_tsne(
   learning_rate = 200,
   verbose = FALSE,
   tol = 1e-05,
-  patience = 10
+  patience = 10,
+  seed = NULL
 )
 }
 \arguments{
@@ -28,6 +29,8 @@ mrf3_tsne(
 \item{tol}{Convergence tolerance.}
 
 \item{patience}{Early-stopping patience measured in iterations.}
+
+\item{seed}{Optional integer seed used only to initialize the embedding.}
 }
 \value{
 Two dimensional tSNE embedding

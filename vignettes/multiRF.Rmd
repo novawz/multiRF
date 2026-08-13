@@ -280,7 +280,7 @@ lapply(get_selected_vars(fit), utils::head)
 
 IMD values can be inspected independently of the selected set:
 
-```{r plot-imd, fig.width=9, fig.height=3.8}
+```{r plot-imd, fig.width=9, fig.height=6.2}
 plot_weights(fit, weight_source = "imd", top = 8)
 ```
 
@@ -333,12 +333,13 @@ shared and specific branches:
 
 The fitted example already contains one shared partition and one
 residual-specific partition for each omics block. The first figure shows the
-first two coordinates of the spectral embedding actually used by the
-clustering stage; it does not introduce a second dimensionality-reduction
-method. Cluster numbers and colors are local to each panel and should not be
+first two row-normalized spectral coordinates returned for visualization. The
+cluster labels come from PAM on the corresponding unnormalized spectral
+coordinates, so this plot is descriptive rather than a second clustering
+step. Cluster numbers and colors are local to each panel and should not be
 interpreted as matched biological classes across signal components.
 
-```{r clustering-embeddings, fig.width=8.2, fig.height=5.8, dpi=160, fig.cap="Shared and residual-specific clustering in the fitted TCGA BRCA demonstration subset (n = 100 samples). Points are samples and colors denote the partition returned for each signal component. Labels mark cluster centroids in the first two spectral coordinates."}
+```{r clustering-embeddings, fig.width=8.2, fig.height=5.8, dpi=160, fig.cap="Shared and residual-specific clustering in the fitted TCGA BRCA demonstration subset (n = 100 samples). Points are samples in the first two row-normalized spectral coordinates; colors denote partitions fitted on the corresponding unnormalized coordinates. Labels mark visual centroids."}
 component_results <- list(
   "Shared signal" = list(
     embed = fit$shared$clustering$embed,
@@ -379,7 +380,7 @@ cluster_centroids <- stats::aggregate(
   data = embedding_df,
   FUN = mean
 )
-cluster_palette <- c("1" = "#0F4D92", "2" = "#42949E", "3" = "#E28E2C")
+cluster_palette <- c("1" = "#3182BD", "2" = "#33B5A5", "3" = "#E28E2C")
 
 p_embedding <- ggplot2::ggplot(
   embedding_df,
@@ -403,13 +404,13 @@ p_embedding <- ggplot2::ggplot(
     y = "Spectral coordinate 2",
     fill = "Cluster"
   ) +
-  ggplot2::theme_classic(base_size = 9, base_family = "Arial") +
+  ggplot2::theme_classic(base_size = 9, base_family = "sans") +
   ggplot2::theme(
     axis.line = ggplot2::element_line(linewidth = 0.35, colour = "#272727"),
     axis.ticks = ggplot2::element_line(linewidth = 0.35, colour = "#272727"),
     strip.background = ggplot2::element_blank(),
     strip.text = ggplot2::element_text(face = "bold", size = 9),
-    legend.position = "top",
+    legend.position = "none",
     legend.title = ggplot2::element_text(size = 8.5),
     legend.text = ggplot2::element_text(size = 8),
     panel.spacing = grid::unit(1.0, "lines")
@@ -477,7 +478,7 @@ p_similarity <- ggplot2::ggplot(
     title = "Shared similarity ordered by cluster",
     x = NULL, y = NULL
   ) +
-  ggplot2::theme_classic(base_size = 8.5, base_family = "Arial") +
+  ggplot2::theme_classic(base_size = 8.5, base_family = "sans") +
   ggplot2::theme(
     axis.line = ggplot2::element_blank(),
     axis.ticks = ggplot2::element_blank(),
@@ -525,7 +526,7 @@ p_cluster_size <- ggplot2::ggplot(
     clip = "off"
   ) +
   ggplot2::labs(title = "Cluster sizes", x = "Samples", y = NULL) +
-  ggplot2::theme_classic(base_size = 8.5, base_family = "Arial") +
+  ggplot2::theme_classic(base_size = 8.5, base_family = "sans") +
   ggplot2::theme(
     axis.line.y = ggplot2::element_blank(),
     axis.ticks.y = ggplot2::element_blank(),
@@ -541,6 +542,25 @@ ggpubr::ggarrange(
   widths = c(1.35, 1),
   labels = c("a", "b"),
   font.label = list(size = 10, face = "bold")
+)
+```
+
+For exploratory visualization, `plot_tsne()` can embed the learned shared
+similarity directly with the native t-SNE engine. This view uses the returned
+cluster labels only for color and annotation; it is not an additional
+clustering step and should not replace the spectral coordinates above as the
+primary clustering diagnostic.
+
+```{r shared-tsne, fig.width=5.2, fig.height=4.6, dpi=160, fig.cap="Native t-SNE view of the learned shared similarity for the demonstration subset. Colors and direct labels show the clusters returned before visualization."}
+plot_tsne(
+  fit,
+  group = factor(get_clusters(fit)),
+  source = "specific_shared",
+  seed = 529,
+  max_iter = 250,
+  learning_rate = 50,
+  label_group = TRUE,
+  main = "Shared-similarity t-SNE"
 )
 ```
 
@@ -566,6 +586,23 @@ fit_enhanced <- mrf3(
 
 If `k = NULL`, cluster number is tuned in the downstream clustering stage.
 For a fixed biological hypothesis, supply `k` explicitly as in the examples.
+The tuning diagnostic evaluates the requested candidate values and marks the
+selected value. It draws on the active graphics device and restores the prior
+base-graphics settings afterward.
+
+```{r tune-k-diagnostic, fig.width=7.6, fig.height=3.3, dpi=160}
+invisible(tune_k_clusters(
+  S_shared,
+  method = "Spectral",
+  k_tune = 2:6,
+  plot_k = TRUE
+))
+```
+
+The ggplot-based helpers can be composed or exported at final figure size. For
+example, `ggplot2::ggsave("shared-tsne.pdf", width = 85, height = 75,
+units = "mm")` writes a vector figure; use TIFF or PNG at 600 dpi when a raster
+file is required. The default `sans` family is portable across R devices.
 
 ## Robust and cluster-specific analyses
 

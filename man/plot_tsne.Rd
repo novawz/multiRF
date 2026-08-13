@@ -18,11 +18,15 @@ plot_tsne(
   perplexity = 30,
   pca = FALSE,
   ncomp = 70,
-  main = "tSNE",
-  size = 0.5,
+  main = "t-SNE",
+  size = 1.4,
+  shape = 21,
   source = "auto",
   omics = NULL,
   cluster = NULL,
+  seed = NULL,
+  base_size = 8,
+  base_family = "sans",
   ...
 )
 
@@ -33,8 +37,8 @@ plot_network(
   cutoff = NULL,
   layout = igraph::layout_with_fr,
   vertex.size = 5,
-  label.dist = 1,
-  edge.width = 0.3,
+  label.dist = NULL,
+  edge.width = NULL,
   vertex.frame.color = "white",
   vertex.label.color = "black",
   vertex.label.cex = 0.5,
@@ -45,6 +49,7 @@ plot_network(
   source = "auto",
   omics = NULL,
   cluster = NULL,
+  seed = NULL,
   ...
 )
 
@@ -54,7 +59,10 @@ plot_weights(
   top = 20,
   labels = NULL,
   weight_source = "auto",
-  cluster = NULL
+  cluster = NULL,
+  ncol = NULL,
+  base_size = 8,
+  base_family = "sans"
 )
 
 plot_circos(
@@ -77,12 +85,16 @@ plot_umap(
   pca = TRUE,
   ncomp = 70,
   position = "right",
-  pch = 20,
+  pch = 21,
+  size = 1.4,
   config = umap::umap.defaults,
-  method = "umap-learn",
+  method = "naive",
   source = "auto",
   omics = NULL,
   cluster = NULL,
+  seed = NULL,
+  base_size = 8,
+  base_family = "sans",
   ...
 )
 }
@@ -96,7 +108,7 @@ Can also be an \code{mrf3_fit} object.}
 
 \item{label_group}{Logical; whether to draw group labels on embeddings.}
 
-\item{position}{Legend position. The default is "bottomright"}
+\item{position}{Legend position.}
 
 \item{perplexity}{tSNE perplexity used by \code{Rtsne::Rtsne()}.}
 
@@ -108,13 +120,17 @@ Can also be an \code{mrf3_fit} object.}
 
 \item{size}{Point size in scatter plots.}
 
+\item{shape}{Point shape in embedding plots.}
+
 \item{source}{Source used when \code{dat}/\code{mod}/\code{weights} is an \code{mrf3_fit}.
-Supported values for matrix-based plots:
+Supported values for \code{mrf3_fit} inputs:
 \code{"auto"}, \code{"specific_shared"}, \code{"specific_specific"}, \code{"clustering"},
 \code{"robust_clustering"}, \code{"reconstruction_weight_all"},
 \code{"reconstruction_weight_block"}, \code{"reconstruction_fused_block"}.
-When input is a \code{pairwise_imd_analysis} object, supported values are
-\code{"auto"}, \code{"adj_var"}, and \code{"adj_dat"}.
+\code{plot_network()} and \code{plot_circos()} additionally accept a
+\code{pairwise_imd_analysis} object with \code{source = "adj_var"} or \code{"adj_dat"}.
+The native t-SNE model path requires a square sample-similarity source;
+use the \code{dat} argument for a raw rectangular feature matrix.
 For \code{plot_weights()}, supported values are:
 \code{"auto"}, \code{"imd"}, \code{"cluster_imd"}, \code{"mrf"}.}
 
@@ -122,11 +138,20 @@ For \code{plot_weights()}, supported values are:
 
 \item{cluster}{Optional cluster label when \code{source} uses cluster-level IMD output.}
 
+\item{seed}{Optional non-negative integer seed for stochastic embedding or
+network-layout initialization. The caller's RNG state is restored.}
+
+\item{base_size}{Base font size used by the multiRF plotting theme.}
+
+\item{base_family}{Font family used by the multiRF plotting theme.}
+
 \item{...}{Additional arguments passed to the underlying plotting routine.}
 
 \item{label}{A logical parameter that determine whether to show labels or not.}
 
-\item{cutoff}{Cutoff of edgeweights. The default is mean value of dat.}
+\item{cutoff}{Edge-weight cutoff. For a regular sample matrix the default
+is the mean positive upper-triangle weight; for pairwise IMD it is the 75th
+percentile of positive upper-triangle weights.}
 
 \item{layout}{Network layout function for graph plotting.}
 
@@ -158,6 +183,10 @@ For \code{plot_weights()}, supported values are:
 
 \item{weight_source}{Alias of \code{source} used by \code{plot_weights()}.}
 
+\item{ncol}{Number of facet columns in \code{plot_weights()}. By default, plots
+with more than two blocks use two columns to preserve readable feature
+labels.}
+
 \item{mat}{Adjacency-like matrix for \code{plot_circos()}.}
 
 \item{names.list}{Named list of variable groups for \code{plot_circos()}.}
@@ -173,7 +202,10 @@ For \code{plot_weights()}, supported values are:
 \item{method}{UMAP backend method passed to \code{umap::umap()}.}
 }
 \value{
-A plot object
+\code{plot_tsne()}, \code{plot_umap()}, and \code{plot_weights()} return a
+\code{ggplot} object. \code{plot_network()} invisibly returns an \code{igraph} object,
+\code{plot_circos()} invisibly returns the chord-diagram result, and the
+deprecated \code{plot_embed()} invisibly returns \code{NULL} after drawing.
 }
 \description{
 Multiple plot functions

@@ -4,24 +4,42 @@
 \alias{plot_km}
 \title{Kaplan Meier plot}
 \usage{
-plot_km(test_var, time_var, event_var, pheno_mat, cut = "median", ...)
+plot_km(
+  test_var,
+  time_var,
+  event_var,
+  pheno_mat,
+  cut = c("median", "mean", "maxstat"),
+  na.rm = TRUE,
+  base_size = 8,
+  base_family = "sans",
+  ...
+)
 }
 \arguments{
-\item{test_var}{Vector for test. Can be numeric or character vector. If the vector is numeric, than a cut will be used to divide the vector into two groups.}
+\item{test_var}{Sample-level grouping variable or continuous score. Numeric
+vectors with more than five unique values are treated as continuous;
+low-cardinality numeric vectors are treated as group labels.}
 
-\item{time_var}{Variable name that indicates the survival time}
+\item{time_var}{Column name containing survival or follow-up time.}
 
-\item{event_var}{Variable name that indicates the survival event}
+\item{event_var}{Column name containing a binary 0/1 event indicator.}
 
-\item{pheno_mat}{A data frame that contains the survival time and event variable}
+\item{pheno_mat}{Data frame containing the time and event columns.}
 
-\item{cut}{If test_var is numeric, the cut will be applied to divide the vector into two groups. The default is "median" cut. Can select from "median", "mean" and "maxstat".
-If select "maxstat", the cut will determine by the Maximally Selected Rank statistics.}
+\item{cut}{For a continuous \code{test_var}, split at the \code{"median"}, \code{"mean"},
+or a maximally selected rank-statistic (\code{"maxstat"}) cutoff.}
+
+\item{na.rm}{Logical; whether to remove rows with missing values.}
+
+\item{base_size}{Base font size.}
+
+\item{base_family}{Font family.}
 
 \item{...}{Additional arguments passed to \code{survminer::ggsurvplot()}.}
 }
 \value{
-Return a ggsurvplot.
+A \code{ggsurvplot} object.
 }
 \description{
 Kaplan Meier plot

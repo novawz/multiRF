@@ -72,7 +72,8 @@ is treated as no truncation. Shared and omics-specific similarities use
 - `mrf3_vs()`: variable selection from IMD weights
 - `mrf3_stability()`: resampling-based cluster stability assessment
 - `pairwise_imd()`: variable-level co-occurrence network analysis
-- `plot_tsne()`, `plot_umap()`, `plot_network()`, `plot_km()`: downstream visualization helpers
+- `plot_weights()`, `plot_tsne()`, `plot_umap()`, `plot_network()`: consistent, publication-oriented result visualizations
+- `plot_km()`, `plot_circos()`: optional clinical and circular-network visualizations
 
 ## Clustering modes
 
