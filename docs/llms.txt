@@ -14,16 +14,15 @@ unsupervised forests, forest weights, proximity matrices, and enhanced
 proximity with sibling-leaf corrections. In practice, this gives a
 simpler installation path and a faster MRF than the
 `randomForestSRC`-based MRF while keeping the same overall modeling
-logic.
+logic. Parts of the native engine, including its sampling and
+random-number-generation routines, are adapted from `randomForestSRC`
+under GPL (\>= 3), which is also available as an optional fallback.
 
 Project website: <https://novawz.github.io/multiRF/>
 
 ## Installation
 
-``` r
-
-remotes::install_github("novawz/multiRF")
-```
+`remotes``::``install_github``(``"novawz/multiRF"``)`
 
 The package compiles from source and requires a C++17 toolchain:
 
@@ -36,27 +35,7 @@ is not required for the default workflow.
 
 ## Quick start
 
-``` r
-
-library(multiRF)
-data("tcga_brca_data")
-
-names(tcga_brca)
-#> [1] "gene"  "methy" "mirna"
-
-fit <- mrf3(
-  tcga_brca,
-  k = 4,
-  ntree = 100,
-  filter_mode = "none",
-  run_imd = TRUE,
-  seed = 529
-)
-
-summary(fit)
-table(get_clusters(fit))
-get_top_vars(fit, n = 10)
-```
+[`library`](https://rdrr.io/r/base/library.html)`(``multiRF``)`` `[`data`](https://rdrr.io/r/utils/data.html)`(``"tcga_brca_data"``)`` `` `[`names`](https://rdrr.io/r/base/names.html)`(``tcga_brca``)`` ``#> [1] "gene" "methy" "mirna"`` `` ``fit`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` filter_mode ``=`` ``"none"``,`` `` run_imd ``=`` ``TRUE``,`` `` seed ``=`` ``529`` ``)`` `` `[`summary`](https://rdrr.io/r/base/summary.html)`(``fit``)`` `[`table`](https://rdrr.io/r/base/table.html)`(`[`get_clusters`](reference/get_clusters.md)`(``fit``)``)`` `[`get_top_vars`](reference/get_top_vars.md)`(``fit``, n ``=`` ``10``)`
 
 [`mrf3()`](reference/mrf3.md) is the main user-facing entry point. It
 wraps the staged workflow in [`mrf3_fit()`](reference/mrf3_fit.md) and
@@ -67,10 +46,10 @@ working with an already curated feature set, as in the example above.
 The default similarity workflow retains all directed forests. It removes
 their diagonal weights, row-normalizes after model top-v truncation,
 normalizes modularity scores within each response block, and uniformly
-averages the per-response matrices (Eqs. 6–8). A top-v value at least
-80% of the sample size is treated as no truncation. Shared and
-omics-specific similarities use `S = W W^T` with a zero diagonal and
-spectral clustering by default.
+averages the per-response matrices. A top-v value at least 80% of the
+sample size is treated as no truncation. Shared and omics-specific
+similarities use `S = W W^T` with a zero diagonal and spectral
+clustering by default.
 
 ## What it provides
 
@@ -96,60 +75,23 @@ spectral clustering by default.
 
 ## Clustering modes
 
-``` r
-
-fit_sim <- mrf3(
-  tcga_brca,
-  k = 4,
-  ntree = 100,
-  main_clustering = "similarity", # default
-  seed = 529
-)
-
-fit_prox <- mrf3(
-  tcga_brca,
-  k = 4,
-  ntree = 100,
-  main_clustering = "proximity",
-  seed = 529
-)
-
-fit_enh <- mrf3(
-  tcga_brca,
-  k = 4,
-  ntree = 100,
-  main_clustering = "enhanced_proximity",
-  seed = 529
-)
-```
+`fit_sim`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` main_clustering ``=`` ``"similarity"``, ``# default`` `` seed ``=`` ``529`` ``)`` `` ``fit_prox`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` main_clustering ``=`` ``"proximity"``,`` `` seed ``=`` ``529`` ``)`` `` ``fit_enh`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` main_clustering ``=`` ``"enhanced_proximity"``,`` `` seed ``=`` ``529`` ``)`
 
 ## Full workflow example
 
-``` r
+`fit_full`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``200``,`` `` run_imd ``=`` ``TRUE``,`` `` run_variable_selection ``=`` ``TRUE``,`` `` run_robust_clustering ``=`` ``TRUE``,`` `` variable_selection_args ``=`` `[`list`](https://rdrr.io/r/base/list.html)`(``method ``=`` ``"mixture"``)``,`` `` model_top_v ``=`` ``50``,`` `` fused_top_v ``=`` ``30``,`` `` seed ``=`` ``529`` ``)`
 
-fit_full <- mrf3(
-  tcga_brca,
-  k = 4,
-  ntree = 200,
-  run_imd = TRUE,
-  run_variable_selection = TRUE,
-  run_robust_clustering = TRUE,
-  variable_selection_args = list(method = "mixture"),
-  model_top_v = 50,
-  fused_top_v = 30,
-  seed = 529
-)
-```
+Variable selection uses raw forest IMD values on `[0, 1]`:
 
-Variable selection uses raw forest IMD on `[0, 1]`; `filter` tunes
-`tau * sd(IMD)` using true OOB normalized MSE across predictor and
-response coordinates; `mixture` includes a point mass at zero; and
-`transformation` standardizes each feature’s forest IMD against the mean
-forest IMD of all features (the Eq. 16 t-score IMD, using the feature’s
-across-tree standard error) and keeps features in the upper tail of a
-Student-t reference with `df = ntree - 1` at the chosen `level`. The
-newer connection-selection strategy is independent of these
-feature-selection rules.
+- `filter` tunes an IMD cutoff of `tau * sd(IMD)` using OOB normalized
+  MSE and retains features above the selected cutoff.
+- `mixture` models the IMD distribution with a point mass at zero and
+  retains features assigned to the nonzero signal component.
+- `transformation` standardizes each feature’s IMD relative to the
+  overall forest IMD distribution and retains features in the upper tail
+  at the chosen `level`.
+
+Connection selection is independent of these feature-selection rules.
 
 ## Bundled data
 
@@ -170,6 +112,25 @@ If you use `multiRF` in your research, please cite:
 > Zhang, W. et al. (2025). An integrative multi-omics random forest
 > framework for robust biomarker discovery. *GigaScience*, 14, giaf148.
 > [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
+
+The native forest engine and optional fallback build on
+`randomForestSRC`; please also cite:
+
+> Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast
+> Unified Random Forests for Survival, Regression, and Classification
+> (RF-SRC)*. R package version 3.6.2.
+> [doi:10.32614/CRAN.package.randomForestSRC](https://doi.org/10.32614/CRAN.package.randomForestSRC)
+
+> Ishwaran, H., and Kogalur, U. B. (2007). Random survival forests for
+> R. *R News*, 7(2), 25–31.
+> [Article](https://journal.r-project.org/articles/RN-2007-015/)
+
+## License
+
+`multiRF` is distributed under GPL version 3 or later. Portions adapted
+from `randomForestSRC` retain their original copyright; see
+[`inst/COPYRIGHTS`](https://github.com/novawz/multiRF/blob/main/inst/COPYRIGHTS)
+for details.
 
 # Package index
 

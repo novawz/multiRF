@@ -1,4 +1,16 @@
 ## Utility functions for mrf3.R
+##
+## Copyright (C) 2026 Wei Zhang
+##
+## Portions of get_tree_net() that decode RF-SRC nativeArray tree records and
+## map split-variable identifiers were adapted from randomForestSRC 3.5.1's
+## R/get.tree.rfsrc.R, written by Hemant Ishwaran and Udaya B. Kogalur.
+## Copyright in those portions remains with the original copyright holders.
+## Adaptations and subsequent modifications for multiRF are Copyright (C) 2026
+## Wei Zhang; notice updated 2026-08-27.
+##
+## This file is distributed under the GNU General Public License, version 3
+## or later. See inst/COPYRIGHTS for complete attribution and source details.
 
 # Pre-process nativeArray once and split by treeID
 .prep_tree_dfs <- function(mod) {

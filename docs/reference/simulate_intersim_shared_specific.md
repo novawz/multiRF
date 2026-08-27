@@ -1,9 +1,8 @@
 # Simulate Shared + Specific Multi-Omics Data via InterSIM
 
 Generate multi-omics data where shared signal is provided by
-[`InterSIM::InterSIM()`](https://rdrr.io/pkg/InterSIM/man/InterSIM.html)
-and additional omics-specific signal is injected by per-omics latent
-labels `U`.
+`InterSIM::InterSIM()` and additional omics-specific signal is injected
+by per-omics latent labels `U`.
 
 ## Usage
 
@@ -54,23 +53,17 @@ simulate_intersim_shared_specific(
 - p_DMP:
 
   Proportion of differential methylation features in InterSIM. Default
-  matches
-  [`InterSIM::InterSIM()`](https://rdrr.io/pkg/InterSIM/man/InterSIM.html)
-  (`0.2`).
+  matches `InterSIM::InterSIM()` (`0.2`).
 
 - p_DEG:
 
   Proportion of differential expression features in InterSIM. Default
-  matches
-  [`InterSIM::InterSIM()`](https://rdrr.io/pkg/InterSIM/man/InterSIM.html)
-  (`NULL`).
+  matches `InterSIM::InterSIM()` (`NULL`).
 
 - p_DEP:
 
   Proportion of differential protein features in InterSIM. Default
-  matches
-  [`InterSIM::InterSIM()`](https://rdrr.io/pkg/InterSIM/man/InterSIM.html)
-  (`NULL`).
+  matches `InterSIM::InterSIM()` (`NULL`).
 
 - p_spec_feat:
 

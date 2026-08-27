@@ -1,5 +1,23 @@
 // mv_forest.cpp — Multivariate regression random forest engine for multiRF
 //
+// Copyright (C) 2026 Wei Zhang
+//
+// Portions of this file are adapted from randomForestSRC 3.5.1 source code by
+// Hemant Ishwaran and Udaya B. Kogalur, principally src/random.c and
+// src/bootstrap.c. These portions include RfsrcRan1, lcg_next, the
+// swap-with-last sampling helpers, RF-SRC-compatible seed construction, and
+// the associated supervised-forest draw sequence. Copyright in those portions
+// remains with their original copyright holders. Adaptations and subsequent
+// modifications for multiRF are Copyright (C) 2026 Wei Zhang; notice updated
+// 2026-08-27.
+//
+// This file is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version. This file is distributed without any warranty; without
+// even the implied warranty of merchantability or fitness for a particular
+// purpose. See <https://www.gnu.org/licenses/> for details.
+//
 // Implements a lightweight multivariate forest that outputs:
 //   - forest_wt   : n x n  (forest weight matrix)
 //   - proximity   : n x n  (terminal-node co-occurrence)

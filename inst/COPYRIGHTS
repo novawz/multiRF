@@ -1,0 +1,53 @@
+multiRF copyright and source notices
+=====================================
+
+multiRF as a whole
+------------------
+
+Copyright (C) 2026 Wei Zhang
+
+multiRF is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version.
+
+multiRF is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details.
+
+Adapted randomForestSRC portions
+--------------------------------
+
+Portions of the following files were adapted from the randomForestSRC
+package and subsequently modified for multiRF:
+
+  * src/mv_forest.cpp: RfsrcRan1, lcg_next, the swap-with-last sampling
+    helpers, RF-SRC-compatible seed construction, and the associated
+    supervised-forest draw sequence;
+  * R/mrf3-util.R: portions of get_tree_net() that decode RF-SRC
+    nativeArray tree records and map split-variable identifiers.
+
+The corresponding randomForestSRC 3.5.1 source is principally found in
+src/random.c, src/bootstrap.c, and R/get.tree.rfsrc.R. Version 3.5.1 was the
+current CRAN release when these portions were adapted in March 2026.
+
+randomForestSRC was written by:
+
+  Hemant Ishwaran
+  Udaya B. Kogalur
+
+Those adapted portions remain copyright their original copyright
+holders and are used under the GNU General Public License, version 3 or
+later. The adaptations and subsequent modifications for multiRF are
+Copyright (C) 2026 Wei Zhang. They were most recently modified for this
+notice on 2026-08-27.
+
+Project: https://www.randomforestsrc.org/
+Source:  https://github.com/kogalur/randomForestSRC
+Archive: https://cran.r-project.org/src/contrib/Archive/randomForestSRC/randomForestSRC_3.5.1.tar.gz
+License: GNU General Public License, version 3 or later
+
+The complete GNU General Public License is available at
+https://www.gnu.org/licenses/gpl-3.0.html and through the R licensing
+infrastructure referred to by the package DESCRIPTION file.

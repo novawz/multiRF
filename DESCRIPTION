@@ -3,10 +3,20 @@ Type: Package
 Title: MRF-Based Multi-Omics Integration and Clustering
 Version: 0.2.3
 Authors@R:
-    person("Wei", "Zhang", email = "wzhang0739@gmail.com", role = c("aut", "cre"))
+    c(
+      person("Wei", "Zhang", email = "wzhang0739@gmail.com",
+             role = c("aut", "cre", "cph")),
+      person("Hemant", "Ishwaran", email = "hemant.ishwaran@gmail.com",
+             role = "cph",
+             comment = "Copyright holder of adapted randomForestSRC source portions"),
+      person("Udaya B.", "Kogalur", email = "ubk@kogalur.com",
+             role = "cph",
+             comment = "Copyright holder of adapted randomForestSRC source portions")
+    )
 Description: Integrates multi-omics datasets using multivariate random forests for model fitting, variable selection, clustering, and
     visualization.
-License: MIT + file LICENSE
+License: GPL (>= 3)
+Copyright: See file inst/COPYRIGHTS.
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Imports:

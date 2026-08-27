@@ -185,9 +185,8 @@ fit_multi_rfsrc(
 
 - ...:
 
-  Additional arguments passed to
-  [`randomForestSRC::rfsrc()`](https://www.randomforestsrc.org//reference/rfsrc.html)
-  when `engine != "native"`.
+  Additional arguments passed to `randomForestSRC::rfsrc()` when
+  `engine != "native"`.
 
 - dat.list:
 
