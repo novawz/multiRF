@@ -15,7 +15,7 @@ Authors@R:
     )
 Description: Integrates multi-omics datasets using multivariate random forests for model fitting, variable selection, clustering, and
     visualization.
-License: GPL (>= 3)
+License: GPL (>= 3) + file LICENSE
 Copyright: See file inst/COPYRIGHTS.
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

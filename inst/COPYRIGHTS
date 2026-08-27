@@ -48,6 +48,6 @@ Source:  https://github.com/kogalur/randomForestSRC
 Archive: https://cran.r-project.org/src/contrib/Archive/randomForestSRC/randomForestSRC_3.5.1.tar.gz
 License: GNU General Public License, version 3 or later
 
-The complete GNU General Public License is available at
-https://www.gnu.org/licenses/gpl-3.0.html and through the R licensing
-infrastructure referred to by the package DESCRIPTION file.
+The complete GNU General Public License is included in the top-level LICENSE
+file, is available at https://www.gnu.org/licenses/gpl-3.0.html, and is also
+available through the R licensing infrastructure referred to by DESCRIPTION.
