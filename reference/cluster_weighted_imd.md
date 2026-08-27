@@ -1,6 +1,6 @@
 # Compute cluster-weighted IMD from pre-computed per-node split scores
 
-Aggregates the per-node split statistics that the native C++ engine
+Aggregates the per-node split statistics that the multiRF C++ engine
 stores on every fitted forest (`tree_info[[t]]$imd_x_score` and
 `tree_info[[t]]$imd_y_stats`) into cluster-specific variable weights,
 without refitting the forest and without re-traversing trees per sample
@@ -16,7 +16,7 @@ cluster_weighted_imd(mod, cluster, normalized = TRUE)
 
 - mod:
 
-  A single fitted forest model from the native engine (with
+  A single fitted forest model from the multiRF engine (with
   `$tree_info`, `$membership`, `$xvar`, `$yvar`). `$membership` is
   expected in the remapped form stored by
   [`fit_mv_forest()`](fit_mv_forest.md): sequential 1-based DFS leaf IDs

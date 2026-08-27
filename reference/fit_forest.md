@@ -133,13 +133,14 @@ fit_multi_rfsrc(
 - ytry:
 
   Number of response variables randomly selected per split. Default
-  `NULL` means the native engine uses `ceiling(qy/3)`. Set to a specific
-  integer to override (e.g., `ytry = ncol(Y) / 2`).
+  `NULL` means the multiRF engine uses `ceiling(qy/3)`. Set to a
+  specific integer to override (e.g., `ytry = ncol(Y) / 2`).
 
 - nsplit:
 
-  Number of candidate numeric cutpoints evaluated per variable. Native
-  and `randomForestSRC` both default to `10`; set `0` to scan all.
+  Number of candidate numeric cutpoints evaluated per variable. The
+  multiRF engine and `randomForestSRC` both default to `10`; set `0` to
+  scan all.
 
 - samptype:
 
@@ -148,17 +149,17 @@ fit_multi_rfsrc(
 
 - nthread:
 
-  Number of threads used by the native engine.
+  Number of threads used by the multiRF forest engine.
 
 - xvar.wt, yvar.wt:
 
   Optional non-negative predictor/response sampling weights used by the
-  native multivariate forest.
+  multiRF multivariate forest.
 
 - split.wt, case.wt:
 
   Optional split/case weights. These are forwarded to `randomForestSRC`;
-  the native engine fails explicitly because it does not yet implement
+  the multiRF engine fails explicitly because it does not yet implement
   them.
 
 - seed:
@@ -168,12 +169,14 @@ fit_multi_rfsrc(
 - engine:
 
   Forest backend. Default is `getOption("multiRF.engine", "native")`.
-  Native is the default and recommended engine. `randomForestSRC` is
-  used only as a non-native fallback when explicitly requested.
+  The value `"native"` selects the default and recommended multiRF
+  forest engine. `randomForestSRC` is used only as an optional fallback
+  when explicitly requested.
 
 - enhanced_prox:
 
-  Logical; whether to compute enhanced proximity in the native engine.
+  Logical; whether to compute enhanced proximity in the multiRF forest
+  engine.
 
 - sibling_gamma:
 
@@ -181,7 +184,7 @@ fit_multi_rfsrc(
 
 - leaf_embed_dim:
 
-  Embedding dimension used by the native enhanced proximity path.
+  Embedding dimension used by the multiRF enhanced proximity path.
 
 - ...:
 
@@ -222,8 +225,7 @@ A model list
 
 ## Details
 
-`fit_forest()` now defaults to the package-native engine for
-classification, multivariate regression, and unsupervised fitting.
-`randomForestSRC` is optional and is only used when
-`engine != "native"`. If `type` is omitted and `Y = NULL`, unsupervised
-fitting is selected.
+`fit_forest()` defaults to the multiRF forest engine for classification,
+multivariate regression, and unsupervised fitting. `randomForestSRC` is
+optional and is only used when `engine != "native"`. If `type` is
+omitted and `Y = NULL`, unsupervised fitting is selected.

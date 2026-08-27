@@ -117,14 +117,15 @@ components;</li>
 <li>optionally calculate inverse minimal depth (IMD), select variables,
 and refit a robust model.</li>
 </ol>
-<p>The native C++ engine is the default. It implements multivariate
-regression, unsupervised residual forests, all-sample and out-of-bag
-forest weights, ordinary and enhanced proximity, weighted
+<p>The multiRF C++ forest engine is the default. It implements
+multivariate regression, unsupervised residual forests, all-sample and
+out-of-bag forest weights, ordinary and enhanced proximity, weighted
 candidate-variable sampling, and depth-based forest IMD. Parts of the
-native engine, including its sampling and random-number-generation
-routines, are adapted from <code>randomForestSRC</code> under GPL (&gt;=
-3). RF-SRC is also available as an optional fallback rather than a
-requirement for the standard workflow.</p>
+multiRF forest engine, including its sampling and
+random-number-generation routines, are adapted from
+<code>randomForestSRC</code> under GPL (&gt;= 3). RF-SRC is also
+available as an optional fallback rather than a requirement for the
+standard workflow.</p>
 <p>This vignette uses a small deterministic subset of the bundled TCGA
 BRCA data so that every evaluated chunk runs quickly. For an analysis,
 use all eligible samples, a scientifically justified feature-filtering
@@ -145,7 +146,7 @@ have:</p>
 <p>Do not pass unordered blocks and rely on their row positions. Align
 them by sample identifier before fitting. Missing values and categorical
 predictors should be imputed or encoded explicitly before using the
-native numeric forest.</p>
+multiRF numeric forest engine.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">full_dimensions</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
 <span>  block <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">tcga_brca</span><span class="op">)</span>,</span>
@@ -436,7 +437,7 @@ directed pairwise forests.</p>
 screening is intentionally part of the analysis. Otherwise all directed
 models are retained and their connection scores enter the fusion
 weights.</p>
-<p>For the native multivariate-regression forests, important workflow
+<p>For the multiRF multivariate-regression forests, important workflow
 defaults are:</p>
 <table class="table">
 <colgroup>
@@ -667,7 +668,7 @@ positive IMD</td>
 <code>se * sd(IMD)</code> cutoff is needed.
 <code>normalized = FALSE</code> is the default because selection is
 performed on raw IMD. If <code>re_weights = TRUE</code>, the retained
-raw IMD values are used as native candidate-variable sampling weights
+raw IMD values are used as multiRF candidate-variable sampling weights
 during refitting.</p>
 <p>The evaluated example used the mixture rule:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
@@ -789,18 +790,18 @@ is one of the multiRF input blocks, this is a biological concordance
 check rather than an independent ground truth.</p>
 <p>All 94 primary tumors in the demonstration subset had a PAM50 call.
 The remaining 6 adjacent-normal samples had no tumor-subtype label and
-are excluded from this comparison. The same native t-SNE coordinates are
-used in panels a and b; only the coloring changes. Panels a and b use
+are excluded from this comparison. The same t-SNE coordinates are used
+in panels a and b; only the coloring changes. Panels a and b use
 <code>plot(..., type = "tsne")</code>, and panel c uses
 <code>plot(..., type = "composition")</code> to show the exact
 within-cluster composition. All three panels use the unified plotting
 interface; the assembly code is hidden here to keep the vignette
 concise.</p>
 <div class="figure" style="text-align: center">
-<img src="multiRF_files/figure-html/pam50-comparison-1.png" class="r-plt" alt="Relationship between the multiRF shared partition and PAM50 annotations in the demonstration subset. (a, b) The same native t-SNE embedding of the learned shared similarity for 94 primary tumors, colored by multiRF cluster (a) or PAM50 annotation (b). t-SNE is used only for visualization. (c) Within-cluster PAM50 composition; labels show sample count and row percentage." width="1296"><p class="caption">
+<img src="multiRF_files/figure-html/pam50-comparison-1.png" class="r-plt" alt="Relationship between the multiRF shared partition and PAM50 annotations in the demonstration subset. (a, b) The same t-SNE embedding of the learned shared similarity for 94 primary tumors, colored by multiRF cluster (a) or PAM50 annotation (b). t-SNE is used only for visualization. (c) Within-cluster PAM50 composition; labels show sample count and row percentage." width="1296"><p class="caption">
 Relationship between the multiRF shared partition and PAM50 annotations
-in the demonstration subset. (a, b) The same native t-SNE embedding of
-the learned shared similarity for 94 primary tumors, colored by multiRF
+in the demonstration subset. (a, b) The same t-SNE embedding of the
+learned shared similarity for 94 primary tumors, colored by multiRF
 cluster (a) or PAM50 annotation (b). t-SNE is used only for
 visualization. (c) Within-cluster PAM50 composition; labels show sample
 count and row percentage.
@@ -915,12 +916,11 @@ requested explicitly:</p>
 </h2>
 <ul>
 <li>Use a non-negative integer <code>seed</code> for a reproducible
-native fit; 529 is the package default. A negative seed deliberately
+multiRF fit; 529 is the package default. A negative seed deliberately
 requests system entropy. Reproducible seeds give the same result across
 thread counts.</li>
 <li>Set <code>options(multiRF.nthread = n)</code> or pass
-<code>nthread = n</code> to control native parallel tree
-construction.</li>
+<code>nthread = n</code> to control C++ forest parallelism.</li>
 <li>Keep <code>samptype = "swor"</code> for the default workflow.
 Sampling with replacement is supported when it is scientifically
 intended.</li>
@@ -996,7 +996,7 @@ Multivariate Random Forests for Cross-Modal Multi-Omics Integration.
 framework for robust biomarker discovery. <em>GigaScience</em>, 14,
 giaf148. <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728" class="external-link">doi:10.1093/gigascience/giaf148</a></p>
 </blockquote>
-<p>The native forest engine and optional fallback build on
+<p>The multiRF forest engine and optional fallback build on
 <code>randomForestSRC</code>; please also cite:</p>
 <blockquote>
 <p>Ishwaran, H., and Kogalur, U. B. (2026). <em>randomForestSRC: Fast

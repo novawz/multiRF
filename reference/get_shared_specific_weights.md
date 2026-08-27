@@ -90,8 +90,7 @@ get_shared_specific_weights(
 
 - specific_nsplit, specific_nthread:
 
-  Candidate cutpoint count and native thread count inherited from the
-  main workflow.
+  Candidate cutpoint and thread counts inherited from the main workflow.
 
 - specific_nodesize, specific_max_depth:
 

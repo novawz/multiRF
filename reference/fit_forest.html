@@ -167,13 +167,14 @@ samples, and <code>"oob"</code> evaluates each target only on trees where it is 
 
 <dt id="arg-ytry">ytry<a class="anchor" aria-label="anchor" href="#arg-ytry"></a></dt>
 <dd><p>Number of response variables randomly selected per split.
-Default <code>NULL</code> means the native engine uses <code>ceiling(qy/3)</code>.
+Default <code>NULL</code> means the multiRF engine uses <code>ceiling(qy/3)</code>.
 Set to a specific integer to override (e.g., <code>ytry = ncol(Y) / 2</code>).</p></dd>
 
 
 <dt id="arg-nsplit">nsplit<a class="anchor" aria-label="anchor" href="#arg-nsplit"></a></dt>
 <dd><p>Number of candidate numeric cutpoints evaluated per variable.
-Native and <code>randomForestSRC</code> both default to <code>10</code>; set <code>0</code> to scan all.</p></dd>
+The multiRF engine and <code>randomForestSRC</code> both default to <code>10</code>; set <code>0</code> to
+scan all.</p></dd>
 
 
 <dt id="arg-samptype">samptype<a class="anchor" aria-label="anchor" href="#arg-samptype"></a></dt>
@@ -182,17 +183,17 @@ Native and <code>randomForestSRC</code> both default to <code>10</code>; set <co
 
 
 <dt id="arg-nthread">nthread<a class="anchor" aria-label="anchor" href="#arg-nthread"></a></dt>
-<dd><p>Number of threads used by the native engine.</p></dd>
+<dd><p>Number of threads used by the multiRF forest engine.</p></dd>
 
 
 <dt id="arg-xvar-wt-yvar-wt">xvar.wt, yvar.wt<a class="anchor" aria-label="anchor" href="#arg-xvar-wt-yvar-wt"></a></dt>
 <dd><p>Optional non-negative predictor/response sampling
-weights used by the native multivariate forest.</p></dd>
+weights used by the multiRF multivariate forest.</p></dd>
 
 
 <dt id="arg-split-wt-case-wt">split.wt, case.wt<a class="anchor" aria-label="anchor" href="#arg-split-wt-case-wt"></a></dt>
 <dd><p>Optional split/case weights. These are forwarded to
-<code>randomForestSRC</code>; the native engine fails explicitly because it does not
+<code>randomForestSRC</code>; the multiRF engine fails explicitly because it does not
 yet implement them.</p></dd>
 
 
@@ -202,13 +203,14 @@ yet implement them.</p></dd>
 
 <dt id="arg-engine">engine<a class="anchor" aria-label="anchor" href="#arg-engine"></a></dt>
 <dd><p>Forest backend. Default is <code>getOption("multiRF.engine", "native")</code>.
-Native is the default and recommended engine. <code>randomForestSRC</code> is used only
-as a non-native fallback when explicitly requested.</p></dd>
+The value <code>"native"</code> selects the default and recommended multiRF forest
+engine. <code>randomForestSRC</code> is used only as an optional fallback when
+explicitly requested.</p></dd>
 
 
 <dt id="arg-enhanced-prox">enhanced_prox<a class="anchor" aria-label="anchor" href="#arg-enhanced-prox"></a></dt>
 <dd><p>Logical; whether to compute enhanced proximity in the
-native engine.</p></dd>
+multiRF forest engine.</p></dd>
 
 
 <dt id="arg-sibling-gamma">sibling_gamma<a class="anchor" aria-label="anchor" href="#arg-sibling-gamma"></a></dt>
@@ -217,7 +219,7 @@ enhanced proximity.</p></dd>
 
 
 <dt id="arg-leaf-embed-dim">leaf_embed_dim<a class="anchor" aria-label="anchor" href="#arg-leaf-embed-dim"></a></dt>
-<dd><p>Embedding dimension used by the native enhanced
+<dd><p>Embedding dimension used by the multiRF enhanced
 proximity path.</p></dd>
 
 
@@ -260,7 +262,7 @@ parallelism.</p></dd>
     </div>
     <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
-    <p><code>fit_forest()</code> now defaults to the package-native engine for
+    <p><code>fit_forest()</code> defaults to the multiRF forest engine for
 classification, multivariate regression, and unsupervised fitting.
 <code>randomForestSRC</code> is optional and is only used when <code>engine != "native"</code>.
 If <code>type</code> is omitted and <code>Y = NULL</code>, unsupervised fitting is selected.</p>

@@ -81,7 +81,7 @@ chord-diagram data for `"circos"`, and `NULL` for `"embed"`.
 Supported `type` values and their targets:
 
 - `"tsne"` (default): [`plot_tsne()`](plot_tsne.md) on the fitted
-  similarity matrix (native t-SNE), coloured by shared cluster.
+  similarity matrix (t-SNE), coloured by shared cluster.
 
 - `"umap"`: [`plot_umap()`](plot_tsne.md) on the fitted similarity
   matrix.
@@ -158,7 +158,7 @@ fit <- mrf3_fit(
 )
 #> Auto model_top_v `tmax` = 80 (n = 80).
 #> Auto fused_top_v `vmax` = 80 (n = 80).
-#>   Using pre-computed IMD weights from native engine (zero extra cost).
+#>   Using pre-computed IMD weights from the multiRF engine (zero extra cost).
 
 ## Embeddings and networks of the learned similarity
 plot(fit, type = "tsne", seed = 529)

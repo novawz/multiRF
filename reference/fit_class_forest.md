@@ -1,6 +1,6 @@
-# Fit a classification forest (native engine)
+# Fit a classification forest with the multiRF engine
 
-Uses the native multivariate regression forest on a one-hot encoded
+Uses the multiRF multivariate regression forest on a one-hot encoded
 response, then reconstructs training-set class probabilities and labels.
 `err.rate` is the out-of-bag misclassification rate computed from OOB
 forest weights (`NA` when OOB information is unavailable); samples with

@@ -24,7 +24,7 @@ get_imp_forest(
 
 - mod:
 
-  A fitted forest model from the native multiRF engine or the optional
+  A fitted forest model from the multiRF engine or the optional
   `randomForestSRC` fallback.
 
 - parallel:

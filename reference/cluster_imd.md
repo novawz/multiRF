@@ -100,7 +100,7 @@ cluster_imd(
   network traversal of [`get_multi_weights()`](get_multi_weights.md) on
   each cluster's subset model. `TRUE` uses the node-score fast path
   ([`cluster_weighted_imd()`](cluster_weighted_imd.md)): the per-node
-  split statistics stored by the native engine are averaged per
+  split statistics stored by the multiRF forest engine are averaged per
   variable, weighted by the fraction of the cluster's samples whose
   root-to-leaf paths visit each node. The fast path is deterministic and
   typically 100-900x faster, but it is a *different,

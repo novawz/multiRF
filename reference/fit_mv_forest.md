@@ -1,4 +1,4 @@
-# Fit a multivariate regression forest (native C++ engine)
+# Fit a multivariate regression forest with the multiRF C++ engine
 
 Drop-in replacement for [`fit_forest()`](fit_forest.md) when
 `type = "regression"`. Returns an object with the same interface
@@ -87,7 +87,7 @@ fit_mv_forest(
 
 - nthread:
 
-  Number of OpenMP threads used by the native engine.
+  Number of OpenMP threads used by the multiRF forest engine.
 
 - xvar.wt:
 
