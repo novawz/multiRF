@@ -7,8 +7,8 @@
 A named list with three data frames:
 \describe{
 \item{gene}{mRNA expression features.}
-\item{miRNA}{miRNA expression features.}
 \item{methy}{DNA methylation features.}
+\item{mirna}{miRNA expression features.}
 }
 }
 \source{

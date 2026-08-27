@@ -7,7 +7,11 @@
 #' @param method Feature-selection rule. `"filter"` adaptively tunes the
 #'   cutoff `tau * sd(IMD)` using OOB error; `"mixture"` fits a
 #'   point-mass/two-component model; and `"test"` (alias
-#'   `"transformation"`) implements the Eq. 16 Student-t transformation.
+#'   `"transformation"`) selects by the Eq. 16 t-score IMD: each
+#'   feature's forest IMD is standardized against the mean forest IMD of
+#'   all features in the block, using the feature's across-tree standard
+#'   error, and features in the upper tail of a Student-t reference with
+#'   `ntree - 1` degrees of freedom (`p < level`) are kept; see Details.
 #'   `"thres"` applies a fixed `se * sd(IMD)` cutoff.
 #' @param signal Which signal component to select on: `"shared"` (cross-modal),
 #'   `"specific"` (per-block residual), or `"all"` (the union of both).
@@ -44,6 +48,23 @@
 #' @return An object inheriting from `mrf3` and `vs`. For `signal = "all"`,
 #'   `dat.list` and `imd` contain the union selection and the two component
 #'   results are retained in `signal_results`.
+#'
+#' @details
+#' For `method = "transformation"`, every connected forest supplies a
+#' per-tree IMD matrix (features x trees) per block. Feature `v` is
+#' standardized as the t-score IMD of Eq. 16,
+#' `t_v = (M_v - mu) / SE(M_v)`, where `M_v` is the feature's forest IMD
+#' (its per-tree IMD averaged over the `B` trees), `mu` is the mean forest
+#' IMD over all features of the block, and `SE(M_v)` is the feature's
+#' across-tree standard error (`sd(per-tree IMD) / sqrt(B)`). Features
+#' with an upper-tail `p = P(T_{B-1} > t_v) < level` are selected, i.e.
+#' features whose forest IMD lies significantly above the block-wide
+#' mean. When several connected forests cover the same block, each forest
+#' is evaluated separately and a feature is retained by strict majority
+#' vote across forests; the reported t-scores and p-values are averaged.
+#' Because per-tree IMDs within a forest are correlated (trees share the
+#' training data) and `mu` is treated as a fixed reference, the p-values
+#' are screening scores rather than exact test levels.
 #' @export
 mrf3_vs <- function(mod,
                     dat.list = NULL,
@@ -76,7 +97,7 @@ mrf3_vs <- function(mod,
 
   if (isTRUE(tscore)) {
     warning(
-      "`tscore` is deprecated; using the Eq. 16 Student-t transformation.",
+      "`tscore` is deprecated; using `method = \"transformation\"` (Eq. 16 t-score IMD).",
       call. = FALSE
     )
     method <- "test"
@@ -112,14 +133,38 @@ mrf3_vs <- function(mod,
       stop("`signal = 'all'` requires `dat.list` or data retained in `mod$data`.")
     }
 
-    cl <- match.call(expand.dots = TRUE)
-    cl$method <- shared_method
-    cl$signal <- "shared"
-    cl$re_fit <- FALSE
-    shared_res <- eval(cl, parent.frame())
-    cl$method <- specific_method
-    cl$signal <- "specific"
-    specific_res <- eval(cl, parent.frame())
+    # Recurse with already-evaluated arguments so caller argument expressions
+    # (and any side effects, e.g. `readRDS()` or the `tscore` deprecation
+    # warning) are not re-evaluated once per component.
+    rec_args <- c(
+      list(
+        mod = mod,
+        dat.list = source_dat,
+        method = shared_method,
+        signal = "shared",
+        se = se,
+        c1 = c1,
+        c2 = c2,
+        level = level,
+        tscore = FALSE,
+        use_distribution = use_distribution,
+        re_weights = re_weights,
+        re_fit = FALSE,
+        ntree = ntree,
+        scale = scale,
+        k = k,
+        tol = tol,
+        iter = iter,
+        eps = eps,
+        normalized = normalized,
+        select = select
+      ),
+      list(...)
+    )
+    shared_res <- do.call(mrf3_vs, rec_args)
+    rec_args$method <- specific_method
+    rec_args$signal <- "specific"
+    specific_res <- do.call(mrf3_vs, rec_args)
 
     dat_names <- names(source_dat)
     union_vars <- lapply(dat_names, function(block) {
@@ -523,6 +568,13 @@ mrf3_vs <- function(mod,
   value <- if (!is.null(names(level)) && block %in% names(level)) {
     level[[block]]
   } else {
+    if (length(level) > 1L) {
+      warning(
+        "`level` has ", length(level), " elements but no entry named `",
+        block, "`; using the first element for block `", block, "`.",
+        call. = FALSE
+      )
+    }
     level[[1L]]
   }
   if (length(value) != 1L || !is.finite(value) || value <= 0 || value >= 1) {

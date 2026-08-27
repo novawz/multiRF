@@ -161,62 +161,6 @@ find_connection <- function(mod.list,
   )
 }
 
-# Backward-compatible aliases for older scripts that still use camelCase names.
-findConnection <- function(mod.list, ...) {
-  find_connection(mod.list, ...)
-}
-
-#' @rdname find_connection
-#' @param dat.list A named list of omics data blocks with samples in rows and
-#' features in columns.
-
-full_connect <- function(dat.list, ...){
-
-  dat_names <- names(dat.list)
-  mod_l <- plyr::llply(
-    dat_names,
-    .fun = function(d){
-      response_d <- dat.list[[d]]
-      predict_d <- dat.list[!names(dat.list) %in% d]
-
-      mod <- plyr::llply(predict_d, .fun = function(pred){
-        fit_forest(X = pred, Y = response_d, ...)
-      })
-
-      mod_names <- paste0(d, "_", names(predict_d))
-      names(mod) <- mod_names
-
-      return(mod)
-    }
-  )
-
-  mod_l <- Reduce(c, mod_l)
-
-  return(mod_l)
-}
-
-fullConnect <- function(dat.list, ...) {
-  full_connect(dat.list, ...)
-}
-get_r_sq <- function(mod){
-  
-  fw <- mod$forest.wt
-  
-  ex <- mean(colMeans((fw %*% as.matrix(mod$xvar) - as.matrix(mod$xvar))^2)/matrixStats::colVars(as.matrix(mod$xvar)))
-  if(is.null(mod$yvar)){
-    return(ex)
-  } else {
-    if(!is.null(class(mod)[3]) && identical(class(mod)[3], "class+")){
-      ey <- na.omit(mod$err.rate)
-    } else {
-      ey <- mean(colMeans((fw %*% as.matrix(mod$yvar) - as.matrix(mod$yvar))^2)/matrixStats::colVars(as.matrix(mod$yvar)))
-    }
-  }
-  
-  ey+ex
-  
-}
-
 #' Compute OOB forest weight matrix
 #'
 #' For each sample, only trees where it was out-of-bag contribute to the
@@ -225,11 +169,19 @@ get_r_sq <- function(mod){
 #' bootstrap mass in the leaf.
 #'
 #' @param mod A fitted model object from \code{fit_forest} (must contain
-#'   \code{$membership} and \code{$inbag}).
+#'   \code{$membership} and \code{$inbag}), or any model carrying a
+#'   pre-computed \code{$forest.wt.oob} matrix (e.g. from
+#'   \code{fit_sub_mrf}), which is returned directly.
 #' @return An n x n numeric matrix of OOB forest weights. Rows are `NA` for
 #'   samples that were not out-of-bag in any tree.
 #' @export
 compute_oob_forest_wt <- function(mod) {
+  # Sub-sampled ensembles (fit_sub_mrf) carry a pre-computed, already
+  # post-processed OOB weight matrix but no pooled $membership/$inbag;
+  # use it directly.
+  if (!is.null(mod$forest.wt.oob)) {
+    return(mod$forest.wt.oob)
+  }
   if (is.null(mod$membership) || is.null(mod$inbag)) {
     stop("Model must contain $membership and $inbag matrices.")
   }
@@ -275,59 +227,6 @@ get_oob_nmse <- function(mod) {
   # predictor variable. This feature-weighted mean matters when p != q.
   mean_valid(c(nmse_x, nmse_y))
 }
-
-calc_weight_concentration <- function(W, eps = 1e-12) {
-  W <- as.matrix(W)
-  W[!is.finite(W)] <- 0
-  W <- pmax(W, 0)
-
-  rs <- rowSums(W)
-  p <- W
-  ok <- rs > eps
-  if (any(ok)) {
-    p[ok, ] <- W[ok, , drop = FALSE] / rs[ok]
-  }
-  if (any(!ok)) {
-    p[!ok, ] <- 0
-  }
-
-  row_entropy <- apply(
-    p,
-    1,
-    function(v) {
-      v <- v[v > eps]
-      k <- length(v)
-      if (k <= 1L) {
-        return(0)
-      }
-      -sum(v * log(v)) / log(k)
-    }
-  )
-  c0 <- 1 - mean(row_entropy)
-  max(0, min(1, c0))
-}
-
-
-calc_gcc_ratio <- function(W, edge_threshold = 0, symm = TRUE) {
-  W <- as.matrix(W)
-  W[!is.finite(W)] <- 0
-  W <- pmax(W, 0)
-  if (symm) {
-    W <- pmax(W, t(W))
-  }
-  diag(W) <- 0
-  A <- ifelse(W > edge_threshold, 1, 0)
-
-  n <- nrow(A)
-  if (n <= 1L) {
-    return(1)
-  }
-
-  g <- igraph::graph_from_adjacency_matrix(A, mode = "undirected", diag = FALSE)
-  comp <- igraph::components(g)
-  max(comp$csize) / n
-}
-
 
 #' Modularity of forest weight matrix
 #'

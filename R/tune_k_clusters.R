@@ -8,6 +8,7 @@
 #'   of `k`.
 #' @param method Clustering backend: `"PAM"` or `"Spectral"`.
 #' @param tune_method Tuning criterion for PAM (`"silhouette"` or `"ratio"`).
+#'   The `"ratio"` criterion requires dissimilarities scaled to `[0, 1]`.
 #' @param gap_w Weighting scheme for spectral eigengap (`"uniform"` or `"log"`).
 #' @param prox Logical; whether `x` is a proximity matrix (converted to a
 #'   dissimilarity matrix for PAM).
@@ -303,7 +304,7 @@ spectral_cl <- function(x, k_tune = seq(2, 12, by = 1), gap_w = "uniform", d = N
 
   mat <- as.matrix(eigenvectors[, (n - k + 1L):n, drop = FALSE])
   mat_norm <- mat / pmax(sqrt(rowSums(mat^2)), .Machine$double.eps)
-  cl <- cluster::pam(mat, k = k, ...)
+  cl <- cluster::pam(mat_norm, k = k, ...)
 
   list(
     best_k = k,
@@ -379,8 +380,15 @@ pam_cl <- function(x, k_tune = seq(2, 9, by = 1), diss = TRUE,
     } else {
       as.matrix(stats::dist(x_pam))
     }
+    if (any(ratio_dissimilarity < 0) || any(ratio_dissimilarity > 1)) {
+      stop(
+        "`tune_method = \"ratio\"` requires dissimilarities scaled to [0, 1].",
+        call. = FALSE
+      )
+    }
     similarity <- 1 - ratio_dissimilarity
-    dist_all <- mean(similarity)
+    off_diag <- row(similarity) != col(similarity)
+    dist_all <- mean(similarity[off_diag])
   }
 
   scores <- numeric(length(k_eval))

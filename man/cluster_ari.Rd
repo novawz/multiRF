@@ -20,7 +20,10 @@ cluster_purity(pred, ref, na.rm = TRUE)
 
 \item{ref}{Reference cluster labels.}
 
-\item{na.rm}{Logical; whether to remove pairs with missing labels before computing metrics.}
+\item{na.rm}{Logical; whether to remove pairs with missing labels before computing metrics.
+When \code{FALSE}, the table-based metrics (ARI, NMI, purity) still silently drop
+pairs with missing labels, whereas the partition Jaccard index propagates
+them and returns \code{NA}.}
 }
 \value{
 For scalar metric functions, a numeric scalar (\code{NA} when undefined).

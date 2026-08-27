@@ -1,0 +1,141 @@
+# pkgdown configuration for multiRF
+# Uncomment and set once the GitHub remote / Pages site exists
+# (README already points at this address):
+# url: https://novawz.github.io/multiRF/
+
+template:
+  bootstrap: 5
+  bslib:
+    primary: "#2C6E8F"
+
+navbar:
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    intro:
+      text: Get started
+      href: articles/multiRF.html
+    reference:
+      text: Reference
+      href: reference/index.html
+    news:
+      text: Changelog
+      href: news/index.html
+
+reference:
+- title: Fitting and engines
+  desc: >
+    Fit directed multivariate random forests across omics blocks, discover
+    optimal connections, and compute out-of-bag quantities.
+  contents:
+  - fit_forest
+  - fit_sub_mrf
+  - fit_sub_multi_rfsrc
+  - find_connection
+  - filter_omics
+  - compute_oob_forest_wt
+  - get_oob_nmse
+
+- title: The mrf3 workflow
+  desc: >
+    High-level entry points for the staged mrf3 pipeline, from initial fit to
+    the full analysis.
+  contents:
+  - mrf3
+  - mrf3_init
+  - mrf3_fit
+  - print.mrf3
+  - print.mrf3_fit
+
+- title: Clustering
+  desc: >
+    Cluster samples from learned similarity, tune the number of clusters, and
+    score agreement between clusterings.
+  contents:
+  - mrf3_cl_prox
+  - mrf3_specific_clustering
+  - run_cluster_pipeline
+  - tune_k_clusters
+  - get_clusters
+  - cluster_similarity_matrix
+  - cluster_shared_similarity
+  - cluster_specific_similarity
+  - cluster_metrics
+  - cluster_ari
+  - cluster_metric_matrix
+
+- title: Variable selection and tuning
+  desc: >
+    Select informative features per omics block and tune top-v truncation
+    parameters.
+  contents:
+  - mrf3_vs
+  - get_selected_vars
+  - get_vs_summary
+  - get_top_vars
+  - select_top_v_neff
+  - tune_model_top_v
+  - tune_fused_top_v
+
+- title: Weights, IMD and reconstruction
+  desc: >
+    Forest weights, intersample measure of dissimilarity (IMD), reconstruction
+    of shared and omics-specific structure, and related print methods.
+  contents:
+  - get_weights
+  - get_multi_weights
+  - get_imp_forest
+  - prepare_weight_matrix
+  - build_similarity_from_weights
+  - mrf3_reconstr
+  - get_shared_specific_weights
+  - get_shared_frac
+  - pairwise_imd
+  - cluster_imd
+  - print.pairwise_imd_analysis
+  - print.cluster_imd
+
+- title: Stability and summaries
+  desc: >
+    Stability evaluation of a fitted pipeline, summaries, and tidy accessors
+    for downstream analysis.
+  contents:
+  - mrf3_stability
+  - print.mrf3_stability
+  - summary.mrf3_fit
+  - print.summary.mrf3_fit
+
+- title: Visualization
+  desc: >
+    Embeddings and plots for similarity matrices, clusters, weights, and
+    survival outcomes.
+  contents:
+  - plot.mrf3_fit
+  - mrf3_tsne
+  - plot_tsne
+  - plot_cluster_composition
+  - plot_km
+
+- title: Data
+  desc: Bundled TCGA BRCA example data and multi-omics simulation.
+  contents:
+  - tcga_brca
+  - tcga_brca_clinical
+  - simulate_intersim_shared_specific
+
+- title: Utilities
+  desc: Accessors for components of fitted multiRF objects.
+  contents:
+  - get_data
+  - get_models
+  - get_connection
+
+- title: Deprecated
+  desc: >
+    Backward-compatible aliases retained from earlier releases; use the
+    replacements noted on each page.
+  contents:
+  - simulate_shared_specific_intersim
+  - fit_rfsrc
+  - fit_multi_rfsrc

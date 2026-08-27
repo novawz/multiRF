@@ -16,11 +16,15 @@
 #' reuse it across all candidates for speed.
 #' @param parallel Logical; whether to evaluate candidate grid values in parallel
 #' (POSIX systems only). Default is `TRUE`.
-#' @param cores Number of cores used when `parallel = TRUE`.
+#' @param cores Number of cores used when `parallel = TRUE`. Default `NULL`
+#' uses `max(1, parallel::detectCores() - 1)` cores.
 #' @param seed Random seed used for optional sample subsampling.
 #' @param object Objective used to choose `model_top_v`
 #' (`"entropy_elbow"` (default), `"diss"`, `"silhouette"`, or `"eigen"`).
+#' For `"entropy_elbow"`, the elbow is selected among interior grid points,
+#' so the smallest grid candidate cannot be selected directly.
 #' @rdname tune_model_top_v
+#' @export
 tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
                              sample_n = NULL, sample_frac = NULL,
                              auto_sample_n = FALSE,
@@ -30,7 +34,18 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
                              cores = NULL,
                              seed = 529,
                              object = "entropy_elbow"){
-  entropy_only <- identical(as.character(object)[1], "entropy_elbow")
+  object <- match.arg(
+    as.character(object)[1L],
+    c("entropy_elbow", "diss", "silhouette", "eigen")
+  )
+  entropy_only <- identical(object, "entropy_elbow")
+
+  if (!is.numeric(tmin) || !is.numeric(by)) {
+    stop("`tmin` and `by` must be numeric.")
+  }
+  if (tmin <= 0 || by <= 0) {
+    stop("`tmin` and `by` must be positive.")
+  }
 
   tune_prep <- prepare_tune_inputs(
     dat.list = dat.list,
@@ -57,6 +72,7 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
     by = by,
     max_candidates = max_candidates
   )
+  t_grid <- t_grid[t_grid > 0]
   if (length(t_grid) == 0L) {
     stop("No valid `model_top_v` candidates were generated.")
   }
@@ -177,10 +193,15 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
 #' reuse it across all candidates for speed.
 #' @param parallel Logical; whether to evaluate candidate grid values in parallel
 #' (POSIX systems only). Default is `TRUE`.
-#' @param cores Number of cores used when `parallel = TRUE`.
+#' @param cores Number of cores used when `parallel = TRUE`. Default `NULL`
+#' uses `max(1, parallel::detectCores() - 1)` cores.
 #' @param seed Random seed used for optional sample subsampling.
 #' @param object Objective used to choose `fused_top_v`
 #' (`"entropy_elbow"` (default), `"diss"`, `"silhouette"`, or `"eigen"`).
+#' For `"entropy_elbow"`, the elbow is selected among interior grid points,
+#' so the smallest grid candidate and the no-truncation baseline cannot be
+#' selected directly (no truncation is recovered separately via the
+#' `v >= 0.8 * n` rule in the workflow).
 #' @param early_stop Logical; when `TRUE` and `object = "entropy_elbow"`,
 #' stop tuning once a stable small-gain elbow is reached. Default is `FALSE`
 #' so elbow selection is based on the full evaluated grid.
@@ -192,6 +213,7 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
 #' @param elbow_smooth_window Integer running-mean window used to smooth entropy
 #' gains before elbow detection.
 #' @rdname tune_fused_top_v
+#' @export
 tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
                              model_top_v = 10,
                              k = NULL,
@@ -210,7 +232,11 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
                              elbow_min_frac = 0.2,
                              elbow_patience = 2L,
                              elbow_smooth_window = 3L){
-  entropy_only <- identical(as.character(object)[1], "entropy_elbow")
+  object <- match.arg(
+    as.character(object)[1L],
+    c("entropy_elbow", "diss", "silhouette", "eigen")
+  )
+  entropy_only <- identical(object, "entropy_elbow")
 
   tune_prep <- prepare_tune_inputs(
     dat.list = dat.list,
@@ -494,19 +520,6 @@ resolve_tune_mod_inputs <- function(mod) {
   )
 }
 
-compute_tune_model_alpha <- function(model_names, connection_score = NULL,
-                                     model_list = NULL) {
-  score <- match_model_scores(
-    model_names = model_names,
-    connection_score = connection_score,
-    model_list = model_list
-  )
-  score <- pmax(score, 0)
-  alpha <- normalize_fusion_weights(score, fallback_uniform = TRUE)
-  names(alpha) <- model_names
-  alpha
-}
-
 # Build the Eq. 6-8 matrix used by response-stratified reconstruction. Scores
 # are normalized within response blocks, and the response-level matrices are
 # then averaged uniformly. A single global normalization over all directed
@@ -635,6 +648,12 @@ materialize_weight_from_cache <- function(cache, v, keep_ties = TRUE) {
   if (v >= ncol(cache$W)) {
     return(cache$W)
   }
+  if (v > cache$vmax) {
+    stop(
+      "Requested top-v (", v, ") exceeds the cache `vmax` (", cache$vmax,
+      "); rebuild the top-v cache with a larger `vmax`."
+    )
+  }
   v_use <- min(v, cache$vmax)
 
   out <- matrix(0, nrow = nrow(cache$W), ncol = ncol(cache$W), dimnames = dimnames(cache$W))
@@ -653,25 +672,6 @@ materialize_weight_from_cache <- function(cache, v, keep_ties = TRUE) {
     }
   }
   row_normalize_weights(out)
-}
-
-build_fused_weight_from_cache <- function(cache_list, top_v, alpha, keep_ties = TRUE) {
-  model_names <- names(cache_list)
-  alpha_use <- alpha[model_names]
-  alpha_use[!is.finite(alpha_use)] <- 0
-  if (sum(alpha_use) <= 0) {
-    alpha_use <- rep(1 / length(alpha_use), length(alpha_use))
-  } else {
-    alpha_use <- alpha_use / sum(alpha_use)
-  }
-  names(alpha_use) <- model_names
-
-  W_models <- lapply(
-    model_names,
-    function(m) materialize_weight_from_cache(cache_list[[m]], v = top_v, keep_ties = keep_ties)
-  )
-  names(W_models) <- model_names
-  fuse_matrix_list(W_models, alpha_use)
 }
 
 evaluate_similarity_for_tuning <- function(S, k_use = NULL) {
@@ -959,11 +959,28 @@ make_tune_grid <- function(lower, upper, by, max_candidates = NULL) {
   grid
 }
 
-subset_rfit_to_samples <- function(rfit, sample_names = NULL, sample_idx = NULL) {
+subset_rfit_to_samples <- function(rfit, sample_names = NULL, sample_idx = NULL,
+                                   n_total = NULL) {
+  # The positional path is exact when the matrix rows are still in the
+  # original data order; name-based matching breaks silently on duplicated
+  # rownames, so it is kept only as a checked fallback.
+  check_name_match <- function(keep) {
+    if (sum(keep) != length(sample_names)) {
+      stop(
+        "Cannot subset model matrices by sample names: matched ", sum(keep),
+        " rows for ", length(sample_names),
+        " subsampled names (duplicated or mismatched rownames)."
+      )
+    }
+    keep
+  }
   subset_square <- function(mat) {
     if (is.null(mat)) return(NULL)
+    if (!is.null(sample_idx) && !is.null(n_total) && nrow(mat) == n_total) {
+      return(mat[sample_idx, sample_idx, drop = FALSE])
+    }
     if (!is.null(sample_names) && !is.null(rownames(mat))) {
-      keep <- rownames(mat) %in% sample_names
+      keep <- check_name_match(rownames(mat) %in% sample_names)
       return(mat[keep, keep, drop = FALSE])
     }
     if (!is.null(sample_idx)) {
@@ -973,8 +990,11 @@ subset_rfit_to_samples <- function(rfit, sample_names = NULL, sample_idx = NULL)
   }
   subset_rect <- function(mat) {
     if (is.null(mat)) return(NULL)
+    if (!is.null(sample_idx) && !is.null(n_total) && nrow(mat) == n_total) {
+      return(mat[sample_idx, , drop = FALSE])
+    }
     if (!is.null(sample_names) && !is.null(rownames(mat))) {
-      keep <- rownames(mat) %in% sample_names
+      keep <- check_name_match(rownames(mat) %in% sample_names)
       return(mat[keep, , drop = FALSE])
     }
     if (!is.null(sample_idx)) {
@@ -1014,6 +1034,12 @@ prepare_tune_inputs <- function(dat.list, mod, sample_n = NULL, sample_frac = NU
     return(list(dat.list = dat.list, mod = mod))
   }
 
+  if (!is.null(sample_frac)) {
+    if (!is.numeric(sample_frac) || length(sample_frac) != 1L ||
+        !is.finite(sample_frac) || sample_frac <= 0 || sample_frac > 1) {
+      stop("`sample_frac` must be a single numeric value in (0, 1].", call. = FALSE)
+    }
+  }
   n_target <- sample_n
   if (is.null(n_target) && !is.null(sample_frac)) {
     n_target <- floor(n * sample_frac)
@@ -1031,11 +1057,31 @@ prepare_tune_inputs <- function(dat.list, mod, sample_n = NULL, sample_frac = NU
     warning("Invalid `sample_n`/`sample_frac`. Skip subsampling.", call. = FALSE)
     return(list(dat.list = dat.list, mod = mod))
   }
-  n_target <- as.integer(max(2L, min(n, n_target)))
+  n_target <- as.integer(min(n, n_target))
   if (n_target >= n) {
     return(list(dat.list = dat.list, mod = mod))
   }
+  if (n_target < 2L) {
+    stop(
+      "`sample_n`/`sample_frac` implies a degenerate tuning subset (",
+      n_target, " < 2 samples).",
+      call. = FALSE
+    )
+  }
 
+  # Subsample under `seed` without clobbering the caller's global RNG state.
+  old_seed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    get(".Random.seed", envir = globalenv())
+  } else {
+    NULL
+  }
+  on.exit({
+    if (!is.null(old_seed)) {
+      assign(".Random.seed", old_seed, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(list = ".Random.seed", envir = globalenv())
+    }
+  }, add = TRUE)
   set.seed(seed)
   idx <- sort(sample.int(n, n_target))
   dat_sub <- purrr::map(dat.list, ~.[idx, , drop = FALSE])
@@ -1049,7 +1095,8 @@ prepare_tune_inputs <- function(dat.list, mod, sample_n = NULL, sample_frac = NU
     mod_sub$mod <- subset_rfit_to_samples(
       mod_sub$mod,
       sample_names = sample_names,
-      sample_idx = idx
+      sample_idx = idx,
+      n_total = n
     )
   }
   if (!is.null(mod_sub$recon)) {
@@ -1064,11 +1111,29 @@ eval_grid <- function(grid, eval_fun, parallel = FALSE, cores = NULL) {
   if (!isTRUE(parallel) || length(grid) <= 1L || .Platform$OS.type == "windows") {
     return(lapply(grid, eval_fun))
   }
+  if (is.null(cores)) {
+    cores <- max(1L, parallel::detectCores() - 1L)
+  }
   cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
   if (cores <= 1L) {
     return(lapply(grid, eval_fun))
   }
-  parallel::mclapply(grid, eval_fun, mc.cores = cores)
+  rows <- parallel::mclapply(grid, eval_fun, mc.cores = cores)
+  # mclapply never throws for child failures; surface them here instead of
+  # letting `try-error` objects die later as obscure `$`-on-atomic errors.
+  failed <- vapply(rows, function(x) inherits(x, "try-error"), logical(1))
+  if (any(failed)) {
+    first <- which(failed)[1L]
+    cond <- attr(rows[[first]], "condition")
+    msg <- if (!is.null(cond)) conditionMessage(cond) else as.character(rows[[first]])
+    stop(
+      "Parallel grid evaluation failed for candidate value(s) ",
+      paste(unlist(grid[failed]), collapse = ", "),
+      ": ", msg,
+      call. = FALSE
+    )
+  }
+  rows
 }
 
 smooth_running_mean <- function(x, window = 3L) {
@@ -1116,6 +1181,9 @@ pick_kneedle_fallback <- function(v, entropy, min_eval = 2L, smooth_window = 3L)
   y_norm <- (y_use - yr[1]) / (yr[2] - yr[1])
   dist <- y_norm - x_norm
 
+  if (min_eval > n - 1L) {
+    return(list(idx = min_eval, rule = "min_eval_fallback"))
+  }
   cand <- seq.int(max(2L, min_eval), max(2L, n - 1L))
   if (length(cand) == 0L) {
     return(list(idx = min_eval, rule = "min_eval_fallback"))
@@ -1241,13 +1309,24 @@ eval_grid_until_entropy_elbow <- function(grid, eval_fun,
   rows <- vector("list", length(grid))
   entropy_vals <- rep(NA_real_, length(grid))
   n_eval <- 0L
+  # Enforce `min_frac` against the FULL candidate grid, not the evaluated
+  # prefix, so early-stop cannot trigger before the documented fraction of
+  # the grid has been evaluated.
+  min_eval_full <- min(
+    max(
+      as.integer(min_points),
+      as.integer(ceiling(as.numeric(min_frac) * length(grid))),
+      2L
+    ),
+    length(grid)
+  )
 
   for (i in seq_along(grid)) {
     rows[[i]] <- eval_fun(grid[[i]])
     n_eval <- i
     entropy_vals[i] <- as.numeric(rows[[i]]$entropy)[1]
 
-    if (i < 2L) {
+    if (i < 2L || i < min_eval_full) {
       next
     }
 

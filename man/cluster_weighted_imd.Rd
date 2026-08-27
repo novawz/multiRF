@@ -7,22 +7,57 @@
 cluster_weighted_imd(mod, cluster, normalized = TRUE)
 }
 \arguments{
-\item{mod}{A single fitted forest model (with \verb{$tree_info}, \verb{$membership},
-\verb{$xvar}, \verb{$yvar}).}
+\item{mod}{A single fitted forest model from the native engine (with
+\verb{$tree_info}, \verb{$membership}, \verb{$xvar}, \verb{$yvar}). \verb{$membership} is expected
+in the remapped form stored by \code{fit_mv_forest()}: sequential 1-based DFS
+leaf IDs per tree (this function inverts that remap internally to recover
+raw node indices).}
 
-\item{cluster}{Named character/factor vector of cluster labels for ALL samples.}
+\item{cluster}{Named character/factor vector of cluster labels for ALL
+samples. When named, it is aligned to \code{rownames(mod$xvar)}.}
 
-\item{normalized}{Logical; L2-normalize the output weights per block.}
+\item{normalized}{Logical; L2-normalize the output weights per side.}
 }
 \value{
 A named list: one element per cluster label, each containing
-\code{list(X = named_vector, Y = named_vector)} of cluster-weighted IMD.
+\code{list(X = named_vector, Y = named_vector)} of cluster-weighted scores.
+\code{Y} has length zero for unsupervised (single-block) models.
 }
 \description{
-For each tree, traces which internal nodes each sample passes through
-(root to leaf path). The IMD contribution of variable \eqn{j} at node
-\eqn{v} is weighted by the fraction of the cluster's samples that
-pass through \eqn{v}. This gives cluster-specific importance without
-refitting the forest.
+Aggregates the per-node split statistics that the native C++ engine stores
+on every fitted forest (\code{tree_info[[t]]$imd_x_score} and
+\code{tree_info[[t]]$imd_y_stats}) into cluster-specific variable weights,
+without refitting the forest and without re-traversing trees per sample in
+R.
 }
+\section{Estimator}{
+
+For cluster \eqn{c} and predictor \eqn{j}, the weight is the
+cluster-occupancy-weighted mean of node split scores:
+\deqn{w_j(c) = \frac{\sum_{v : \mathrm{split}(v) = j} s_v \, n_c(v)}
+                    {\sum_{v : \mathrm{split}(v) = j} n_c(v)}}
+where \eqn{s_v} is the (standardized multivariate) split score recorded at
+internal node \eqn{v} during fitting and \eqn{n_c(v)} is the number of
+cluster-\eqn{c} samples whose root-to-leaf path passes through \eqn{v}.
+The response-side weight replaces \eqn{s_v} with the per-response component
+\code{imd_y_stats[j, v]} (nodes where that component is zero are excluded from
+both numerator and denominator).
+
+This is a \emph{split-score-weighted} descriptive estimator. It is \strong{not} the
+Eq. 6-8 inverse-minimal-depth (IMD) statistic computed by
+\code{get_multi_weights()}: depth-based IMD scores a variable by how close to
+the root it splits, while this estimator scores it by the size of the
+variance reduction at its split nodes, localized to the cluster through
+path occupancy. Because the node scores \eqn{s_v} are global statistics
+(computed from all inbag samples during fitting) and occupancy of the
+high-score shallow nodes is similar for every cluster, the weights stay
+close to the global importance ranking: in benchmarks (synthetic with
+planted cluster-specific drivers, and TCGA-BRCA subtypes) per-cluster
+weights correlate at Spearman 0.9-0.99 \emph{across} clusters, versus 0.6-0.8
+for the depth-based path, and agree with the depth-based per-cluster
+weights at Spearman ~0.4-0.6 (top-20 overlap ~50-75\%). Treat the output
+as a fast, deterministic descriptive screen with a mild cluster tilt --
+not as a substitute for the depth-based cluster IMD.
+}
+
 \keyword{internal}

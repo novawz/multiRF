@@ -13,8 +13,9 @@
 #'
 #' @return A data.frame with one row per omics block:
 #' `data`, `frob_shared`, `frob_specific`, `specific_ratio`, `shared_frac`,
-#' and `method`. For backward compatibility, it also includes
-#' `frob_data`, `frob_residual`, and `residual_ratio`.
+#' and `method`. `frob_shared` is the Frobenius norm of the reconstructed
+#' (shared) matrix `X_pred = X - R`. For backward compatibility, it also
+#' includes `frob_data`, `frob_residual`, and `residual_ratio`.
 #' @export
 get_shared_frac <- function(dat.list = NULL,
                             residual = NULL,
@@ -80,8 +81,10 @@ get_shared_frac <- function(dat.list = NULL,
     ss_residual <- sum(R^2)
     frob_data <- sqrt(ss_data)
     frob_residual <- sqrt(ss_residual)
+    frob_shared <- sqrt(sum((X - R)^2))
 
-    if (!is.finite(frob_data) || !is.finite(frob_residual)) {
+    if (!is.finite(frob_data) || !is.finite(frob_residual) ||
+        !is.finite(frob_shared)) {
       stop("Non-finite values detected in block `", d, "` while computing Frobenius norm.")
     }
 
@@ -93,11 +96,16 @@ get_shared_frac <- function(dat.list = NULL,
       residual_ratio <- ss_residual / ss_data
       shared_frac <- 1 - residual_ratio
       specific_ratio <- residual_ratio
+      if (shared_frac < 0) {
+        warning("`shared_frac` is negative for block `", d,
+                "`: the reconstruction residual exceeds the data norm.",
+                call. = FALSE)
+      }
     }
 
     data.frame(
       data = d,
-      frob_shared = NA_real_,
+      frob_shared = frob_shared,
       frob_specific = frob_residual,
       specific_ratio = specific_ratio,
       frob_data = frob_data,

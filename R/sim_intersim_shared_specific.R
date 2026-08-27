@@ -42,6 +42,7 @@
 #' - `sim_raw`: raw InterSIM output (optional)
 #' - `dat.list`, `truth`, `k_ref`: workflow-ready outputs (optional)
 #'
+#' @export
 simulate_intersim_shared_specific <- function(
     n = 500,
     Z_prop = c(0.3, 0.3, 0.4),
@@ -359,6 +360,8 @@ simulate_intersim_shared_specific <- function(
 #'
 #' @param ... Arguments passed to `simulate_intersim_shared_specific()`.
 #' @return Same as `simulate_intersim_shared_specific()`.
+#' @export
 simulate_shared_specific_intersim <- function(...) {
+  .Deprecated("simulate_intersim_shared_specific")
   simulate_intersim_shared_specific(...)
 }

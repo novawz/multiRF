@@ -115,7 +115,7 @@ get_leaf_corr <- function(tree.membership, net, sample_embed_list) {
     net$corr <- 0
   }
   if (is.null(net$is_leaf)) {
-    net$is_leaf <- ifelse(grepl("leaf", net$to), 1, 0)
+    net$is_leaf <- ifelse(grepl("<leaf>", net$to, fixed = TRUE), 1, 0)
   }
   if (is.null(net$leaf_used)) {
     net$leaf_used <- 0
@@ -451,7 +451,9 @@ update_iter_cl <- function(mod,
 
   net <- get_tree_net(mod = mod, tree.id = tree.id)
   mem <- mod$membership[, tree.id]
-  names(mem) <- rownames(mod$xvar)
+  if (!is.null(rownames(mod$xvar))) {
+    names(mem) <- rownames(mod$xvar)
+  }
   if (is.null(sample_embed_list)) {
     sample_embed_list <- build_embedding_list(
       mod = mod,
@@ -463,7 +465,7 @@ update_iter_cl <- function(mod,
 
   if (merge_mode == "soft") {
     if (is.null(net$is_leaf)) {
-      net$is_leaf <- ifelse(grepl("leaf", net$to), 1, 0)
+      net$is_leaf <- ifelse(grepl("<leaf>", net$to, fixed = TRUE), 1, 0)
     }
     if (is.null(net$mem_id)) {
       net$mem_id <- ifelse(net$is_leaf == 1, net$to_id, 0)
@@ -484,9 +486,9 @@ update_iter_cl <- function(mod,
     )
 
     class_d <- mem[match(rownames(mod$xvar), names(mem))]
-    if (anyNA(class_d)) {
+    if (length(class_d) != length(mem) || anyNA(class_d)) {
       class_d <- as.numeric(mem)
-      names(class_d) <- rownames(mod$xvar)
+      names(class_d) <- if (is.null(rownames(mod$xvar))) names(mem) else rownames(mod$xvar)
     }
     return(list(class_mem = class_d, prox = prox))
   }
@@ -509,9 +511,9 @@ update_iter_cl <- function(mod,
   }
 
   class_d <- mem[match(rownames(mod$xvar), names(mem))]
-  if (anyNA(class_d)) {
+  if (length(class_d) != length(mem) || anyNA(class_d)) {
     class_d <- as.numeric(mem)
-    names(class_d) <- rownames(mod$xvar)
+    names(class_d) <- if (is.null(rownames(mod$xvar))) names(mem) else rownames(mod$xvar)
   }
 
   if (hard_prox_mode == "binary") {
@@ -556,6 +558,9 @@ cl_forest <- function(mod,
   nt <- mod$ntree
 
   if (parallel) {
+    if (is.null(cores)) {
+      cores <- max(1L, parallel::detectCores() - 1L)
+    }
     cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
     if (Sys.info()["sysname"] == "Windows") {
       cluster <- parallel::makeCluster(cores)

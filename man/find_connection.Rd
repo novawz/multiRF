@@ -2,7 +2,6 @@
 % Please edit documentation in R/findConnection.R
 \name{find_connection}
 \alias{find_connection}
-\alias{full_connect}
 \title{Find optimal directional connections from fitted RF models}
 \usage{
 find_connection(
@@ -14,8 +13,6 @@ find_connection(
   seed = 529L,
   ...
 )
-
-full_connect(dat.list, ...)
 }
 \arguments{
 \item{mod.list}{A named list of fitted RF models. Model names must follow
@@ -39,9 +36,6 @@ Default is \code{FALSE}.}
 \item{seed}{Random seed used by Louvain modularity scoring.}
 
 \item{...}{Additional arguments (currently ignored).}
-
-\item{dat.list}{A named list of omics data blocks with samples in rows and
-features in columns.}
 }
 \value{
 A character vector of selected model names (\code{response_predictor}).

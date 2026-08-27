@@ -17,9 +17,11 @@
   }
   if (!"nodeSZ" %in% names(na_df)) na_df$nodeSZ <- 1L
   if (!"dpthST" %in% names(na_df)) {
-    # Compute depth proxy when node.stats unavailable (rfsrc >= 3.5)
-    na_df$dpthST <- ave(na_df$nodeID, na_df$treeID,
-                        FUN = function(ids) seq_along(ids))
+    # No depth information without node.stats (rfsrc >= 3.5): fall back to a
+    # constant depth of 1 (uniform inv_d). This deliberately matches the
+    # on-the-fly fallback in get_tree_net() so both paths give identical
+    # results for the same model.
+    na_df$dpthST <- 1L
   }
   # Split once — returns a named list of per-tree data frames
   split(na_df, na_df$treeID)
@@ -105,6 +107,7 @@ get_tree_net <- function(mod, tree.id, tree_dfs = NULL){
         }
       }
       if (!"nodeSZ" %in% names(na_df)) na_df$nodeSZ <- 1L
+      # Constant-depth fallback; must stay in sync with .prep_tree_dfs()
       if (!"dpthST" %in% names(na_df)) na_df$dpthST <- 1L
       tree.df <- na_df[na_df$treeID == tree.id, , drop = FALSE]
     }
@@ -152,7 +155,15 @@ get_leaf_ds <- function(mod, tree.membership, net){
   
   # Find upper level node
   prev_leaf <- dplyr::filter(.data = net, is_leaf == 1)
-  
+
+  # Degenerate tree (no leaves left to merge): nothing to update
+  if (nrow(prev_leaf) == 0L) {
+    return(
+      list(net = net,
+           tree.mem = tree.membership)
+    )
+  }
+
   # Update mem_id and membership
   net$mem_id_old <- net$mem_id
   mem_update <- slice_max(.data = prev_leaf, order_by = mem_id, by = from, with_ties = FALSE)
@@ -160,7 +171,7 @@ get_leaf_ds <- function(mod, tree.membership, net){
   mem_new <- setNames(mem_update$mem_id, mem_update$from)
   mem_org_id <- mem_old$mem_id
   names(mem_org_id) <- mem_new
-  sapply(1:nrow(mem_old), function(id) net$mem_id[net$mem_id == mem_org_id[id]] <<- as.numeric(names(mem_org_id)[id]))
+  sapply(seq_len(nrow(mem_old)), function(id) net$mem_id[net$mem_id == mem_org_id[id]] <<- as.numeric(names(mem_org_id)[id]))
   
   find_node <- unique(prev_leaf$from)
   
@@ -181,7 +192,7 @@ get_leaf_ds <- function(mod, tree.membership, net){
   
   tree_mem <- tree.membership
   
-  sapply(1:length(mem_org_id),
+  sapply(seq_along(mem_org_id),
          function(id){
            tree_mem[tree_mem == mem_org_id[id]] <<-
              as.numeric(names(mem_org_id)[id])
@@ -258,7 +269,7 @@ get_tree_imp <- function(mod, dat = NULL, robust = FALSE, tree.membership, net, 
   }
 
   if(calc %in% c("Y", "Both")){
-    datY <- mod$yvar[rownames(dat),]
+    datY <- mod$yvar[rownames(dat), , drop = FALSE]
   }
 
   updated_net <- net
@@ -271,7 +282,7 @@ get_tree_imp <- function(mod, dat = NULL, robust = FALSE, tree.membership, net, 
   scores_imp <- NULL
 
   old_net_corr <- group_by(.data = old_net, from)
-  old_net_corr <- dplyr::summarise_at(old_net_corr, .vars = "inv_d", .funs = mean)
+  old_net_corr <- dplyr::summarise_at(old_net_corr, .vars = c("inv_d", "edge"), .funs = mean)
 
   node_ds <- node_ds[old_net_corr$from]
 
@@ -309,15 +320,15 @@ get_tree_imp <- function(mod, dat = NULL, robust = FALSE, tree.membership, net, 
     sub_net <- old_net_corr[match(unique(match_old_net$from), old_net_corr$from),]
     scores_imp <- (sub_net$inv_d)
     if(weighted) {
-      scores_imp <- scores_imp * old_net_corr$edge
+      scores_imp <- scores_imp * sub_net$edge
     }
 
     # scores_imp <- drop_case[match(imp_var,drop_case$to),] %>% pull(corr)
     names(scores_imp) <- gsub("^(.*)_.*", "\\1",imp_var[match(sub_net$from, imp_var)])
     if (robust) impX_mat <- impX_ls$var_imp_all * (sub_net$inv_d) * impX
   }
-  if (robust) {
-    if(!is.null(impY) | !is.null(impX)) {
+  if (robust && calc == "Both") {
+    if(!is.null(impY) || !is.null(impX)) {
       
       if(is.null(dim(impY_mat))) {
         M <- M + sub_net$inv_d * tcrossprod(impX_mat, impY_mat)
@@ -332,7 +343,7 @@ get_tree_imp <- function(mod, dat = NULL, robust = FALSE, tree.membership, net, 
     }
     #M[names(scores_imp),] <- M[names(scores_imp),] + impY_mat
     #M[,names(scores_impY)] <- M[,names(scores_impY)] + t(impX_mat)
-  }  else { M <- NULL }
+  }  else if (!robust) { M <- NULL }
   
   if(calc == "Both"){
     scores_imp <- list(X = scores_imp, Y = scores_impY)
@@ -494,46 +505,8 @@ update_iter_imp <- function(mod, tree.id, calc = "Both", robust = FALSE, w = NUL
     names(imp_col) <- "Y"
   }
 
-  # add penalty
-  # x_freq <- mod$var.used[tree.id,]
-  # x_freq <- x_freq[x_freq != 0]
-  # imp_col <- add_lambda(imp_col, net, x_freq, lambda)
-
   out <- list(imp_ls = imp_col, net = net, M = mat)
   return(out)
-}
-
-# Add penalty to weights
-add_lambda <- function(imp_ls, net, x_freq, lambda){
-
-  if(all(is.na(net$Y_id))){
-    freq <- list(X = x_freq)
-  } else {
-    freq <- list(X = x_freq, Y = table(net$Y_id))
-  }
-
-  new_ww <- plyr::llply(
-    names(imp_ls),
-    .fun = function(i){
-
-      var <- freq[[i]]
-      var_imp_all <- imp_ls[[i]]
-      var_imp <- var_imp_all[var_imp_all != 0]
-      var <- var[names(var_imp)]
-
-      if(any(var == 1)){
-        var_imp[var == 1] <- var_imp[var == 1] * lambda
-        var_imp_all[names(var_imp)] <- var_imp
-      }
-
-      var_imp_all
-    }
-  )
-
-  names(new_ww) <- names(imp_ls)
-
-  new_ww
-
 }
 
 #' Get forest importance
@@ -541,21 +514,33 @@ add_lambda <- function(imp_ls, net, x_freq, lambda){
 #' optional `randomForestSRC` fallback.
 #' @param parallel Logical; whether to parallelize across trees.
 #' @param robust Logical; whether to use robust matrix-based aggregation.
+#'   Requires `calc = "Both"`.
 #' @param calc Which importance side to compute: `"X"`, `"Y"`, or `"Both"`.
 #' @param weighted Logical; whether to use weighted importance updates.
 #' @param use_depth Logical; whether to aggregate non-zero depths instead of simple mean.
 #' @param normalized Logical; whether to l2-normalize returned importance.
-#' @param w Optional case weights.
+#' @param w Optional case weights. Currently unused by the post-hoc tree
+#'   traversal; reserved for future use.
 #' @param ytry Response sampling proportion used in node-level updates.
-#' @param cores Number of CPU cores used when `parallel = TRUE`.
-#' @param seed Random seed passed to stochastic components.
+#'   Currently unused by the post-hoc tree traversal; reserved for future use.
+#' @param cores Number of CPU cores used when `parallel = TRUE`; `NULL`
+#'   (default) uses `parallel::detectCores() - 1`.
+#' @param seed Random seed passed to stochastic components. Currently unused
+#'   by the post-hoc tree traversal; reserved for future use.
 #' @rdname get_imp_forest
 get_imp_forest <- function(mod, parallel = FALSE, robust = FALSE, calc = "Both", weighted = FALSE, use_depth = FALSE, normalized = FALSE,
                            w = NULL, ytry = 1, cores = NULL, seed = -5){
 
+  if (robust && calc != "Both") {
+    stop("`robust = TRUE` requires `calc = \"Both\"`.")
+  }
+
   nt <- mod$ntree
 
   if(parallel){
+    if (is.null(cores)) {
+      cores <- max(1L, parallel::detectCores() - 1L)
+    }
     cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
     if(Sys.info()["sysname"] == "Windows"){
       cluster <- parallel::makeCluster(cores)
@@ -601,7 +586,7 @@ get_imp_forest <- function(mod, parallel = FALSE, robust = FALSE, calc = "Both",
       # impX <- diag(M1); impY <- diag(M2)
       # impX <- rowMeans(M); impY <- colMeans(M)
       if(normalized){
-        imp_ls <- list(X = impX/sqrt(sum(impX^2)), Y = impY/sum(sqrt(impY^2)))
+        imp_ls <- list(X = impX/sqrt(sum(impX^2)), Y = impY/sqrt(sum(impY^2)))
       } else {
         imp_ls <- list(X = impX, Y = impY)
       }
@@ -845,15 +830,20 @@ get_iv <- function(var_name, imp){
 #' @param weighted Logical; whether to use weighted importance updates.
 #' @param use_depth Logical; whether to average depth-aware importances.
 #' @param robust Logical; whether to use robust matrix-based aggregation.
+#'   Requires `calc = "Both"`.
 #' @param parallel Logical; whether to parallelize across models.
 #' @param normalized Logical; whether to normalize the merged weights. The
 #'   default is `FALSE`, preserving raw forest IMD on its 0-to-1 scale
 #'   for variable selection.
 #' @param calc Which importance side to compute: `"X"`, `"Y"`, or `"Both"`.
 #' @param ytry Response sampling proportion used in node-level updates.
-#' @param w Optional case weights.
-#' @param cores Number of CPU cores used when `parallel = TRUE`.
-#' @param seed Random seed passed to stochastic components.
+#'   Currently unused by the post-hoc tree traversal; reserved for future use.
+#' @param w Optional case weights. Currently unused by the post-hoc tree
+#'   traversal; reserved for future use.
+#' @param cores Number of CPU cores used when `parallel = TRUE`; `NULL`
+#'   (default) uses `parallel::detectCores() - 1`.
+#' @param seed Random seed passed to stochastic components. Currently unused
+#'   by the post-hoc tree traversal; reserved for future use.
 #' @param ... Additional arguments for downstream helper functions.
 #' @rdname get_multi_weights
 get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  use_depth = FALSE, robust = FALSE,
@@ -983,116 +973,6 @@ get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  u
 }
 
 
-cal_freq <- function(mod, net){
-
-  x_freq <- colMeans(mod$var.used != 0)
-  freq <- list(X = x_freq)
-
-  if(is.null(mod$yvar) || identical(class(mod)[3], "class+")){
-    return(freq)
-  } else {
-
-    f <- rep(0, ncol(mod$yvar))
-    names(f) <- colnames(mod$yvar)
-    y_freq <- purrr::map(
-      net,
-      ~{
-        id <- .[["Y_id"]]
-        tb <- table(id)
-        names(tb)
-      }
-    )
-    y_freq <- table(unlist(y_freq))/mod$ntree
-    f[names(y_freq)] <- y_freq
-
-    freq <- c(freq,list(Y = f))
-
-    return(freq)
-  }
-
-
-}
-
-# step_two_weight <- function(two_step, rm_noise, normalized, weight_l, dat.list, freq_ls, s){
-# 
-#   if(two_step){
-#     if(length(freq_ls) > 1){
-#       freq <- plyr::llply(
-#         names(dat.list),
-#         .fun = function(i){
-# 
-#           fr <- purrr::map(freq_ls, i)
-#           fr <- purrr::compact(fr)
-#           Reduce("+", fr)/length(fr)
-#         }
-#       )
-#       names(freq) <- names(dat.list)
-#     } else {
-#       freq <- freq_ls[[1]]
-#     }
-#   }
-# 
-#   if(length(weight_l) > 1){
-#     weight_list <- plyr::llply(
-#       names(dat.list),
-#       .fun = function(i){
-#         w <- purrr::map(weight_l, i)
-#         w <- purrr::compact(w)
-#         w <- (Reduce("+", w))/length(w)
-#         if(two_step){
-#           x <- freq[[i]]
-#           # o <- sort(x, decreasing = T)[1:ceiling(a[i] * length(x))]
-#           # x[x < min(o)] <- 0
-#           w <- w * x
-#         }
-#         if(rm_noise){
-#           x <- s * sd(w)
-#           w[w < x] <- 0
-#           w[w > x] <- w[w > x] - x
-#           
-#         } 
-#         if(normalized) {
-#           w <- w/sqrt(sum(w^2))
-#         }
-#         
-#         w
-#       }
-#     )
-#     names(weight_list) <- names(dat.list)
-#   } else {
-#     weight_list <- weight_l[[1]]
-#     wl <- plyr::llply(
-#       names(weight_list),
-#       .fun = function(i){
-#         w <- weight_list[[i]]
-#         if(two_step){
-# 
-#           x <- freq[[i]]
-#           # o <- sort(x, decreasing = T)[1:ceiling(a[i] * length(x))]
-#           # x[x < min(o)] <- 0
-#           w <- w * x
-#         }
-#         if(rm_noise){
-#           x <- s * sd(w)
-#           w[w < x] <- 0
-#           w[w > x] <- w[w > x] - x
-# 
-#         } 
-#         if(normalized) {
-#           w <- w/sqrt(sum(w^2))
-#         }
-#         
-#         w
-#       }
-#     )
-#     names(wl) <- names(weight_list)
-#     weight_list <- wl
-#     weight_list <- weight_list[names(dat.list)]
-#   }
-# 
-#   weight_list
-# }
-
 get_results <- function(mod_list, parallel,
                         normalized = FALSE, weighted = FALSE, robust = FALSE,
                         use_depth = FALSE, calc, w = NULL, ytry = 1, cores = NULL, seed = -5){
@@ -1125,13 +1005,10 @@ get_results <- function(mod_list, parallel,
       if (is.list(wl_init)) {
         wl_init <- lapply(wl_init, .rename_imd_sides, block_map = block_map)
       }
-      # freq <- cal_freq(mod, net)
-      # names(freq) <- rev(m_name_sep)
       return(list(
         wl = wl,
         wl_init = wl_init,
         net = net
-        # freq = freq
       ))
     },.parallel = F
   )

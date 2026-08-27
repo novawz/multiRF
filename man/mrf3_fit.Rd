@@ -98,7 +98,10 @@ IMD when \code{run_imd = TRUE}. The default is \code{FALSE}; set it explicitly t
 \code{TRUE} to request the cluster-specific stage.}
 
 \item{imd_args}{A named list of additional arguments passed to \code{get_multi_weights()}.
-By default, this function sets \code{parallel = TRUE} for IMD unless overridden here.}
+By default, this function sets \code{parallel = TRUE} for IMD unless overridden here.
+When any model is a sub-MRF, entries shared with \code{get_imp_forest()}
+(e.g. \code{parallel}, \code{normalized}) are also applied to the per-connection
+IMD computation of full-forest models.}
 
 \item{run_variable_selection}{Logical; whether to run variable selection
 using \code{mrf3_vs()} after IMD weights are available.}

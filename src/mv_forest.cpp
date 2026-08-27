@@ -22,6 +22,7 @@
 #include <random>
 #include <array>
 #include <map>
+#include <utility>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -33,7 +34,6 @@ static constexpr double RF_EPSILON = 1.0e-9;
 
 // ──────────────── Node structure ────────────────
 struct Node {
-  int id;
   int left;       // child index (-1 = leaf)
   int right;
   int split_var;  // column index in X (-1 = leaf)
@@ -77,10 +77,31 @@ struct MatrixView {
 // more closely than std::shuffle + prefix slice.
 struct RfsrcRan1;
 
-template <typename RNG>
-static double random_unit(RNG& rng) {
-  std::uniform_real_distribution<double> dist(0.0, 1.0);
-  return dist(rng);
+// Cross-platform determinism (unsupervised path): std::mt19937 is kept as the
+// generator, but std::uniform_real_distribution, std::uniform_int_distribution
+// and std::shuffle are replaced with small hand-rolled equivalents below,
+// because their algorithms are implementation-defined and differ across
+// standard libraries (libstdc++ vs libc++ vs MSVC).
+// NOTE: the unsupervised draw sequences changed in 0.2.3; a given seed now
+// yields the same forest on every platform, but not the same forest as
+// versions <= 0.2.2.
+static double random_unit(std::mt19937& rng) {
+  // mt() / 2^32, uniform on [0, 1)
+  return (double)rng() * (1.0 / 4294967296.0);
+}
+
+// Deterministic integer draw in {0, ..., bound - 1} (modulo draw; the bias is
+// negligible for bound << 2^32).
+static int random_index(std::mt19937& rng, int bound) {
+  return (int)(rng() % (unsigned int)bound);
+}
+
+// Explicit Fisher-Yates shuffle using deterministic index draws.
+static void fisher_yates_shuffle(std::vector<int>& v, std::mt19937& rng) {
+  for (int i = (int)v.size() - 1; i > 0; i--) {
+    int j = random_index(rng, i + 1);
+    std::swap(v[i], v[j]);
+  }
 }
 
 template <typename RNG>
@@ -175,6 +196,44 @@ static std::vector<int> sample_from_pool_rfsrc_style(const std::vector<int>& poo
   return out;
 }
 
+// Buffer-reusing variant of sample_from_pool_rfsrc_style: identical draw
+// sequence and identical output values, but the working pool copy and the
+// output vector live in caller-owned buffers whose capacity is reused across
+// calls (no per-call heap traffic).
+template <typename RNG>
+static void sample_from_pool_rfsrc_style_buf(const std::vector<int>& pool_in,
+                                             int sample_size,
+                                             RNG& rng,
+                                             std::vector<int>& pool_buf,
+                                             std::vector<int>& out)
+{
+  out.clear();
+  if (pool_in.empty()) return;
+  sample_size = std::max(1, std::min(sample_size, (int)pool_in.size()));
+  pool_buf.assign(pool_in.begin(), pool_in.end());
+  int remaining = (int)pool_buf.size();
+  for (int i = 0; i < sample_size; i++) {
+    int pick = std::max(0, std::min(remaining - 1,
+      (int)std::ceil(random_unit(rng) * remaining) - 1));
+    out.push_back(pool_buf[pick]);
+    pool_buf[pick] = pool_buf[remaining - 1];
+    remaining--;
+  }
+}
+
+// Per-tree scratch buffers threaded through find_best_split_part so the
+// per-node / per-candidate-variable allocations are paid once per tree.
+// Purely a memory-reuse change: values, iteration order and the RNG draw
+// sequence are untouched.
+struct SplitScratch {
+  std::vector<int> x_pool, y_pool;
+  std::vector<int> x_candidates, y_candidates;
+  std::vector<int> pool_buf;
+  std::vector<int> split_positions;
+  std::vector<int> eval_buf;
+  std::vector<double> y_means, y_sds, y_std_flat, sum_L;
+};
+
 // Weighted sampling without replacement for candidate variables.  Variables
 // with zero weight are not eligible while positive mass exists.  The uniform
 // helper above remains the exact path when no weights are supplied, preserving
@@ -235,13 +294,17 @@ static std::vector<int> sample_cutpoint_positions(const std::vector<int>& candid
 // ──────────────── Pre-sorted split (fast path) ────────────────
 
 // Pre-sort all X columns. Returns sort_order[j] = sample indices sorted by X[,j].
+// nthread <= 0 means use the OpenMP default; a num_threads(...) clause is used
+// instead of omp_set_num_threads() so no process-global setting leaks to other
+// OpenMP users in the R session.
 template <typename XMat>
 static std::vector<std::vector<int>> presort_columns(
-    const XMat& X, int n, int px)
+    const XMat& X, int n, int px, int nthread = 0)
 {
   std::vector<std::vector<int>> sort_order(px);
   #ifdef _OPENMP
-  #pragma omp parallel for schedule(static)
+  const int omp_threads = (nthread > 0) ? nthread : omp_get_max_threads();
+  #pragma omp parallel for schedule(static) num_threads(omp_threads)
   #endif
   for (int j = 0; j < px; j++) {
     sort_order[j].resize(n);
@@ -261,8 +324,11 @@ template <typename XMat, typename YMat, typename RNG>
 static bool find_best_split_part(
     const XMat& X, const YMat& Y,
     const std::vector<int>& samples,                    // samples in this node
-    const std::vector<std::vector<int>>& node_sorted,   // [px][n_node] pre-sorted per var
+    const int* node_sorted_arena,                       // per-tree arena [px * arena_stride]
+    std::size_t arena_stride,                           // = n_bag (column stride)
+    int node_begin,                                     // this node's offset in every column
     std::vector<int>& sample_pos,                       // reusable scratch [n_total]
+    SplitScratch& scratch,                              // per-tree reusable buffers
     int mtry, int ytry, int nodesize_min, int nsplit,
     const std::vector<double>* xvar_wt,
     const std::vector<double>* yvar_wt,
@@ -278,24 +344,38 @@ static bool find_best_split_part(
   if (n_node < 2 * nodesize_min) return false;
 
   // Random subset of X columns (mtry)
-  std::vector<int> x_pool(px);
+  std::vector<int>& x_pool = scratch.x_pool;
+  x_pool.resize(px);
   std::iota(x_pool.begin(), x_pool.end(), 0);
-  std::vector<int> x_candidates = xvar_wt
-    ? sample_from_pool_weighted(x_pool, *xvar_wt, std::min(mtry, px), rng)
-    : sample_from_pool_rfsrc_style(x_pool, std::min(mtry, px), rng);
+  std::vector<int>& x_candidates = scratch.x_candidates;
+  if (xvar_wt) {
+    x_candidates = sample_from_pool_weighted(x_pool, *xvar_wt,
+                                             std::min(mtry, px), rng);
+  } else {
+    sample_from_pool_rfsrc_style_buf(x_pool, std::min(mtry, px), rng,
+                                     scratch.pool_buf, x_candidates);
+  }
   int n_x_try = (int)x_candidates.size();
 
   // Random subset of Y columns (ytry)
-  std::vector<int> y_pool(qy);
+  std::vector<int>& y_pool = scratch.y_pool;
+  y_pool.resize(qy);
   std::iota(y_pool.begin(), y_pool.end(), 0);
-  std::vector<int> y_candidates = yvar_wt
-    ? sample_from_pool_weighted(y_pool, *yvar_wt, std::min(ytry, qy), rng)
-    : sample_from_pool_rfsrc_style(y_pool, std::min(ytry, qy), rng);
+  std::vector<int>& y_candidates = scratch.y_candidates;
+  if (yvar_wt) {
+    y_candidates = sample_from_pool_weighted(y_pool, *yvar_wt,
+                                             std::min(ytry, qy), rng);
+  } else {
+    sample_from_pool_rfsrc_style_buf(y_pool, std::min(ytry, qy), rng,
+                                     scratch.pool_buf, y_candidates);
+  }
   int n_y_try = (int)y_candidates.size();
 
   // Pre-standardize selected Y columns within this node
-  std::vector<double> y_means(n_y_try, 0.0);
-  std::vector<double> y_sds(n_y_try, 1.0);
+  std::vector<double>& y_means = scratch.y_means;
+  std::vector<double>& y_sds = scratch.y_sds;
+  y_means.assign(n_y_try, 0.0);
+  y_sds.assign(n_y_try, 1.0);
   for (int jj = 0; jj < n_y_try; jj++) {
     int j = y_candidates[jj];
     double sum = 0.0;
@@ -318,13 +398,17 @@ static bool find_best_split_part(
   best_val = 0.0;
   best_msrv = -1;
 
-  // Pre-compute standardized Y; build sample_id -> local index map
-  std::vector<double> y_std_flat(n_y_try * n_node);
+  // Pre-compute standardized Y; build sample_id -> local index map.
+  // Layout is sample-major (y_std_flat[k * n_y_try + jj]) so the hot
+  // accumulation loop over jj reads contiguously.  Values and the per-jj
+  // addition order into sum_L are unchanged — bit-identical sums.
+  std::vector<double>& y_std_flat = scratch.y_std_flat;
+  y_std_flat.resize((std::size_t)n_y_try * (std::size_t)n_node);
   for (int jj = 0; jj < n_y_try; jj++) {
     int j = y_candidates[jj];
     double inv_sd = (y_sds[jj] > 0.0) ? 1.0 / y_sds[jj] : 0.0;
     for (int k = 0; k < n_node; k++) {
-      y_std_flat[jj * n_node + k] =
+      y_std_flat[(std::size_t)k * n_y_try + jj] =
         (Y(samples[k], j) - y_means[jj]) * inv_sd;
     }
   }
@@ -332,23 +416,38 @@ static bool find_best_split_part(
 
   for (int xi = 0; xi < n_x_try; xi++) {
     int xvar = x_candidates[xi];
-    const std::vector<int>& order = node_sorted[xvar];
+    const int* order =
+      node_sorted_arena + (std::size_t)xvar * arena_stride + node_begin;
     // order has exactly n_node entries, all in this node — no skipping
     // Note: nodesize is enforced only at the parent level (n_node >= 2*nodesize_min)
     // to match rfsrc, which checks leftSize>0 && rghtSize>0 at the cutpoint level.
     // A child smaller than nodesize simply becomes a terminal leaf.
-    std::vector<int> split_positions;
-    split_positions.reserve(n_node);
+    std::vector<int>& split_positions = scratch.split_positions;
+    split_positions.clear();
+    if ((int)split_positions.capacity() < n_node) split_positions.reserve(n_node);
     for (int s = 1; s < n_node; s++) {
       if (X(order[s - 1], xvar) == X(order[s], xvar)) continue;
       split_positions.push_back(s);
     }
     if (split_positions.empty()) continue;
-    std::vector<int> eval_positions = sample_cutpoint_positions(split_positions, nsplit, rng);
+    // Inlined sample_cutpoint_positions: identical branch structure and RNG
+    // draws, but the no-sampling branch borrows split_positions instead of
+    // copying it, and the sampled branch reuses scratch buffers.
+    const std::vector<int>* eval_ptr;
+    if (nsplit <= 0 || (int)split_positions.size() <= nsplit) {
+      eval_ptr = &split_positions;
+    } else {
+      sample_from_pool_rfsrc_style_buf(split_positions, nsplit, rng,
+                                       scratch.pool_buf, scratch.eval_buf);
+      std::sort(scratch.eval_buf.begin(), scratch.eval_buf.end());
+      eval_ptr = &scratch.eval_buf;
+    }
+    const std::vector<int>& eval_positions = *eval_ptr;
     int eval_idx = 0;
     int next_eval = eval_positions[eval_idx];
 
-    std::vector<double> sum_L(n_y_try, 0.0);
+    std::vector<double>& sum_L = scratch.sum_L;
+    sum_L.assign(n_y_try, 0.0);
     int nL = 0;
 
     for (int s = 0; s < n_node; s++) {
@@ -401,8 +500,9 @@ static bool find_best_split_part(
       }
 
       nL++;
+      const double* y_row = y_std_flat.data() + (std::size_t)local_k * n_y_try;
       for (int jj = 0; jj < n_y_try; jj++) {
-        sum_L[jj] += y_std_flat[jj * n_node + local_k];
+        sum_L[jj] += y_row[jj];
       }
     }
   }
@@ -446,16 +546,19 @@ static std::vector<Node> build_tree_part(
 
   std::vector<int> sample_pos(n_total, -1);  // reusable scratch
   std::vector<char> left_flag(n_total, 0);   // reusable scratch for partitioning
+  SplitScratch split_scratch;                // per-tree split-search buffers
 
-  // BFS task: node id + its per-variable sorted indices
+  // BFS task: node id + its [begin, begin+size) range in the per-tree arena.
+  // Every variable's sorted indices for this node live at the same offsets
+  // within their respective arena columns.
   struct SplitTask {
     int node_id;
-    std::vector<std::vector<int>> sorted;  // [px][n_node]
+    int begin;
+    int size;
   };
 
   // Create root node
   Node root;
-  root.id = 0;
   root.left = -1;
   root.right = -1;
   root.split_var = -1;
@@ -471,20 +574,31 @@ static std::vector<Node> build_tree_part(
   std::vector<int> bag_frequency(n_total, 0);
   for (int si : bag_samples) bag_frequency[si]++;
 
-  SplitTask root_task;
-  root_task.node_id = 0;
-  root_task.sorted.resize(px);
+  // Per-tree arena: px columns of n_bag sorted-with-multiplicity indices,
+  // plus one scratch column used for the in-place stable partition.  Element
+  // order within every node's range is exactly the order the previous
+  // per-node vector<vector<int>> bookkeeping produced (stable partition),
+  // so split search visits samples in an identical sequence.
+  const int n_bag = (int)bag_samples.size();
+  std::vector<int> arena((std::size_t)px * (std::size_t)n_bag);
+  std::vector<int> part_scratch(n_bag);
   for (int j = 0; j < px; j++) {
-    root_task.sorted[j].reserve(bag_samples.size());
+    int* col = arena.data() + (std::size_t)j * (std::size_t)n_bag;
+    int w = 0;
     for (int si : sort_order[j]) {
       for (int k = 0; k < bag_frequency[si]; k++) {
-        root_task.sorted[j].push_back(si);
+        col[w++] = si;
       }
     }
   }
 
+  SplitTask root_task;
+  root_task.node_id = 0;
+  root_task.begin = 0;
+  root_task.size = n_bag;
+
   std::vector<SplitTask> to_split;
-  to_split.push_back(std::move(root_task));
+  to_split.push_back(root_task);
 
   while (!to_split.empty()) {
     std::vector<SplitTask> next_split;
@@ -502,7 +616,8 @@ static std::vector<Node> build_tree_part(
       int bmsrv = -1;
 
       bool found = find_best_split_part(
-        X, Y, node.samples, task.sorted, sample_pos,
+        X, Y, node.samples, arena.data(), (std::size_t)n_bag, task.begin,
+        sample_pos, split_scratch,
         mtry, ytry, nodesize_min, nsplit, xvar_wt, yvar_wt, rng,
         bv, bval, bscore, lsamp, rsamp, by_stats, bmsrv);
 
@@ -517,44 +632,51 @@ static std::vector<Node> build_tree_part(
       // Mark left samples for partitioning
       for (int si : lsamp) left_flag[si] = 1;
 
-      // Partition each variable's sorted indices into left/right
-      std::vector<std::vector<int>> left_sorted(px), right_sorted(px);
+      // Stable in-place partition of each variable's arena range: left-flagged
+      // entries are compacted to the front (write index wl <= read index s, so
+      // no unread entry is clobbered), right entries buffered in part_scratch
+      // and copied back after.  Relative order within each side is preserved —
+      // identical to the previous push_back-based partitioning.
+      const int seg_begin = task.begin;
+      const int seg_end = task.begin + task.size;
+      const int nL_part = (int)lsamp.size();
       for (int j = 0; j < px; j++) {
-        left_sorted[j].reserve(lsamp.size());
-        right_sorted[j].reserve(rsamp.size());
-        for (int si : task.sorted[j]) {
-          if (left_flag[si]) left_sorted[j].push_back(si);
-          else right_sorted[j].push_back(si);
+        int* col = arena.data() + (std::size_t)j * (std::size_t)n_bag;
+        int wl = seg_begin;
+        int wr = 0;
+        for (int s = seg_begin; s < seg_end; s++) {
+          int si = col[s];
+          if (left_flag[si]) col[wl++] = si;
+          else part_scratch[wr++] = si;
         }
+        for (int k = 0; k < wr; k++) col[wl + k] = part_scratch[k];
       }
 
       // Clear left_flag
       for (int si : lsamp) left_flag[si] = 0;
 
-      // Free parent's sorted indices (no longer needed)
-      task.sorted.clear();
-      task.sorted.shrink_to_fit();
+      // Capture the parent's depth by value BEFORE any push_back below:
+      // growing `nodes` may reallocate and invalidate the `node` reference.
+      int parent_depth = node.depth;
 
       int left_id = (int)nodes.size();
       Node left_node;
-      left_node.id = left_id;
       left_node.left = -1;
       left_node.right = -1;
       left_node.split_var = -1;
       left_node.split_val = 0.0;
-      left_node.depth = node.depth + 1;
+      left_node.depth = parent_depth + 1;
       left_node.samples = std::move(lsamp);
       left_node.nodesize = (int)left_node.samples.size();
       nodes.push_back(left_node);
 
       int right_id = (int)nodes.size();
       Node right_node;
-      right_node.id = right_id;
       right_node.left = -1;
       right_node.right = -1;
       right_node.split_var = -1;
       right_node.split_val = 0.0;
-      right_node.depth = node.depth + 1;
+      right_node.depth = parent_depth + 1;
       right_node.samples = std::move(rsamp);
       right_node.nodesize = (int)right_node.samples.size();
       nodes.push_back(right_node);
@@ -562,454 +684,24 @@ static std::vector<Node> build_tree_part(
       nodes[task.node_id].left = left_id;
       nodes[task.node_id].right = right_id;
 
-      // Queue children with their partitioned sorted indices
+      // Queue children with their partitioned arena ranges
       SplitTask left_task;
       left_task.node_id = left_id;
-      left_task.sorted = std::move(left_sorted);
-      next_split.push_back(std::move(left_task));
+      left_task.begin = seg_begin;
+      left_task.size = nL_part;
+      next_split.push_back(left_task);
 
       SplitTask right_task;
       right_task.node_id = right_id;
-      right_task.sorted = std::move(right_sorted);
-      next_split.push_back(std::move(right_task));
+      right_task.begin = seg_begin + nL_part;
+      right_task.size = task.size - nL_part;
+      next_split.push_back(right_task);
     }
 
     to_split = std::move(next_split);
   }
 
   return nodes;
-}
-
-// ──────────────── Global-scan split (kept for fallback) ────────────────
-
-// Fast split using pre-sorted indices.
-// in_node[i] = true if sample i belongs to current node.
-// sort_order[j] = global sorted indices for X column j.
-template <typename XMat, typename YMat, typename RNG>
-static bool find_best_split_fast(
-    const XMat& X, const YMat& Y,
-    const std::vector<int>& samples,          // samples in this node
-    const std::vector<char>& in_node,         // n-length flag
-    const std::vector<std::vector<int>>& sort_order,
-    std::vector<int>& sample_pos,             // reusable n-length scratch buffer
-    int mtry, int ytry, int nodesize_min, int nsplit,
-    RNG& rng,
-    int& best_var, double& best_val, double& best_score,
-    std::vector<int>& left_samples, std::vector<int>& right_samples,
-    std::vector<double>& best_y_stats)
-{
-  int n_node = (int)samples.size();
-  int n_total = (int)sample_pos.size();
-  int px = X.ncol();
-  int qy = Y.ncol();
-
-  if (n_node < 2 * nodesize_min) return false;
-
-  // Random subset of X columns (mtry)
-  std::vector<int> x_pool(px);
-  std::iota(x_pool.begin(), x_pool.end(), 0);
-  int n_x_try = std::min(mtry, px);
-  std::vector<int> x_candidates = sample_from_pool_rfsrc_style(x_pool, n_x_try, rng);
-
-  // Random subset of Y columns (ytry)
-  std::vector<int> y_pool(qy);
-  std::iota(y_pool.begin(), y_pool.end(), 0);
-  int n_y_try = std::min(ytry, qy);
-  std::vector<int> y_candidates = sample_from_pool_rfsrc_style(y_pool, n_y_try, rng);
-
-  // Pre-standardize selected Y columns within this node
-  std::vector<double> y_means(n_y_try, 0.0);
-  std::vector<double> y_sds(n_y_try, 1.0);
-  for (int jj = 0; jj < n_y_try; jj++) {
-    int j = y_candidates[jj];
-    double sum = 0.0;
-    for (int k = 0; k < n_node; k++) sum += Y(samples[k], j);
-    y_means[jj] = sum / n_node;
-  }
-  for (int jj = 0; jj < n_y_try; jj++) {
-    int j = y_candidates[jj];
-    double ss = 0.0;
-    for (int k = 0; k < n_node; k++) {
-      double d = Y(samples[k], j) - y_means[jj];
-      ss += d * d;
-    }
-    double var = (n_node > 1) ? ss / n_node : 0.0;
-    y_sds[jj] = (var > 0.0) ? std::sqrt(var) : 0.0;
-  }
-
-  best_score = -1.0;
-  best_var = -1;
-  best_val = 0.0;
-
-  // Pre-compute standardized Y for node samples (avoid repeated computation)
-  // y_std[jj][k] = standardized Y for sample samples[k], Y-candidate jj
-  // We need to map sample_id -> position for fast lookup during scanning
-  std::vector<double> y_std_flat(n_y_try * n_node);
-  for (int jj = 0; jj < n_y_try; jj++) {
-    int j = y_candidates[jj];
-    double inv_sd = (y_sds[jj] > 0.0) ? 1.0 / y_sds[jj] : 0.0;
-    for (int k = 0; k < n_node; k++) {
-      y_std_flat[jj * n_node + k] =
-        (Y(samples[k], j) - y_means[jj]) * inv_sd;
-    }
-  }
-  // Set sample_id -> local index map (buffer passed in, cleared on exit)
-  for (int k = 0; k < n_node; k++) sample_pos[samples[k]] = k;
-
-  for (int xi = 0; xi < n_x_try; xi++) {
-    int xvar = x_candidates[xi];
-    const std::vector<int>& order = sort_order[xvar];
-
-    std::vector<int> split_positions;
-    split_positions.reserve(n_node);
-    double prev_scan = 0.0;
-    bool first_scan = true;
-    for (int s = 0; s < n_total; s++) {
-      int si = order[s];
-      if (!in_node[si]) continue;
-      double x_val = X(si, xvar);
-      // nodesize enforced at parent level only; match rfsrc cutpoint check (>0)
-      if (!first_scan && x_val != prev_scan) {
-        split_positions.push_back(s);
-      }
-      prev_scan = x_val;
-      first_scan = false;
-    }
-    if (split_positions.empty()) continue;
-    std::vector<int> eval_positions = sample_cutpoint_positions(split_positions, nsplit, rng);
-    int eval_idx = 0;
-    int next_eval = eval_positions[eval_idx];
-
-    // Scan pre-sorted indices; skip samples not in this node
-    std::vector<double> sum_L(n_y_try, 0.0);
-    int nL = 0;
-    double prev_x = 0.0;
-
-    for (int s = 0; s < n_total; s++) {
-      int si = order[s];
-      if (!in_node[si]) continue;
-
-      double x_val = X(si, xvar);
-      int local_k = sample_pos[si];
-
-      if (eval_idx < (int)eval_positions.size() && s == next_eval) {
-        // Evaluate split between prev_x and x_val
-        int nR = n_node - nL;
-        double score = 0.0;
-        int deltaNorm = 0;
-        for (int jj = 0; jj < n_y_try; jj++) {
-          if (y_sds[jj] > 0.0) {
-            double sL = sum_L[jj];
-            score += (sL * sL) / nL + (sL * sL) / nR;
-            deltaNorm++;
-          }
-        }
-        if (deltaNorm > 0) score /= deltaNorm;
-
-        if (deltaNorm > 0 && (score - best_score) > RF_EPSILON) {
-          best_score = score;
-          best_y_stats.assign(qy, 0.0);
-          for (int jj = 0; jj < n_y_try; jj++) {
-            double sL = sum_L[jj];
-            best_y_stats[y_candidates[jj]] = (sL * sL) / nL + (sL * sL) / nR;
-          }
-          best_var = xvar;
-          best_val = prev_x;
-        }
-        eval_idx++;
-        if (eval_idx < (int)eval_positions.size()) {
-          next_eval = eval_positions[eval_idx];
-        } else {
-          next_eval = n_total;
-        }
-      }
-
-      // Add this sample to left child
-      nL++;
-      for (int jj = 0; jj < n_y_try; jj++) {
-        sum_L[jj] += y_std_flat[jj * n_node + local_k];
-      }
-      prev_x = x_val;
-    }
-  }
-
-  // Clean up sample_pos
-  for (int k = 0; k < n_node; k++) sample_pos[samples[k]] = -1;
-
-  if (best_var < 0) return false;
-
-  // Partition samples
-  left_samples.clear();
-  right_samples.clear();
-  left_samples.reserve(n_node);
-  right_samples.reserve(n_node);
-  for (int k = 0; k < n_node; k++) {
-    if (X(samples[k], best_var) <= best_val) {
-      left_samples.push_back(samples[k]);
-    } else {
-      right_samples.push_back(samples[k]);
-    }
-  }
-
-  return !left_samples.empty() && !right_samples.empty();
-}
-
-// Build tree using pre-sorted indices (fast path)
-template <typename XMat, typename YMat, typename RNG>
-static std::vector<Node> build_tree_fast(
-    const XMat& X, const YMat& Y,
-    const std::vector<int>& bag_samples,
-    const std::vector<std::vector<int>>& sort_order,
-    int n_total,
-    int mtry, int ytry, int nodesize_min, int max_depth, int nsplit,
-    RNG& rng)
-{
-  std::vector<Node> nodes;
-  nodes.reserve(256);
-
-  // Reusable scratch buffers (allocated once, cleared per-node)
-  std::vector<char> in_node(n_total, 0);
-  std::vector<int> sample_pos(n_total, -1);
-
-  Node root;
-  root.id = 0;
-  root.left = -1;
-  root.right = -1;
-  root.split_var = -1;
-  root.split_val = 0.0;
-  root.depth = 0;
-  root.samples = bag_samples;
-  root.nodesize = (int)bag_samples.size();
-  nodes.push_back(root);
-
-  std::vector<int> to_split = {0};
-
-  while (!to_split.empty()) {
-    std::vector<int> next_split;
-
-    for (int ni : to_split) {
-      Node& node = nodes[ni];
-
-      if ((int)node.samples.size() < 2 * nodesize_min) continue;
-      if (max_depth > 0 && node.depth >= max_depth) continue;
-
-      // Set in_node flags for current node
-      for (int si : node.samples) in_node[si] = true;
-
-      int bv;
-      double bval, bscore;
-      std::vector<int> lsamp, rsamp;
-      std::vector<double> by_stats;
-
-      bool found = find_best_split_fast(
-        X, Y, node.samples, in_node, sort_order, sample_pos,
-        mtry, ytry, nodesize_min, nsplit, rng,
-        bv, bval, bscore, lsamp, rsamp, by_stats);
-
-      // Clear in_node flags
-      for (int si : node.samples) in_node[si] = false;
-
-      if (!found) continue;
-
-      node.split_var = bv;
-      node.split_val = bval;
-      node.imd_y_stats = std::move(by_stats);
-      node.imd_x_score = bscore;
-
-      int left_id = (int)nodes.size();
-      Node left_node;
-      left_node.id = left_id;
-      left_node.left = -1;
-      left_node.right = -1;
-      left_node.split_var = -1;
-      left_node.split_val = 0.0;
-      left_node.depth = node.depth + 1;
-      left_node.samples = std::move(lsamp);
-      left_node.nodesize = (int)left_node.samples.size();
-      nodes.push_back(left_node);
-
-      int right_id = (int)nodes.size();
-      Node right_node;
-      right_node.id = right_id;
-      right_node.left = -1;
-      right_node.right = -1;
-      right_node.split_var = -1;
-      right_node.split_val = 0.0;
-      right_node.depth = node.depth + 1;
-      right_node.samples = std::move(rsamp);
-      right_node.nodesize = (int)right_node.samples.size();
-      nodes.push_back(right_node);
-
-      nodes[ni].left = left_id;
-      nodes[ni].right = right_id;
-
-      next_split.push_back(left_id);
-      next_split.push_back(right_id);
-    }
-
-    to_split = std::move(next_split);
-  }
-
-  return nodes;
-}
-
-// ──────────────── Original split (kept for reference) ────────────────
-
-// Find the best split for a node
-// X: n x px, Y: n x qy (full matrices, use sample indices)
-// mtry: number of candidate X vars, ytry: number of candidate Y vars
-template <typename XMat, typename YMat, typename RNG>
-static bool find_best_split(
-    const XMat& X, const YMat& Y,
-    const std::vector<int>& samples,
-    int mtry, int ytry, int nodesize_min, int nsplit,
-    RNG& rng,
-    int& best_var, double& best_val, double& best_score,
-    std::vector<int>& left_samples, std::vector<int>& right_samples,
-    std::vector<double>& best_y_stats)  // IMD: per-Y split stats for best split
-{
-  int n_node = (int)samples.size();
-  int px = X.ncol();
-  int qy = Y.ncol();
-
-  if (n_node < 2 * nodesize_min) return false;
-
-  // Random subset of X columns (mtry)
-  std::vector<int> x_pool(px);
-  std::iota(x_pool.begin(), x_pool.end(), 0);
-  int n_x_try = std::min(mtry, px);
-  std::vector<int> x_candidates = sample_from_pool_rfsrc_style(x_pool, n_x_try, rng);
-
-  // Random subset of Y columns (ytry)
-  std::vector<int> y_pool(qy);
-  std::iota(y_pool.begin(), y_pool.end(), 0);
-  int n_y_try = std::min(ytry, qy);
-  std::vector<int> y_candidates = sample_from_pool_rfsrc_style(y_pool, n_y_try, rng);
-
-  // Pre-standardize selected Y columns within this node: Y* = (Y - mean) / sd
-  // This matches rfsrc's normalized composite splitting rule.
-  // n_node here is the bootstrap bag size (including duplicates).
-  std::vector<double> y_means(n_y_try, 0.0);
-  std::vector<double> y_sds(n_y_try, 1.0);
-  for (int jj = 0; jj < n_y_try; jj++) {
-    int j = y_candidates[jj];
-    double sum = 0.0;
-    for (int k = 0; k < n_node; k++) {
-      sum += Y(samples[k], j);
-    }
-    y_means[jj] = sum / n_node;
-  }
-  for (int jj = 0; jj < n_y_try; jj++) {
-    int j = y_candidates[jj];
-    double ss = 0.0;
-    for (int k = 0; k < n_node; k++) {
-      double d = Y(samples[k], j) - y_means[jj];
-      ss += d * d;
-    }
-    // Standard deviation with n denominator (population sd within node)
-    double var = (n_node > 1) ? ss / n_node : 0.0;
-    y_sds[jj] = (var > 0.0) ? std::sqrt(var) : 0.0;
-  }
-
-  best_score = -1.0;
-  best_var = -1;
-  best_val = 0.0;
-
-  for (int xi = 0; xi < n_x_try; xi++) {
-    int xvar = x_candidates[xi];
-
-    // Get X values and sort
-    std::vector<std::pair<double, int>> x_sorted(n_node);
-    for (int k = 0; k < n_node; k++) {
-      x_sorted[k] = {X(samples[k], xvar), k};
-    }
-    std::sort(x_sorted.begin(), x_sorted.end());
-
-    // nodesize enforced at parent level only; match rfsrc cutpoint check (>0)
-    std::vector<int> split_positions;
-    split_positions.reserve(n_node);
-    for (int s = 0; s < n_node - 1; s++) {
-      if (x_sorted[s].first == x_sorted[s + 1].first) continue;
-      split_positions.push_back(s);
-    }
-    if (split_positions.empty()) continue;
-    std::vector<int> eval_positions = sample_cutpoint_positions(split_positions, nsplit, rng);
-    int eval_idx = 0;
-    int next_eval = eval_positions[eval_idx];
-
-    // Running sums for left child (per Y column)
-    std::vector<double> sum_L(n_y_try, 0.0);
-    int nL = 0;
-
-    // Try splits between consecutive sorted X values
-    for (int s = 0; s < n_node - 1; s++) {
-      int sample_idx = x_sorted[s].second;
-      nL++;
-      int nR = n_node - nL;
-
-      // Update left sums of standardized Y*
-      for (int jj = 0; jj < n_y_try; jj++) {
-        int j = y_candidates[jj];
-        double y_star = (y_sds[jj] > 0.0) ? (Y(samples[sample_idx], j) - y_means[jj]) / y_sds[jj] : 0.0;
-        sum_L[jj] += y_star;
-      }
-
-      if (s != next_eval) continue;
-
-      // Score = average over informative Y columns (matching rfsrc deltaNorm)
-      double score = 0.0;
-      int deltaNorm = 0;
-      for (int jj = 0; jj < n_y_try; jj++) {
-        if (y_sds[jj] > 0.0) {
-          double sL = sum_L[jj];
-          score += (sL * sL) / nL + (sL * sL) / nR;
-          deltaNorm++;
-        }
-      }
-      if (deltaNorm > 0) {
-        score /= deltaNorm;
-
-        if ((score - best_score) > RF_EPSILON) {
-          best_score = score;
-          // Record per-Y split stats for IMD (only for the ytry columns tried)
-          // Y* is already standardized, so no separate variance division needed
-          best_y_stats.assign(qy, 0.0);
-          for (int jj = 0; jj < n_y_try; jj++) {
-            double sL = sum_L[jj];
-            best_y_stats[y_candidates[jj]] = (sL * sL) / nL + (sL * sL) / nR;
-          }
-          best_var = xvar;
-          best_val = x_sorted[s].first;
-        }
-      }
-      // Always advance eval_idx even when deltaNorm == 0;
-      // the old `else continue` would freeze next_eval, causing all
-      // remaining cutpoints for this X variable to be skipped.
-      eval_idx++;
-      if (eval_idx < (int)eval_positions.size()) {
-        next_eval = eval_positions[eval_idx];
-      } else {
-        next_eval = n_node;
-      }
-    }
-  }
-
-  if (best_var < 0) return false;
-
-  // Partition samples
-  left_samples.clear();
-  right_samples.clear();
-  left_samples.reserve(n_node);
-  right_samples.reserve(n_node);
-  for (int k = 0; k < n_node; k++) {
-    if (X(samples[k], best_var) <= best_val) {
-      left_samples.push_back(samples[k]);
-    } else {
-      right_samples.push_back(samples[k]);
-    }
-  }
-
-  return !left_samples.empty() && !right_samples.empty();
 }
 
 // ──────────────── Unsupervised split ────────────────
@@ -1037,7 +729,7 @@ static bool find_best_split_unsup(
   // Random subset of candidate split variables (mtry)
   std::vector<int> x_candidates(p);
   std::iota(x_candidates.begin(), x_candidates.end(), 0);
-  std::shuffle(x_candidates.begin(), x_candidates.end(), rng);
+  fisher_yates_shuffle(x_candidates, rng);
   int n_x_try = std::min(mtry, p);
 
   best_score = -1.0;
@@ -1056,7 +748,7 @@ static bool find_best_split_unsup(
     for (int j = 0; j < p; j++) {
       if (j != xvar) y_pool.push_back(j);
     }
-    std::shuffle(y_pool.begin(), y_pool.end(), rng);
+    fisher_yates_shuffle(y_pool, rng);
     int n_y_try = std::min(ytry, (int)y_pool.size());
 
     // Pre-standardize selected pseudo-Y columns within this node
@@ -1198,7 +890,6 @@ static std::vector<Node> build_tree_unsup(
   std::vector<int> sample_pos(n_total, -1);
 
   Node root;
-  root.id = 0;
   root.left = -1;
   root.right = -1;
   root.split_var = -1;
@@ -1241,119 +932,32 @@ static std::vector<Node> build_tree_unsup(
       node.split_val = bval;
       node.imd_x_score = bscore;  // IMD: store split score for X importance
 
+      // Capture the parent's depth by value BEFORE any push_back below:
+      // growing `nodes` may reallocate and invalidate the `node` reference.
+      int parent_depth = node.depth;
+
       int left_id = (int)nodes.size();
       Node left_node;
-      left_node.id = left_id;
       left_node.left = -1;
       left_node.right = -1;
       left_node.split_var = -1;
       left_node.split_val = 0.0;
-      left_node.depth = node.depth + 1;
+      left_node.depth = parent_depth + 1;
       left_node.samples = std::move(lsamp);
       left_node.nodesize = (int)left_node.samples.size();
       nodes.push_back(left_node);
 
       int right_id = (int)nodes.size();
       Node right_node;
-      right_node.id = right_id;
       right_node.left = -1;
       right_node.right = -1;
       right_node.split_var = -1;
       right_node.split_val = 0.0;
-      right_node.depth = node.depth + 1;
+      right_node.depth = parent_depth + 1;
       right_node.samples = std::move(rsamp);
       right_node.nodesize = (int)right_node.samples.size();
       nodes.push_back(right_node);
 
-      nodes[ni].left = left_id;
-      nodes[ni].right = right_id;
-
-      next_split.push_back(left_id);
-      next_split.push_back(right_id);
-    }
-
-    to_split = std::move(next_split);
-  }
-
-  return nodes;
-}
-
-// Build a single tree (supervised)
-// Returns vector of Nodes
-template <typename XMat, typename YMat, typename RNG>
-static std::vector<Node> build_tree(
-    const XMat& X, const YMat& Y,
-    const std::vector<int>& bag_samples,
-    int mtry, int ytry, int nodesize_min, int max_depth, int nsplit,
-    RNG& rng)
-{
-  std::vector<Node> nodes;
-  nodes.reserve(256);
-
-  // Root node
-  Node root;
-  root.id = 0;
-  root.left = -1;
-  root.right = -1;
-  root.split_var = -1;
-  root.split_val = 0.0;
-  root.depth = 0;
-  root.samples = bag_samples;
-  root.nodesize = (int)bag_samples.size();
-  nodes.push_back(root);
-
-  // BFS-style tree building
-  std::vector<int> to_split = {0};
-
-  while (!to_split.empty()) {
-    std::vector<int> next_split;
-
-    for (int ni : to_split) {
-      Node& node = nodes[ni];
-
-      if ((int)node.samples.size() < 2 * nodesize_min) continue;
-      if (max_depth > 0 && node.depth >= max_depth) continue;
-
-      int bv;
-      double bval, bscore;
-      std::vector<int> lsamp, rsamp;
-      std::vector<double> by_stats;
-
-      if (!find_best_split(X, Y, node.samples, mtry, ytry, nodesize_min,
-                           nsplit, rng, bv, bval, bscore, lsamp, rsamp, by_stats)) {
-        continue;
-      }
-
-      node.split_var = bv;
-      node.split_val = bval;
-      node.imd_y_stats = std::move(by_stats);
-      node.imd_x_score = bscore;
-
-      int left_id = (int)nodes.size();
-      Node left_node;
-      left_node.id = left_id;
-      left_node.left = -1;
-      left_node.right = -1;
-      left_node.split_var = -1;
-      left_node.split_val = 0.0;
-      left_node.depth = node.depth + 1;
-      left_node.samples = std::move(lsamp);
-      left_node.nodesize = (int)left_node.samples.size();
-      nodes.push_back(left_node);
-
-      int right_id = (int)nodes.size();
-      Node right_node;
-      right_node.id = right_id;
-      right_node.left = -1;
-      right_node.right = -1;
-      right_node.split_var = -1;
-      right_node.split_val = 0.0;
-      right_node.depth = node.depth + 1;
-      right_node.samples = std::move(rsamp);
-      right_node.nodesize = (int)right_node.samples.size();
-      nodes.push_back(right_node);
-
-      // Update parent pointers (re-reference since vector may reallocate)
       nodes[ni].left = left_id;
       nodes[ni].right = right_id;
 
@@ -1506,9 +1110,9 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   }
   // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
-  #ifdef _OPENMP
-  if (nthread > 0) omp_set_num_threads(nthread);
-  #endif
+  // nthread is applied via num_threads(...) clauses on the parallel regions
+  // below (not omp_set_num_threads, which would leak a process-global setting
+  // to other OpenMP users in the R session).
 
   // Copy to thread-safe MatrixView (avoid Rcpp operator() inside OpenMP)
   std::vector<double> X_buf((std::size_t)n * px);
@@ -1567,6 +1171,11 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   }
 
   // Seed
+  // NOTE: lcg_next(..., reset = true) reduces the user seed modulo the LCG
+  // modulus 714025, so distinct seeds congruent mod 714025 (e.g. 1 and
+  // 714026) alias to bit-identical forests; the effective seed range is
+  // 0..714024.  This mirrors randomForestSRC's small-state seeding and is
+  // deliberately kept as-is so existing seeded supervised results stay valid.
   unsigned int actual_seed = (seed < 0) ? std::random_device{}() : (unsigned int)seed;
   unsigned int seed_lc = lcg_next(actual_seed, true);
   std::vector<int> chain_seed_a(ntree), chain_seed_b(ntree);
@@ -1628,12 +1237,13 @@ List fit_mv_forest_cpp(NumericMatrix X, NumericMatrix Y,
   std::vector<TreeResult> tree_results(ntree);
 
   // Pre-sort all X columns once (shared across trees, read-only)
-  auto sort_order = presort_columns(Xv, n, px);
+  auto sort_order = presort_columns(Xv, n, px, nthread);
 
   // Phase 1: build trees in parallel.  Each tree owns its RNG streams and its
   // result slot, so scheduling cannot change the fitted forest.
   #ifdef _OPENMP
-  #pragma omp parallel for schedule(dynamic)
+  const int omp_threads = (nthread > 0) ? nthread : omp_get_max_threads();
+  #pragma omp parallel for schedule(dynamic) num_threads(omp_threads)
   #endif
   for (int t = 0; t < ntree; t++) {
     RfsrcRan1 rng_boot(chain_seed_a[t]);
@@ -2118,9 +1728,9 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
   // max_depth <= 0 means unlimited (grow until nodesize constraint only)
 
-  #ifdef _OPENMP
-  if (nthread > 0) omp_set_num_threads(nthread);
-  #endif
+  // nthread is applied via num_threads(...) clauses on the parallel regions
+  // below (not omp_set_num_threads, which would leak a process-global setting
+  // to other OpenMP users in the R session).
 
   unsigned int actual_seed = (seed < 0) ? std::random_device{}() : (unsigned int)seed;
 
@@ -2176,15 +1786,15 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   int ytry_use = (ytry <= 0) ? std::max(1, p - 1) : std::min(ytry, p - 1);
 
   // Pre-sort all columns once (shared across trees, read-only)
-  auto sort_order_unsup = presort_columns(D, n, p);
+  auto sort_order_unsup = presort_columns(D, n, p, nthread);
 
   // Phase 1: Parallel tree building (unsupervised).
   #ifdef _OPENMP
-  #pragma omp parallel for schedule(dynamic)
+  const int omp_threads = (nthread > 0) ? nthread : omp_get_max_threads();
+  #pragma omp parallel for schedule(dynamic) num_threads(omp_threads)
   #endif
   for (int t = 0; t < ntree; t++) {
     std::mt19937 rng_t(actual_seed + (unsigned int)t);
-    std::uniform_int_distribution<int> boot_dist(0, n - 1);
 
     std::vector<int> bag;
     std::vector<int> inbag_freq(n, 0);
@@ -2192,7 +1802,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
     if (samptype == 1) {
       bag.resize(n);
       for (int i = 0; i < n; i++) {
-        int idx = boot_dist(rng_t);
+        int idx = random_index(rng_t, n);
         bag[i] = idx;
         inbag_freq[idx]++;
       }
@@ -2260,7 +1870,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
         int ia = group[a];
         if (forest_wt_mode == 2 && inbag_freq[ia] > 0) continue;
         fw_denom_buf[ia] += 1.0;
-        double* row = &fw_buf[ia * n];
+        double* row = &fw_buf[(std::size_t)ia * n];
         for (int b = 0; b < (int)donor_idx.size(); b++) {
           row[donor_idx[b]] += donor_wt[b] * inv_mass;
         }
@@ -2274,11 +1884,11 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
           int g = (int)group.size();
           for (int a = 0; a < g; a++) {
             int ia = group[a];
-            prox_buf[ia * n + ia] += 1.0;
+            prox_buf[(std::size_t)ia * n + ia] += 1.0;
             for (int b = a + 1; b < g; b++) {
               int ib = group[b];
-              prox_buf[ia * n + ib] += 1.0;
-              prox_buf[ib * n + ia] += 1.0;
+              prox_buf[(std::size_t)ia * n + ib] += 1.0;
+              prox_buf[(std::size_t)ib * n + ia] += 1.0;
             }
           }
         }
@@ -2301,11 +1911,11 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
         }
         for (int a = 0; a < (int)prox_members.size(); a++) {
           int ia = prox_members[a];
-          prox_denom_buf[ia * n + ia] += 1.0;
+          prox_denom_buf[(std::size_t)ia * n + ia] += 1.0;
           for (int b = a + 1; b < (int)prox_members.size(); b++) {
             int ib = prox_members[b];
-            prox_denom_buf[ia * n + ib] += 1.0;
-            prox_denom_buf[ib * n + ia] += 1.0;
+            prox_denom_buf[(std::size_t)ia * n + ib] += 1.0;
+            prox_denom_buf[(std::size_t)ib * n + ia] += 1.0;
           }
         }
         for (auto& kv : prox_leaf_groups) {
@@ -2313,11 +1923,11 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
           int g = (int)group.size();
           for (int a = 0; a < g; a++) {
             int ia = group[a];
-            prox_buf[ia * n + ia] += 1.0;
+            prox_buf[(std::size_t)ia * n + ia] += 1.0;
             for (int b = a + 1; b < g; b++) {
               int ib = group[b];
-              prox_buf[ia * n + ib] += 1.0;
-              prox_buf[ib * n + ia] += 1.0;
+              prox_buf[(std::size_t)ia * n + ib] += 1.0;
+              prox_buf[(std::size_t)ib * n + ia] += 1.0;
             }
           }
         }
@@ -2332,11 +1942,11 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
         int g = (int)group.size();
         for (int a = 0; a < g; a++) {
           int ia = group[a];
-          eprox_buf[ia * n + ia] += 1.0;
+          eprox_buf[(std::size_t)ia * n + ia] += 1.0;
           for (int b = a + 1; b < g; b++) {
             int ib = group[b];
-            eprox_buf[ia * n + ib] += 1.0;
-            eprox_buf[ib * n + ia] += 1.0;
+            eprox_buf[(std::size_t)ia * n + ib] += 1.0;
+            eprox_buf[(std::size_t)ib * n + ia] += 1.0;
           }
         }
       }
@@ -2372,8 +1982,8 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
         if (w > 1.0) w = 1.0;
         for (int a : grp_l) {
           for (int b : grp_r) {
-            eprox_buf[a * n + b] += w;
-            eprox_buf[b * n + a] += w;
+            eprox_buf[(std::size_t)a * n + b] += w;
+            eprox_buf[(std::size_t)b * n + a] += w;
           }
         }
       }
@@ -2385,7 +1995,7 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
   if (compute_enhanced) {
     for (int i = 0; i < n; i++)
       for (int j = 0; j < n; j++)
-        enhanced_prox(i, j) = eprox_buf[i * n + j] / ntree;
+        enhanced_prox(i, j) = eprox_buf[(std::size_t)i * n + j] / ntree;
   }
 
   // Copy to R matrices + normalize
@@ -2396,12 +2006,13 @@ List fit_mv_forest_unsup_cpp(NumericMatrix data,
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[i * n + j] / fw_denom_buf[i] : NA_REAL;
+      const std::size_t ij = (std::size_t)i * n + j;
+      forest_wt(i, j) = (fw_denom_buf[i] > 0.0) ? fw_buf[ij] / fw_denom_buf[i] : NA_REAL;
       if (compute_prox) {
         if (prox_mode == 0) {
-          prox(i, j) = prox_buf[i * n + j] / ntree;
+          prox(i, j) = prox_buf[ij] / ntree;
         } else {
-          prox(i, j) = (prox_denom_buf[i * n + j] > 0.0) ? prox_buf[i * n + j] / prox_denom_buf[i * n + j] : NA_REAL;
+          prox(i, j) = (prox_denom_buf[ij] > 0.0) ? prox_buf[ij] / prox_denom_buf[ij] : NA_REAL;
         }
       }
     }

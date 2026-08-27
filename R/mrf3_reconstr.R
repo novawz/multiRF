@@ -205,6 +205,7 @@ mrf3_reconstr <- function(recon = NULL,
 
 #' @param rfit A model list of random forest models.
 #' @rdname mrf3_reconstr
+#' @export
 get_reconstr_matrix <- function(rfit,
                                 model_top_v = 10,
                                 recon_fusion = c("weighted", "uniform"),
@@ -299,7 +300,9 @@ get_reconstr_matrix <- function(rfit,
     mod_names <- parse_model_pair(m, model = mod)
 
     one_block <- length(mod_names) == 1L ||
-      (!is.null(mod$connection) && is.null(mod$connection$predictor))
+      (!is.null(mod$connection) &&
+         (!is.list(mod$connection) && length(mod$connection) < 2L ||
+            is.list(mod$connection) && is.null(mod$connection$predictor)))
     if (!one_block && !is.null(yvar)) {
       out <- list(
         W %*% as.matrix(xvar),
@@ -809,7 +812,7 @@ resolve_top_v_values <- function(dat_input,
       )
       fused_use <- select_top_v_neff(W_fused, quantile_prob = neff_quantile, min_v = 10L)
       # If neff is close to n, skip truncation
-      if (fused_use >= as.integer(0.8 * ncol(W_fused))) {
+      if (fused_use >= ceiling(0.8 * ncol(W_fused))) {
         fused_use <- NULL
         if (verbose) message("  fused_top_v: no truncation (neff >= 80% of n).")
       } else {

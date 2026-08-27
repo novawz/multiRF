@@ -11,7 +11,10 @@ cluster_metrics(pred, ref, na.rm = TRUE, as_tibble = FALSE)
 
 \item{ref}{Reference cluster labels.}
 
-\item{na.rm}{Logical; whether to remove pairs with missing labels.}
+\item{na.rm}{Logical; whether to remove pairs with missing labels.
+When \code{FALSE}, the table-based metrics (ARI, NMI, purity) still silently drop
+pairs with missing labels, whereas the partition Jaccard index propagates
+them and returns \code{NA}.}
 
 \item{as_tibble}{Logical; whether to return a tibble.}
 }

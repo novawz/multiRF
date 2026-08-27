@@ -169,7 +169,7 @@ mrf3_init <- function(dat.list,
       imd_args = list(),
       ytry = ytry,
       seed = seed,
-      verbose = TRUE
+      verbose = verbose
     )
     sub_params <- utils::modifyList(sub_defaults, sub_mrf_args)
 

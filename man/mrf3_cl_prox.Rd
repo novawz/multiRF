@@ -21,6 +21,8 @@ mrf3_cl_prox(
   parallel = TRUE,
   sparse = FALSE,
   method_cl = "PAM",
+  tune_method = "silhouette",
+  gap_w = "uniform",
   cores = NULL,
   ...
 )
@@ -66,6 +68,12 @@ One of \code{"constant"}, \code{"positive"}, \code{"shift01"}, \code{"abs"}, \co
 \item{sparse}{Logical; whether to sparsify the enhanced proximity matrix.}
 
 \item{method_cl}{Clustering backend (\code{"PAM"} or \code{"Spectral"}).}
+
+\item{tune_method}{Tuning criterion for PAM when \code{k} is \code{NULL}
+(\code{"silhouette"} or \code{"ratio"}).}
+
+\item{gap_w}{Weighting scheme for spectral eigengap when \code{k} is \code{NULL}
+(\code{"uniform"} or \code{"log"}).}
 
 \item{cores}{Number of CPU cores used by parallel steps.}
 

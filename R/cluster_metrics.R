@@ -6,6 +6,9 @@
 #' @param pred Predicted cluster labels.
 #' @param ref Reference cluster labels.
 #' @param na.rm Logical; whether to remove pairs with missing labels before computing metrics.
+#' When `FALSE`, the table-based metrics (ARI, NMI, purity) still silently drop
+#' pairs with missing labels, whereas the partition Jaccard index propagates
+#' them and returns `NA`.
 #'
 #' @return For scalar metric functions, a numeric scalar (`NA` when undefined).
 #' @export
@@ -57,6 +60,9 @@ cluster_purity <- function(pred, ref, na.rm = TRUE) {
 #' @param pred Predicted cluster labels.
 #' @param ref Reference cluster labels.
 #' @param na.rm Logical; whether to remove pairs with missing labels.
+#' When `FALSE`, the table-based metrics (ARI, NMI, purity) still silently drop
+#' pairs with missing labels, whereas the partition Jaccard index propagates
+#' them and returns `NA`.
 #' @param as_tibble Logical; whether to return a tibble.
 #'
 #' @return A one-row data frame/tibble with columns:
@@ -92,7 +98,10 @@ cluster_metrics <- function(pred, ref, na.rm = TRUE, as_tibble = FALSE) {
 #' @param metric Metric to compute: `"ari"`, `"jaccard"`, `"nmi"`, or `"purity"`.
 #' @param na.rm Logical; whether to remove missing labels pairwise.
 #'
-#' @return A symmetric matrix of pairwise metric values.
+#' @return A matrix of pairwise metric values. The matrix is symmetric for
+#' `"ari"`, `"jaccard"`, and `"nmi"`; for `"purity"`, entry `[i, j]` is the
+#' purity of clustering `i` evaluated against clustering `j` as reference,
+#' so the matrix may be asymmetric.
 #' @export
 cluster_metric_matrix <- function(cluster_list,
                                   metric = c("ari", "jaccard", "nmi", "purity"),
@@ -128,9 +137,14 @@ cluster_metric_matrix <- function(cluster_list,
       next
     }
     for (j in seq.int(i + 1L, k)) {
-      val <- metric_fun(aligned[[i]], aligned[[j]], na.rm = na.rm)
-      out[i, j] <- val
-      out[j, i] <- val
+      out[i, j] <- metric_fun(aligned[[i]], aligned[[j]], na.rm = na.rm)
+      # Purity is direction-dependent, so compute both directions explicitly
+      # instead of mirroring one value into both triangles.
+      out[j, i] <- if (identical(metric, "purity")) {
+        metric_fun(aligned[[j]], aligned[[i]], na.rm = na.rm)
+      } else {
+        out[i, j]
+      }
     }
   }
   out
@@ -156,7 +170,16 @@ prepare_cluster_pair <- function(pred, ref, na.rm = TRUE) {
 }
 
 align_cluster_list <- function(cluster_list) {
-  all_named <- all(vapply(cluster_list, function(x) !is.null(names(x)), logical(1)))
+  named_flags <- vapply(cluster_list, function(x) !is.null(names(x)), logical(1))
+  all_named <- all(named_flags)
+
+  if (!all_named && any(named_flags)) {
+    warning(
+      "Some but not all cluster vectors are named; ",
+      "falling back to positional alignment, which may misalign samples.",
+      call. = FALSE
+    )
+  }
 
   if (all_named) {
     common_ids <- Reduce(intersect, lapply(cluster_list, names))
@@ -188,8 +211,13 @@ adjusted_rand_index_internal <- function(x, y) {
   expected <- ai * bj / (n * (n - 1) / 2)
   max_index <- 0.5 * (ai + bj)
   den <- max_index - expected
-  if (!is.finite(den) || den == 0) {
+  if (!is.finite(den)) {
     return(NA_real_)
+  }
+  if (den == 0) {
+    # Degenerate but identical partitions (both a single cluster, or both
+    # all singletons) conventionally score ARI = 1.
+    return(if (nij == expected && ai == bj) 1 else NA_real_)
   }
   (nij - expected) / den
 }

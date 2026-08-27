@@ -55,7 +55,8 @@ of \code{k}.}
 
 \item{method}{Clustering backend: \code{"PAM"} or \code{"Spectral"}.}
 
-\item{tune_method}{Tuning criterion for PAM (\code{"silhouette"} or \code{"ratio"}).}
+\item{tune_method}{Tuning criterion for PAM (\code{"silhouette"} or \code{"ratio"}).
+The \code{"ratio"} criterion requires dissimilarities scaled to \verb{[0, 1]}.}
 
 \item{gap_w}{Weighting scheme for spectral eigengap (\code{"uniform"} or \code{"log"}).}
 

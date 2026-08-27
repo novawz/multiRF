@@ -32,7 +32,8 @@ get_multi_weights(
 
 \item{use_depth}{Logical; whether to average depth-aware importances.}
 
-\item{robust}{Logical; whether to use robust matrix-based aggregation.}
+\item{robust}{Logical; whether to use robust matrix-based aggregation.
+Requires \code{calc = "Both"}.}
 
 \item{parallel}{Logical; whether to parallelize across models.}
 
@@ -42,13 +43,17 @@ for variable selection.}
 
 \item{calc}{Which importance side to compute: \code{"X"}, \code{"Y"}, or \code{"Both"}.}
 
-\item{ytry}{Response sampling proportion used in node-level updates.}
+\item{ytry}{Response sampling proportion used in node-level updates.
+Currently unused by the post-hoc tree traversal; reserved for future use.}
 
-\item{w}{Optional case weights.}
+\item{w}{Optional case weights. Currently unused by the post-hoc tree
+traversal; reserved for future use.}
 
-\item{cores}{Number of CPU cores used when \code{parallel = TRUE}.}
+\item{cores}{Number of CPU cores used when \code{parallel = TRUE}; \code{NULL}
+(default) uses \code{parallel::detectCores() - 1}.}
 
-\item{seed}{Random seed passed to stochastic components.}
+\item{seed}{Random seed passed to stochastic components. Currently unused
+by the post-hoc tree traversal; reserved for future use.}
 
 \item{...}{Additional arguments for downstream helper functions.}
 }

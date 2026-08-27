@@ -51,6 +51,14 @@ run_cluster_pipeline <- function(recon,
   if (identical(cluster_method, "similarity")) {
     if (is.null(args$shared_method)) args$shared_method <- "Spectral"
     if (is.null(args$specific_method)) args$specific_method <- "Spectral"
+    # Remove proximity-only params that should never reach similarity clustering
+    sim_drop_names <- c(
+      "k", "method", "enhanced", "method_cl", "prox_method_cl", "rfit",
+      "size_min", "use", "symm", "leaf_embed_dim",
+      "merge_quantile", "merge_mode", "sibling_gamma", "sibling_fun",
+      "sibling_cap", "hard_prox_mode", "parallel", "sparse", "cores"
+    )
+    args[intersect(names(args), sim_drop_names)] <- NULL
     return(do.call(mrf3_specific_clustering, args))
   }
 
@@ -71,7 +79,7 @@ run_cluster_pipeline <- function(recon,
     "k", "method", "enhanced", "method_cl", "prox_method_cl", "rfit",
     "shared_mode", "shared_dat_use", "shared_k", "shared_method", "shared_similarity_type",
     "specific_k", "specific_method", "specific_prox_method_cl", "specific_similarity_type",
-    "tune_method", "gap_w", "gamma", "alpha_init", "ao_max_iter", "ao_tol",
+    "gamma", "alpha_init", "ao_max_iter", "ao_tol",
     "knn_q", "hollow", "ao_symm", "ao_verbose",
     "mtry", "ytry"
   )

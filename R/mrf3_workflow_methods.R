@@ -30,15 +30,20 @@ summary.mrf3_fit <- function(object, ...) {
   }
 
   block_names <- character(0)
-  if (length(model_names) > 0L) {
-    pairs <- strsplit(model_names, "_", fixed = TRUE)
-    block_names <- unique(unlist(lapply(pairs, function(x) x[seq_len(min(2L, length(x)))])))
+  if (is.list(object$connection) && length(object$connection) > 0L) {
+    block_names <- unique(unlist(object$connection, use.names = FALSE))
   }
   if (length(block_names) == 0L && !is.null(recon$fused_mat)) {
     block_names <- names(recon$fused_mat)
   }
   if (length(block_names) == 0L && !is.null(object$specific$weights$W)) {
     block_names <- names(object$specific$weights$W)
+  }
+  if (length(block_names) == 0L && length(model_names) > 0L) {
+    ## Legacy fallback: split model names on "_" (unreliable for block
+    ## names that themselves contain underscores).
+    pairs <- strsplit(model_names, "_", fixed = TRUE)
+    block_names <- unique(unlist(lapply(pairs, function(x) x[seq_len(min(2L, length(x)))])))
   }
 
   n_connections <- if (is.list(object$connection)) length(object$connection) else NA_integer_
@@ -97,7 +102,8 @@ summary.mrf3_fit <- function(object, ...) {
         "skipped"
       },
       if (!is.null(object$robust_clusters)) {
-        k_use <- length(unique(object$robust_clusters))
+        cl <- if (is.list(object$robust_clusters)) object$robust_clusters$shared else object$robust_clusters
+        k_use <- length(unique(cl))
         paste0("k=", k_use)
       } else {
         "skipped"

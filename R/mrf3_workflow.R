@@ -102,6 +102,9 @@
 #' `TRUE` to request the cluster-specific stage.
 #' @param imd_args A named list of additional arguments passed to `get_multi_weights()`.
 #' By default, this function sets `parallel = TRUE` for IMD unless overridden here.
+#' When any model is a sub-MRF, entries shared with `get_imp_forest()`
+#' (e.g. `parallel`, `normalized`) are also applied to the per-connection
+#' IMD computation of full-forest models.
 #' @param run_variable_selection Logical; whether to run variable selection
 #' using `mrf3_vs()` after IMD weights are available.
 #' @param variable_selection_args A named list of additional arguments passed to
@@ -495,11 +498,7 @@ mrf3_fit <- function(dat.list,
   run_variable_selection_exec <- isTRUE(run_variable_selection) || isTRUE(run_robust_clustering)
   need_imd <- isTRUE(run_imd) || isTRUE(run_variable_selection_exec)
   if (need_imd) {
-    if (isTRUE(run_imd)) {
-      if (verbose) message("Computing IMD..")
-    } else {
-      if (verbose) message("Computing IMD..")
-    }
+    if (verbose) message("Computing IMD..")
 
     ## Classify each model: sub-MRF (no tree structure) vs full forest
     is_sub_mrf <- vapply(mod_list, function(m) !is.null(m$sub_mrf_info), logical(1))
@@ -526,10 +525,21 @@ mrf3_fit <- function(dat.list,
             ## Pre-computed from sub-MRF
             iw <- mod$imd_weights
           } else {
-            ## Full forest: compute via standard tree traversal
-            imp_out <- get_imp_forest(mod, parallel = TRUE, robust = FALSE,
-                                       calc = "Both", normalized = FALSE,
-                                       seed = seed)
+            ## Full forest: compute via standard tree traversal.
+            ## Honor user-supplied `imd_args` overrides shared with
+            ## get_imp_forest() (e.g. `parallel`, `normalized`).
+            imp_defaults <- list(parallel = TRUE, robust = FALSE,
+                                 calc = "Both", normalized = FALSE,
+                                 seed = seed)
+            imp_call_args <- utils::modifyList(
+              imp_defaults,
+              imd_args[intersect(
+                names(imd_args),
+                c("parallel", "robust", "calc", "weighted", "use_depth",
+                  "normalized", "w", "ytry", "cores", "seed")
+              )]
+            )
+            imp_out <- do.call(get_imp_forest, c(list(mod), imp_call_args))
             iw <- imp_out$imp_ls
           }
           side_names <- names(iw)

@@ -25,7 +25,9 @@ mrf3_stability(
 \item{x}{An object from \code{mrf3_fit()}.}
 
 \item{branches}{Branches to evaluate. Supported:
-\code{"specific_shared"} and \code{"robust_clustering"}.}
+\code{"specific_shared"} and \code{"robust_clustering"}. Branches unavailable in
+\code{x} are skipped with a warning; an error is raised only if none of the
+requested branches are available.}
 
 \item{n_rep}{Number of repeats.}
 

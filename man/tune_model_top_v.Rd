@@ -50,12 +50,15 @@ reuse it across all candidates for speed.}
 \item{parallel}{Logical; whether to evaluate candidate grid values in parallel
 (POSIX systems only). Default is \code{TRUE}.}
 
-\item{cores}{Number of cores used when \code{parallel = TRUE}.}
+\item{cores}{Number of cores used when \code{parallel = TRUE}. Default \code{NULL}
+uses \code{max(1, parallel::detectCores() - 1)} cores.}
 
 \item{seed}{Random seed used for optional sample subsampling.}
 
 \item{object}{Objective used to choose \code{model_top_v}
-(\code{"entropy_elbow"} (default), \code{"diss"}, \code{"silhouette"}, or \code{"eigen"}).}
+(\code{"entropy_elbow"} (default), \code{"diss"}, \code{"silhouette"}, or \code{"eigen"}).
+For \code{"entropy_elbow"}, the elbow is selected among interior grid points,
+so the smallest grid candidate cannot be selected directly.}
 }
 \description{
 Tune model-level top-v

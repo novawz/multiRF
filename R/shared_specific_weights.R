@@ -80,6 +80,7 @@
 #'   after adjusted/truncate/row-sum-normalize.
 #' - `specific$imd`: named list of per-block variable-level IMD weights
 #'   (named numeric vectors) from unsupervised RF on residuals.
+#' @export
 get_shared_specific_weights <- function(dat.list,
                                         recon,
                                         per_response_recon = TRUE,
@@ -166,6 +167,15 @@ get_shared_specific_weights <- function(dat.list,
     if (per_response_recon && !is.null(W_per_response[[d]])) {
       # Per-response reconstruction: X_hat = W^(d) %*% X
       W_d <- as.matrix(W_per_response[[d]])
+      # Align W_d rows/columns to the sample order of X (mirrors the legacy
+      # fused-path alignment) so a reordered `dat.list` cannot silently
+      # produce misaligned residuals.
+      if (!is.null(rownames(X)) && !is.null(rownames(W_d)) &&
+          !is.null(colnames(W_d)) &&
+          setequal(rownames(W_d), rownames(X)) &&
+          setequal(colnames(W_d), rownames(X))) {
+        W_d <- W_d[rownames(X), rownames(X), drop = FALSE]
+      }
       if (nrow(W_d) != nrow(X) || ncol(W_d) != nrow(X)) {
         stop("Dimension mismatch for per-response W of block `", d,
              "`: expected n x n with n = ", nrow(X), ".")
@@ -265,6 +275,7 @@ get_shared_specific_weights <- function(dat.list,
       # Consensus path: average forest weights and IMD across n_cons runs
       wt_accum <- NULL
       imd_accum <- NULL
+      imd_n <- 0L
       imd_per_tree_runs <- vector("list", n_cons)
       last_mod <- NULL
 
@@ -312,6 +323,7 @@ get_shared_specific_weights <- function(dat.list,
           } else {
             imd_accum <- imd_accum + imd_i
           }
+          imd_n <- imd_n + 1L
         }
         if (!is.null(r_mod_ci$imd_weights_per_tree) &&
             !is.null(r_mod_ci$imd_weights_per_tree$X)) {
@@ -332,7 +344,9 @@ get_shared_specific_weights <- function(dat.list,
         keep_ties = specific_keep_ties
       )
       if (!is.null(imd_accum)) {
-        imd_avg <- imd_accum / n_cons
+        # Average over the runs that actually contributed IMD, not the
+        # full consensus count.
+        imd_avg <- imd_accum / imd_n
         specific_imd[[d]] <- imd_avg
       } else {
         specific_imd[[d]] <- setNames(rep(1.0 / ncol(X), ncol(X)), colnames(X))

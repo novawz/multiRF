@@ -87,7 +87,8 @@ Default \code{FALSE} because the extra computation is non-trivial.}
 
 \item{parallel}{Logical; if \code{TRUE}, use \code{\link[parallel:mclapply]{parallel::mclapply()}}.}
 
-\item{cores}{Number of cores when \code{parallel = TRUE}.}
+\item{cores}{Number of cores when \code{parallel = TRUE}; \code{NULL} (default)
+uses \code{parallel::detectCores() - 1}.}
 
 \item{parallel_connections}{Logical; whether distinct directed connections
 may be fitted in parallel.}

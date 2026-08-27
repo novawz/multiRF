@@ -11,8 +11,9 @@ get_clusters(x, which = "main", block = NULL, ...)
 
 \item{which}{For \code{mrf3_fit}: \code{"main"} (default) or \code{"robust"}.}
 
-\item{block}{Optional block name. For an \code{mrf3_fit} main result, returns the
-corresponding block-specific labels instead of the shared labels.}
+\item{block}{Optional block name. For an \code{mrf3_fit} main or robust result,
+returns the corresponding block-specific labels instead of the shared
+labels.}
 
 \item{...}{Additional arguments (unused).}
 }

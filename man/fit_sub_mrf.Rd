@@ -71,7 +71,8 @@ Default \code{FALSE} because the extra computation is non-trivial.}
 
 \item{parallel}{Logical; if \code{TRUE}, use \code{\link[parallel:mclapply]{parallel::mclapply()}}.}
 
-\item{cores}{Number of cores when \code{parallel = TRUE}.}
+\item{cores}{Number of cores when \code{parallel = TRUE}; \code{NULL} (default)
+uses \code{parallel::detectCores() - 1}.}
 
 \item{verbose}{Logical; print progress messages.}
 
@@ -105,7 +106,5 @@ subsets produces a smoothed estimate.
 \code{forest.wt.oob} is computed from each sub-model's \code{membership} and
 \code{inbag} matrices: for sample i, only trees where i is out-of-bag
 contribute to its weight row.  This provides a regularized version
-suitable for connection selection via \code{find_connection()}. Because this
-requires \code{inbag}, sub-MRF currently uses the \code{randomForestSRC} fallback
-path even when the package default engine is native.
+suitable for connection selection via \code{find_connection()}.
 }

@@ -24,6 +24,10 @@
 #' @param parallel Logical; whether to parallelize forest-level computation.
 #' @param sparse Logical; whether to sparsify the enhanced proximity matrix.
 #' @param method_cl Clustering backend (`"PAM"` or `"Spectral"`).
+#' @param tune_method Tuning criterion for PAM when `k` is `NULL`
+#' (`"silhouette"` or `"ratio"`).
+#' @param gap_w Weighting scheme for spectral eigengap when `k` is `NULL`
+#' (`"uniform"` or `"log"`).
 #' @param cores Number of CPU cores used by parallel steps.
 #' @param ... Additional arguments passed to downstream clustering helpers.
 #'
@@ -47,6 +51,8 @@ mrf3_cl_prox <- function(rfit, k = NULL,
                          parallel = TRUE,
                          sparse = FALSE,
                          method_cl = "PAM",
+                         tune_method = "silhouette",
+                         gap_w = "uniform",
                          cores = NULL,
                          ...){
   dot_args <- list(...)
@@ -59,6 +65,7 @@ mrf3_cl_prox <- function(rfit, k = NULL,
   merge_mode <- match.arg(merge_mode)
   sibling_fun <- match.arg(sibling_fun)
   hard_prox_mode <- match.arg(hard_prox_mode)
+  method_cl <- match.arg(method_cl, c("PAM", "Spectral"))
   if (isTRUE(enhanced) && identical(merge_mode, "hard")) {
     warning(
       "`merge_mode = 'hard'` is experimental and can over-merge leaves. ",
@@ -146,8 +153,14 @@ mrf3_cl_prox <- function(rfit, k = NULL,
     prox <- as.matrix(prox)
   }
 
-  num_dim <- diag(prox)[1]
-  prox <- prox/num_dim
+  d_prox <- diag(prox)
+  if (any(!is.finite(d_prox)) || any(d_prox <= 0)) {
+    stop(
+      "Proximity matrix diagonal must be positive and finite for normalization.",
+      call. = FALSE
+    )
+  }
+  prox <- prox / sqrt(d_prox %o% d_prox)
   
   # Make sparse proximity
   if(enhanced & sparse){
@@ -157,7 +170,8 @@ mrf3_cl_prox <- function(rfit, k = NULL,
   }
   
   
-  rownames(prox) <- colnames(prox) <- rownames(rfit[[1]]$xvar)
+  nm <- rownames(rfit[[1]]$xvar)
+  if (!is.null(nm)) rownames(prox) <- colnames(prox) <- nm
 
   if(method_cl == "PAM") {
     # Keep similarity here and let PAM consume dissimilarity (1 - prox) explicitly.
@@ -172,9 +186,11 @@ mrf3_cl_prox <- function(rfit, k = NULL,
     message("Start tuning k step..")
 
     if(method_cl == "PAM"){
-      k_fit <- tune_k_clusters(p, return_cluster = TRUE, method = method_cl, prox = TRUE)
+      k_fit <- tune_k_clusters(p, return_cluster = TRUE, method = method_cl,
+                               tune_method = tune_method, gap_w = gap_w, prox = TRUE)
     } else {
-      k_fit <- tune_k_clusters(p, return_cluster = TRUE, method = method_cl)
+      k_fit <- tune_k_clusters(p, return_cluster = TRUE, method = method_cl,
+                               tune_method = tune_method, gap_w = gap_w)
     }
     cl <- k_fit$cl
     k_selected <- as.integer(k_fit$best_k)[1]
@@ -201,23 +217,6 @@ mrf3_cl_prox <- function(rfit, k = NULL,
   class(out) <- "prox"
 
   return(out)
-}
-
-get_prox <-  function(class_mem){
-
-  if(length(unique(class_mem)) == 1){
-
-    class_new <- matrix(0, nrow = length(class_mem), ncol = length(class_mem))
-
-  } else {
-
-    class_new <- data.frame(class = as.factor(class_mem))
-    one_hot <-  model.matrix(~class + 0, class_new)
-    class_new <- one_hot %*% t(one_hot)
-
-  }
-
-  return(class_new)
 }
 
 estimate_density_mode <- function(x) {

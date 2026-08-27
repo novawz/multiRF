@@ -3,18 +3,10 @@
 #' @useDynLib multiRF, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
 #' @importFrom magrittr %>%
-#' @importFrom parallel detectCores
 #' @importFrom foreach foreach %dopar% %do%
-#' @importFrom plyr l_ply llply laply
-#' @importFrom dplyr filter group_by mutate n select slice_max slice_min summarize_all summarise_at
-#' @importFrom graphics legend pairs par plot
-#' @importFrom grDevices colorRampPalette
-#' @importFrom stats as.formula ave cor density dgamma dist dnorm median model.matrix na.omit pnorm prcomp quantile reorder rnorm sd setNames var
-#' @importFrom utils combn tail
-#' @import cluster
-#' @import tibble
-#' @import tidyr
-#' @import truncnorm
+#' @importFrom dplyr filter group_by n slice_max slice_min
+#' @importFrom stats ave density na.omit rnorm setNames var
+#' @importFrom utils tail
 #'
 #' @keywords internal
 "_PACKAGE"

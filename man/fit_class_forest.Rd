@@ -23,5 +23,8 @@ fit_class_forest(
 \description{
 Uses the native multivariate regression forest on a one-hot encoded response,
 then reconstructs training-set class probabilities and labels.
+\code{err.rate} is the out-of-bag misclassification rate computed from OOB
+forest weights (\code{NA} when OOB information is unavailable); samples with
+zero forest weight receive \code{NA} probabilities and predictions.
 }
 \keyword{internal}

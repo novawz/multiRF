@@ -298,6 +298,8 @@ cluster_specific_similarity <- function(shared_specific,
         k = k_map[[d]],
         enhanced = identical(method, "Enhanced_Proximity"),
         method_cl = prox_method_cl,
+        tune_method = tune_method,
+        gap_w = gap_w,
         ...
       )
       out[[d]] <- list(

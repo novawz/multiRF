@@ -18,7 +18,8 @@ NumericMatrix compute_oob_forest_wt_cpp(IntegerMatrix membership,
   int ntree = membership.ncol();
 
   // Output: n x n weight matrix + per-row OOB tree count
-  std::vector<double> W(n * n, 0.0);
+  // (std::size_t casts avoid int overflow in the n*n products for large n)
+  std::vector<double> W((std::size_t)n * n, 0.0);
   std::vector<double> denom(n, 0.0);
 
   for (int t = 0; t < ntree; t++) {
@@ -49,7 +50,7 @@ NumericMatrix compute_oob_forest_wt_cpp(IntegerMatrix membership,
         if (inbag(ia, t) != 0) continue;  // skip inbag samples
 
         denom[ia] += 1.0;
-        double* row = &W[ia * n];
+        double* row = &W[(std::size_t)ia * n];
         for (int b = 0; b < g; b++) {
           int jb = group[b];
           int freq = inbag(jb, t);
@@ -67,7 +68,7 @@ NumericMatrix compute_oob_forest_wt_cpp(IntegerMatrix membership,
     if (denom[i] > 0.0) {
       double inv_d = 1.0 / denom[i];
       for (int j = 0; j < n; j++) {
-        out(i, j) = W[i * n + j] * inv_d;
+        out(i, j) = W[(std::size_t)i * n + j] * inv_d;
       }
     }
   }

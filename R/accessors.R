@@ -14,8 +14,9 @@
 #'
 #' @param x An `mrf3_fit`, `mrf3`, `reconstr`, or `prox` object.
 #' @param which For `mrf3_fit`: `"main"` (default) or `"robust"`.
-#' @param block Optional block name. For an `mrf3_fit` main result, returns the
-#'   corresponding block-specific labels instead of the shared labels.
+#' @param block Optional block name. For an `mrf3_fit` main or robust result,
+#'   returns the corresponding block-specific labels instead of the shared
+#'   labels.
 #' @param ... Additional arguments (unused).
 #'
 #' @return A named vector of cluster assignments, or `NULL` if not available.
@@ -24,7 +25,12 @@ get_clusters <- function(x, which = "main", block = NULL, ...) {
   if (inherits(x, "mrf3_fit")) {
     which <- match.arg(which, c("main", "robust"))
     if (identical(which, "robust")) {
-      return(x$robust_clusters)
+      cl <- x$robust_clusters
+      if (is.list(cl) && !is.null(names(cl))) {
+        if (!is.null(block)) return(cl[[block]])
+        return(cl$shared)
+      }
+      return(cl)
     }
     cl <- x$clusters
     if (is.list(cl) && !is.null(names(cl))) {
@@ -212,26 +218,6 @@ get_models <- function(x, which = "init", ...) {
   }
   if (inherits(x, "mrf3")) {
     return(x$mod)
-  }
-  NULL
-}
-
-
-# ---------- Shared / Specific ----------------------------------------------
-
-#' Extract shared fraction table from a fitted pipeline
-#'
-#' Convenience accessor for the per-omics shared fraction stored
-#' in an `mrf3_fit` object.  For computing shared fractions from raw
-#' data, use `get_shared_frac()` instead.
-#'
-#' @param x An `mrf3_fit` object.
-#' @param ... Additional arguments (unused).
-#'
-#' @return A data frame with columns `data`, `shared_frac`, etc., or `NULL`.
-extract_shared_frac <- function(x, ...) {
-  if (inherits(x, "mrf3_fit")) {
-    return(x$shared$frac)
   }
   NULL
 }

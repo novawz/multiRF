@@ -18,6 +18,7 @@ cluster_imd(
   vs_args = list(),
   fit_args = list(),
   imd_args = list(),
+  use_node_imd = FALSE,
   keep_model = FALSE,
   keep_data = FALSE,
   seed = 529
@@ -36,23 +37,48 @@ cluster_imd(
 
 \item{ntree}{Deprecated compatibility argument. Ignored in no-refit mode.}
 
-\item{ytry}{\code{ytry} used for per-cluster IMD. If \code{NULL}, reuses object setting.}
+\item{ytry}{\code{ytry} used for per-cluster IMD. If \code{NULL}, reuses object setting.
+Only used by the depth-based path.}
 
-\item{parallel}{Logical; whether IMD computation inside each cluster is parallelized.}
+\item{parallel}{Logical; whether IMD computation inside each cluster is
+parallelized. Only used by the depth-based path (the node-score fast path
+is single-pass and needs no parallelism).}
 
 \item{imd_normalized_weights}{Logical; passed to \code{get_multi_weights()} as
 \code{normalized}. The default is \code{FALSE} so cluster-level variable selection
 receives raw forest IMD on its 0-to-1 scale.}
 
 \item{run_vs}{Logical; whether to run \code{mrf3_vs()} variable selection on each
-cluster after IMD.}
+cluster after IMD. \code{run_vs = TRUE} forces the depth-based path, which
+builds the per-cluster subset models that \code{mrf3_vs()} requires.}
 
 \item{vs_args}{A named list of additional arguments passed to \code{mrf3_vs()}
 for each cluster.}
 
 \item{fit_args}{Deprecated compatibility argument. Ignored in no-refit mode.}
 
-\item{imd_args}{Optional named list merged into each per-cluster \code{get_multi_weights()} call.}
+\item{imd_args}{Optional named list merged into each per-cluster \code{get_multi_weights()} call.
+Supplying any \code{imd_args} forces the depth-based path, because the
+node-score fast path cannot honor \code{get_multi_weights()} options.}
+
+\item{use_node_imd}{Controls the estimator used for the per-cluster weights.
+\code{FALSE} (the default) computes Eq. 6-8 inverse minimal depth via the
+per-tree network traversal of \code{get_multi_weights()} on each cluster's
+subset model. \code{TRUE} uses the node-score fast path
+(\code{cluster_weighted_imd()}): the per-node split statistics stored by the
+native engine are averaged per variable, weighted by the fraction of the
+cluster's samples whose root-to-leaf paths visit each node. The fast
+path is deterministic and typically 100-900x faster, but it is a
+\emph{different, split-score-weighted} estimator whose weights stay close to
+the global importance ranking: in benchmarks its per-cluster weights
+correlate at Spearman 0.9-0.99 \emph{across} clusters (depth path: 0.6-0.8),
+and agree with the depth-based weights at Spearman ~0.4-0.6 (top-20
+overlap ~50-75\%). Use it as a quick descriptive screen, not as a
+substitute for the depth-based cluster IMD (see
+\code{cluster_weighted_imd()} for the definition). \code{NULL} selects the fast
+path automatically whenever the models carry the required \code{tree_info}
+statistics and no blocking option (\code{imd_args}, \code{run_vs}) is requested,
+falling back to the depth-based path otherwise.}
 
 \item{keep_model}{Logical; whether to keep per-cluster mrf3 objects in output.}
 
@@ -61,7 +87,9 @@ for each cluster.}
 \item{seed}{Base seed; cluster \code{i} uses \code{seed + i - 1}.}
 }
 \value{
-A list with cluster-level summary, per-cluster IMD outputs, and params.
+A list with cluster-level summary, per-cluster IMD outputs, and
+params. \code{params$imd_path} records which estimator produced the weights:
+\code{"node_score"} (fast path) or \code{"depth_traversal"} (Eq. 6-8 IMD).
 }
 \description{
 Compute Cluster-Specific IMD Without Pairwise IMD

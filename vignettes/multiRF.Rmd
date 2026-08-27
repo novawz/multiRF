@@ -308,7 +308,7 @@ three IMD selection methods all operate on the unnormalized `[0, 1]` scale:
 | Method | Selection rule | When to use it |
 |:--|:--|:--|
 | `"filter"` | Select above `tau * sd(IMD)`; tune `tau` with true OOB normalized MSE across predictor and response coordinates | Adaptive OOB rule; most computationally intensive |
-| `"transformation"` (`"test"`) | Eq. 16 one-sided Student-t transformation with `df = ntree - 1` | Per-tree inferential screening |
+| `"transformation"` (`"test"`) | Eq. 16 t-score IMD: standardize each feature's forest IMD against the block-wide mean forest IMD using the feature's across-tree standard error; keep upper-tail `p < level` under a Student-t reference with `df = ntree - 1`, combined by majority vote across connected forests | Distribution-normalized inferential screening |
 | `"mixture"` | Explicit point mass at zero plus two components on positive IMD | Posterior noise-probability selection |
 
 `method = "thres"` is also available when a fixed `se * sd(IMD)` cutoff is

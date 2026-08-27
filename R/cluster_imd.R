@@ -7,21 +7,47 @@
 #' @param min_cluster_size Minimum sample size required to run a cluster-specific IMD.
 #' @param ntree Deprecated compatibility argument. Ignored in no-refit mode.
 #' @param ytry `ytry` used for per-cluster IMD. If `NULL`, reuses object setting.
-#' @param parallel Logical; whether IMD computation inside each cluster is parallelized.
+#'   Only used by the depth-based path.
+#' @param parallel Logical; whether IMD computation inside each cluster is
+#'   parallelized. Only used by the depth-based path (the node-score fast path
+#'   is single-pass and needs no parallelism).
 #' @param imd_normalized_weights Logical; passed to `get_multi_weights()` as
 #'   `normalized`. The default is `FALSE` so cluster-level variable selection
 #'   receives raw forest IMD on its 0-to-1 scale.
 #' @param fit_args Deprecated compatibility argument. Ignored in no-refit mode.
 #' @param imd_args Optional named list merged into each per-cluster `get_multi_weights()` call.
+#'   Supplying any `imd_args` forces the depth-based path, because the
+#'   node-score fast path cannot honor `get_multi_weights()` options.
 #' @param run_vs Logical; whether to run `mrf3_vs()` variable selection on each
-#'   cluster after IMD.
+#'   cluster after IMD. `run_vs = TRUE` forces the depth-based path, which
+#'   builds the per-cluster subset models that `mrf3_vs()` requires.
 #' @param vs_args A named list of additional arguments passed to `mrf3_vs()`
 #'   for each cluster.
+#' @param use_node_imd Controls the estimator used for the per-cluster weights.
+#'   `FALSE` (the default) computes Eq. 6-8 inverse minimal depth via the
+#'   per-tree network traversal of `get_multi_weights()` on each cluster's
+#'   subset model. `TRUE` uses the node-score fast path
+#'   (`cluster_weighted_imd()`): the per-node split statistics stored by the
+#'   native engine are averaged per variable, weighted by the fraction of the
+#'   cluster's samples whose root-to-leaf paths visit each node. The fast
+#'   path is deterministic and typically 100-900x faster, but it is a
+#'   *different, split-score-weighted* estimator whose weights stay close to
+#'   the global importance ranking: in benchmarks its per-cluster weights
+#'   correlate at Spearman 0.9-0.99 *across* clusters (depth path: 0.6-0.8),
+#'   and agree with the depth-based weights at Spearman ~0.4-0.6 (top-20
+#'   overlap ~50-75%). Use it as a quick descriptive screen, not as a
+#'   substitute for the depth-based cluster IMD (see
+#'   `cluster_weighted_imd()` for the definition). `NULL` selects the fast
+#'   path automatically whenever the models carry the required `tree_info`
+#'   statistics and no blocking option (`imd_args`, `run_vs`) is requested,
+#'   falling back to the depth-based path otherwise.
 #' @param keep_model Logical; whether to keep per-cluster mrf3 objects in output.
 #' @param keep_data Logical; whether to keep per-cluster subset data in output.
 #' @param seed Base seed; cluster `i` uses `seed + i - 1`.
 #'
-#' @return A list with cluster-level summary, per-cluster IMD outputs, and params.
+#' @return A list with cluster-level summary, per-cluster IMD outputs, and
+#'   params. `params$imd_path` records which estimator produced the weights:
+#'   `"node_score"` (fast path) or `"depth_traversal"` (Eq. 6-8 IMD).
 #' @export
 cluster_imd <- function(x,
                         cluster = NULL,
@@ -36,6 +62,7 @@ cluster_imd <- function(x,
                         vs_args = list(),
                         fit_args = list(),
                         imd_args = list(),
+                        use_node_imd = FALSE,
                         keep_model = FALSE,
                         keep_data = FALSE,
                         seed = 529) {
@@ -145,6 +172,77 @@ cluster_imd <- function(x,
   use_refit <- any(vapply(mod_template, function(m) !is.null(m$sub_mrf_info), logical(1)))
   ytry_use <- if (is.null(ytry)) base$ytry else ytry
 
+  # ── Node-score fast path availability ──────────────────────────────────
+  # The native engine stores per-node split statistics (`imd_x_score`,
+  # `imd_y_stats`) in `tree_info`; `cluster_weighted_imd()` turns them into
+  # cluster-specific weights in a single deterministic pass, avoiding the
+  # per-cluster per-tree network traversal entirely. Note this is a
+  # split-score-weighted estimator, not Eq. 6-8 inverse minimal depth; see
+  # `use_node_imd` in the roxygen above.
+  has_node_imd <- !use_refit && all(vapply(mod_template, function(m) {
+    !is.null(m$membership) && is.list(m$tree_info) &&
+      length(m$tree_info) > 0L && !is.null(m$tree_info[[1L]]$imd_x_score)
+  }, logical(1)))
+
+  fast_blockers <- character(0)
+  if (length(imd_args) > 0L) fast_blockers <- c(fast_blockers, "`imd_args`")
+  if (isTRUE(run_vs)) fast_blockers <- c(fast_blockers, "`run_vs = TRUE`")
+
+  if (is.null(use_node_imd)) {
+    use_fast <- has_node_imd && length(fast_blockers) == 0L
+    if (has_node_imd && length(fast_blockers) > 0L) {
+      message(
+        "cluster_imd: node-score fast path cannot honor ",
+        paste(fast_blockers, collapse = " and "),
+        "; using the depth-based traversal instead."
+      )
+    }
+  } else if (isTRUE(use_node_imd)) {
+    if (!has_node_imd) {
+      stop(
+        "`use_node_imd = TRUE` requires native-engine models carrying ",
+        "`tree_info` with `imd_x_score` (and `membership`). Refit with the ",
+        "native engine or use `use_node_imd = FALSE`."
+      )
+    }
+    if (length(fast_blockers) > 0L) {
+      stop(
+        "`use_node_imd = TRUE` cannot honor ",
+        paste(fast_blockers, collapse = " and "),
+        "; drop those options or use `use_node_imd = FALSE`."
+      )
+    }
+    use_fast <- TRUE
+  } else {
+    use_fast <- FALSE
+  }
+
+  # The per-label accumulators inside cluster_weighted_imd() are independent,
+  # so one pass over the full label vector serves every cluster at once;
+  # hoist it out of the per-cluster loop.
+  cw_all <- NULL
+  if (use_fast) {
+    cluster_named <- stats::setNames(cluster, ref_samples)
+    cw_all <- tryCatch(
+      lapply(mod_template, function(m) {
+        cluster_weighted_imd(m, cluster_named, normalized = FALSE)
+      }),
+      error = function(e) e
+    )
+    if (inherits(cw_all, "error")) {
+      if (isTRUE(use_node_imd)) {
+        stop("Node-score fast path failed: ", conditionMessage(cw_all))
+      }
+      message(
+        "cluster_imd: node-score fast path failed (",
+        conditionMessage(cw_all),
+        "); falling back to the depth-based traversal."
+      )
+      use_fast <- FALSE
+      cw_all <- NULL
+    }
+  }
+
   subset_model_for_cluster <- function(mod, conn, dat_sub, idx) {
     ms <- mod
     if (!is.null(mod$membership)) {
@@ -190,57 +288,64 @@ cluster_imd <- function(x,
     dat_sub <- lapply(base$dat, function(d) d[idx, , drop = FALSE])
     mod_sub <- NULL
 
-    # ── Fast path: cluster-weighted IMD from pre-computed per-node scores ──
-    # Uses tree_info$imd_x_score + membership to weight each node's
-    # contribution by the fraction of this cluster's samples passing through it.
-    # `cluster_weighted_imd()` aggregates node split scores and is a useful
-    # descriptive extension, but it is not Eq. 6-8 inverse minimal depth.
-    # Cluster IMD exposed through this API therefore uses the
-    # depth-based path for both reporting and optional variable selection.
-    has_node_imd <- FALSE
-
-    if (has_node_imd && !use_refit) {
-      # Compute cluster-weighted IMD for this cluster across all connections
-      cluster_labels <- setNames(rep("other", length(cluster)), names(cluster))
-      cluster_labels[idx] <- lb
-
-      per_conn_imd <- tryCatch({
-        lapply(seq_along(conn_global), function(j) {
-          cw <- cluster_weighted_imd(
-            mod = mod_template[[j]],
-            cluster = cluster_labels,
-            normalized = FALSE  # normalize after averaging across connections
+    if (use_fast) {
+      # ── Fast path: cluster-weighted IMD from pre-computed node scores ──
+      # `cw_all[[j]][[lb]]` holds this cluster's X/Y weights for connection j
+      # (computed once for all clusters before the loop). Aggregate across
+      # connections per block with the same strict name alignment the
+      # depth-based path uses.
+      imd_out <- tryCatch({
+        per_conn_imd <- lapply(cw_all, function(cw) cw[[lb]])
+        if (any(vapply(per_conn_imd, is.null, logical(1)))) {
+          stop("cluster label `", lb, "` missing from node-score weights.")
+        }
+        block_names <- names(base$dat)
+        conn_labels <- names(mod_template)
+        weight_list <- lapply(block_names, function(bn) {
+          ww <- list()
+          w_models <- character(0)
+          for (j in seq_along(conn_global)) {
+            conn <- as.character(conn_global[[j]])
+            x_block <- if (length(conn) == 1L) conn[[1L]] else conn[[2L]]
+            if (x_block == bn) {
+              ww <- c(ww, list(per_conn_imd[[j]]$X))
+              w_models <- c(w_models, conn_labels[[j]])
+            }
+            if (length(conn) == 2L && conn[[1L]] == bn) {
+              ww <- c(ww, list(per_conn_imd[[j]]$Y))
+              w_models <- c(w_models, conn_labels[[j]])
+            }
+          }
+          .aggregate_imd_block(
+            ww,
+            feature_names = colnames(base$dat[[bn]]),
+            block = bn,
+            model_names = w_models,
+            normalized = imd_normalized_weights
           )
-          cw[[lb]]  # list(X = vec, Y = vec)
         })
+        names(weight_list) <- block_names
+        list(weight_list = weight_list, weight_list_init = NULL, net = NULL)
       }, error = function(e) e)
 
-      if (inherits(per_conn_imd, "error")) {
+      if (inherits(imd_out, "error")) {
         summary_tb$status[i] <- "error"
-        summary_tb$message[i] <- paste0("Cluster IMD failed: ", conditionMessage(per_conn_imd))
+        summary_tb$message[i] <- paste0("Cluster IMD failed: ", conditionMessage(imd_out))
         next
       }
 
-      # Aggregate across connections: average by block
-      block_names <- names(base$dat)
-      weight_list <- lapply(block_names, function(bn) {
-        ww <- list()
-        for (j in seq_along(conn_global)) {
-          conn <- conn_global[[j]]
-          m_name_sep <- rev(as.character(conn))
-          if (m_name_sep[1] == bn) ww <- c(ww, list(per_conn_imd[[j]]$X))
-          if (length(m_name_sep) > 1 && m_name_sep[2] == bn) ww <- c(ww, list(per_conn_imd[[j]]$Y))
-        }
-        if (length(ww) == 0L) return(setNames(numeric(ncol(base$dat[[bn]])), colnames(base$dat[[bn]])))
-        w_out <- Reduce("+", ww) / length(ww)
-        if (isTRUE(imd_normalized_weights)) {
-          denom <- sqrt(sum(w_out^2))
-          if (is.finite(denom) && denom > 0) w_out <- w_out / denom
-        }
-        w_out
-      })
-      names(weight_list) <- block_names
-      imd_out <- list(weight_list = weight_list, weight_list_init = NULL, net = NULL)
+      if (isTRUE(keep_model)) {
+        mod_sub <- tryCatch({
+          out <- lapply(seq_along(conn_global), function(j) {
+            ms <- subset_model_for_cluster(mod_template[[j]], conn_global[[j]], dat_sub, idx)
+            ms$imd_weights <- NULL           # global IMD does not describe the cluster
+            ms$imd_weights_per_tree <- NULL
+            ms
+          })
+          names(out) <- names(mod_template)
+          out
+        }, error = function(e) NULL)
+      }
 
     } else {
       # ── Slow path: subset model + recompute via get_multi_weights ──
@@ -308,6 +413,10 @@ cluster_imd <- function(x,
     if (isTRUE(run_vs)) {
       final_vs <- c(list(mod = mrf_sub, dat.list = dat_sub), vs_args)
       vs_out <- tryCatch(do.call(mrf3_vs, final_vs), error = function(e) e)
+      if (inherits(vs_out, "error")) {
+        summary_tb$status[i] <- "vs_error"
+        summary_tb$message[i] <- paste0("VS failed: ", conditionMessage(vs_out))
+      }
     }
 
     by_cluster[[lb]] <- list(
@@ -326,7 +435,9 @@ cluster_imd <- function(x,
       min_cluster_size = min_cluster_size,
       ytry = ytry_use,
       parallel = parallel,
-      run_vs = run_vs
+      run_vs = run_vs,
+      use_node_imd = use_node_imd,
+      imd_path = if (use_fast) "node_score" else "depth_traversal"
     )
   )
   class(out) <- c("cluster_imd", "list")

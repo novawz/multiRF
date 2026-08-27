@@ -1,10 +1,8 @@
 Package: multiRF
 Type: Package
 Title: MRF-Based Multi-Omics Integration and Clustering
-Version: 0.2.2
-Author: Wei Zhang
-Maintainer: Wei Zhang <wzhang0739@gmail.com>
-Authors@R: 
+Version: 0.2.3
+Authors@R:
     person("Wei", "Zhang", email = "wzhang0739@gmail.com", role = c("aut", "cre"))
 Description: Integrates multi-omics datasets using multivariate random forests for model fitting, variable selection, clustering, and
     visualization.
@@ -25,14 +23,13 @@ Imports:
     magrittr,
     Matrix,
     matrixStats,
+    parallel,
     plyr,
     purrr,
     Rcpp (>= 1.0.0),
     stats,
     stringr,
     tibble,
-    tidyr,
-    truncnorm,
     utils
 Depends:
     R (>= 4.3)
@@ -42,9 +39,7 @@ Suggests:
     circlize,
     ggpubr,
     InterSIM,
-    janitor,
     knitr,
-    mclust,
     maxstat,
     pkgload,
     randomForestSRC,
@@ -53,7 +48,7 @@ Suggests:
     survival,
     survminer,
     umap,
-    testthat (>= 3.0.0)
+    testthat (>= 3.1.7)
 VignetteBuilder: knitr, rmarkdown
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0

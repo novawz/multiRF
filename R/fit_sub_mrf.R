@@ -2,7 +2,9 @@
 #'
 #' Given an rfsrc model fitted with `membership = TRUE`, reconstructs
 #' the out-of-bag forest weight matrix.  For each sample i, only trees
-#' where i is OOB contribute to its weight row.
+#' where i is OOB contribute to its weight row.  The target sample is
+#' excluded from its own donor row (zero diagonal) and rows are
+#' renormalized, matching `compute_oob_forest_wt_cpp()` semantics.
 #'
 #' @param mod  A fitted rfsrc model with `membership` and `inbag` slots.
 #' @return An n x n OOB forest-weight matrix.
@@ -39,7 +41,30 @@ compute_oob_fw <- function(mod) {
     fw_oob[nonzero, ] <- fw_oob[nonzero, , drop = FALSE] / oob_count[nonzero]
   }
 
+  ## Exclude each sample from its own donor row (no self-leakage) and
+  ## renormalize rows, matching compute_oob_forest_wt_cpp() semantics.
+  diag(fw_oob) <- 0
+  row_sum <- rowSums(fw_oob)
+  pos <- row_sum > 0
+  if (any(pos)) {
+    fw_oob[pos, ] <- fw_oob[pos, , drop = FALSE] / row_sum[pos]
+  }
+
   fw_oob
+}
+
+## Fork-based mclapply does not support mc.cores > 1 on Windows; cap the
+## core budget there with a warning so parallel options stay portable.
+.portable_mc_cores <- function(cores) {
+  if (.Platform$OS.type == "windows" && cores > 1L) {
+    warning(
+      "Fork-based parallelism (`parallel::mclapply`) is not supported on ",
+      "Windows; falling back to a single core.",
+      call. = FALSE
+    )
+    cores <- 1L
+  }
+  cores
 }
 
 .average_sub_mrf_imd <- function(imd_sum, n_sub) {
@@ -100,7 +125,8 @@ NULL
 #'   `compute_imd = TRUE`.
 #' @param seed  Base random seed.
 #' @param parallel  Logical; if `TRUE`, use [parallel::mclapply()].
-#' @param cores  Number of cores when `parallel = TRUE`.
+#' @param cores  Number of cores when `parallel = TRUE`; `NULL` (default)
+#'   uses `parallel::detectCores() - 1`.
 #' @param verbose  Logical; print progress messages.
 #' @param ...  Additional arguments forwarded to `fit_forest()`.
 #'
@@ -123,9 +149,7 @@ NULL
 #' `forest.wt.oob` is computed from each sub-model's `membership` and
 #' `inbag` matrices: for sample i, only trees where i is out-of-bag
 #' contribute to its weight row.  This provides a regularized version
-#' suitable for connection selection via `find_connection()`. Because this
-#' requires `inbag`, sub-MRF currently uses the `randomForestSRC` fallback
-#' path even when the package default engine is native.
+#' suitable for connection selection via `find_connection()`.
 #'
 fit_sub_mrf <- function(X, Y,
                         n_sub = 15L,
@@ -149,6 +173,18 @@ fit_sub_mrf <- function(X, Y,
   X <- as.data.frame(X)
   Y <- as.data.frame(Y)
   stopifnot(nrow(X) == nrow(Y))
+
+  ## Preserve the caller's RNG state: fit_one() calls set.seed(), which would
+  ## otherwise clobber the session RNG stream as a side effect.
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
 
   n  <- nrow(X)
   pX <- ncol(X)
@@ -219,7 +255,15 @@ fit_sub_mrf <- function(X, Y,
             parallel       = FALSE,
             sample_embed_list = full_embed
           ),
-          error = function(e) NULL
+          error = function(e) {
+            warning(
+              "Enhanced-proximity computation failed for sub-MRF replicate ",
+              b, " (", conditionMessage(e),
+              "); using plain proximity for this replicate.",
+              call. = FALSE
+            )
+            NULL
+          }
         )
         enh_prox <- if (!is.null(enh)) enh$prox else mod$proximity
       }
@@ -270,12 +314,27 @@ fit_sub_mrf <- function(X, Y,
 
   t0 <- proc.time()[3]
 
+  if (parallel && is.null(cores)) {
+    cores <- max(1L, parallel::detectCores() - 1L)
+  }
   cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
+  cores <- .portable_mc_cores(cores)
 
   if (parallel && cores > 1L) {
+    ## One parallel layer at a time: forked children run their forests
+    ## single-threaded unless the user set multiRF.nthread explicitly.
+    ## This avoids core oversubscription and, on Linux/libgomp, the
+    ## fork-after-OpenMP hazard (libgomp is not fork-safe). nthread does
+    ## not affect results (thread-count invariant by design).
     results <- parallel::mclapply(
       seq_len(n_sub),
-      fit_one,
+      function(b) {
+        if (is.null(getOption("multiRF.nthread"))) {
+          old <- options(multiRF.nthread = 1L)
+          on.exit(options(old), add = TRUE)
+        }
+        fit_one(b)
+      },
       mc.cores = cores,
       mc.set.seed = FALSE
     )
@@ -284,6 +343,30 @@ fit_sub_mrf <- function(X, Y,
       if (verbose && b %% 5 == 0) message(sprintf("  sub-MRF %d / %d", b, n_sub))
       fit_one(b)
     })
+  }
+
+  ## Guard against silently failed workers: mclapply returns NULL for a
+  ## killed fork and a "try-error" object for an R-level error.
+  failed <- vapply(
+    results,
+    function(r) !is.list(r) || inherits(r, "try-error") || inherits(r, "condition"),
+    logical(1)
+  )
+  if (any(failed)) {
+    idx <- which(failed)[1L]
+    r_fail <- results[[idx]]
+    msg <- if (inherits(r_fail, "try-error")) {
+      cond <- attr(r_fail, "condition")
+      if (!is.null(cond)) conditionMessage(cond) else as.character(r_fail)
+    } else if (inherits(r_fail, "condition")) {
+      conditionMessage(r_fail)
+    } else {
+      "worker returned no result (e.g. a killed fork)"
+    }
+    stop(sprintf(
+      "%d of %d sub-MRF replicate(s) failed; first failure (replicate %d): %s",
+      sum(failed), n_sub, idx, msg
+    ), call. = FALSE)
   }
 
   elapsed <- proc.time()[3] - t0
@@ -510,7 +593,14 @@ fit_sub_multi_rfsrc <- function(dat.list,
           "  resp (%d) and pred (%d) both small -> using full forest", ncol(Y), ncol(X)
         ))
         mod <- fit_forest(X, Y, mtry = mtry, ytry = ytry, ntree = ntree_full,
-                         seed = seed, forest.wt = "all", ...)
+                         seed = seed, forest.wt = "all",
+                         enhanced_prox = isTRUE(enhanced), ...)
+        ## Match the interface of sub-sampled connections, which always
+        ## carry an OOB forest-weight matrix.
+        if (is.null(mod$forest.wt.oob) &&
+            !is.null(mod$membership) && !is.null(mod$inbag)) {
+          mod$forest.wt.oob <- compute_oob_forest_wt(mod)
+        }
         return(mod)
       }
 
@@ -543,6 +633,7 @@ fit_sub_multi_rfsrc <- function(dat.list,
     }
 
   ## ── Dispatch: parallel or sequential ───────────────────────
+  n_par_conn <- .portable_mc_cores(n_par_conn)
   if (n_par_conn > 1L) {
     mod_l <- parallel::mclapply(
       connect_list,

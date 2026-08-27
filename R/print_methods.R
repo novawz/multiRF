@@ -79,6 +79,7 @@ print.mrf3 <- function(x, max_weights = 5L, ...) {
 #'
 #' @return The input object, invisibly.
 #' @keywords internal
+#' @export
 print.vs <- function(x, ...) {
   ## Delegate to print.mrf3 which already handles the vs subclass
   print.mrf3(x, ...)

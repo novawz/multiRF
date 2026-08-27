@@ -19,7 +19,10 @@ All vectors must be alignable to the same samples.}
 \item{na.rm}{Logical; whether to remove missing labels pairwise.}
 }
 \value{
-A symmetric matrix of pairwise metric values.
+A matrix of pairwise metric values. The matrix is symmetric for
+\code{"ari"}, \code{"jaccard"}, and \code{"nmi"}; for \code{"purity"}, entry \verb{[i, j]} is the
+purity of clustering \code{i} evaluated against clustering \code{j} as reference,
+so the matrix may be asymmetric.
 }
 \description{
 Pairwise metric matrix across multiple clusterings

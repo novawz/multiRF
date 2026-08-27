@@ -2,7 +2,6 @@
 % Please edit documentation in R/weights_preproc.R
 \name{prepare_weight_matrix}
 \alias{prepare_weight_matrix}
-\alias{prepare_weight_list}
 \alias{adjust_weight_matrix}
 \alias{truncate_top_v_rows}
 \alias{row_normalize_weights}
@@ -17,8 +16,6 @@ prepare_weight_matrix(
   eps = 1e-08,
   keep_ties = TRUE
 )
-
-prepare_weight_list(W_list, ...)
 
 adjust_weight_matrix(W, zero_diag = TRUE, eps = 1e-08)
 
@@ -41,17 +38,11 @@ row_normalize_weights(W, eps = 1e-12)
 
 \item{keep_ties}{Logical; whether top-v truncation keeps ties at the cutoff.}
 
-\item{W_list}{A named list of square numeric weight matrices.}
-
-\item{...}{Additional arguments passed to \code{prepare_weight_matrix()}.}
-
 \item{sparse}{Logical; whether \code{truncate_top_v_rows()} should return a sparse
 matrix.}
 }
 \value{
 A processed square numeric matrix.
-
-A list of processed weight matrices.
 
 Adjusted weight matrix using row-wise scaling by \code{1 - diag(W)}.
 

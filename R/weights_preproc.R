@@ -35,18 +35,6 @@ prepare_weight_matrix <- function(W,
 
 
 #' @rdname prepare_weight_matrix
-#' @param W_list A named list of square numeric weight matrices.
-#' @param ... Additional arguments passed to `prepare_weight_matrix()`.
-#' @return A list of processed weight matrices.
-prepare_weight_list <- function(W_list, ...) {
-  if (!is.list(W_list) || length(W_list) == 0) {
-    stop("`W_list` must be a non-empty list of matrices.")
-  }
-  lapply(W_list, function(W) prepare_weight_matrix(W, ...))
-}
-
-
-#' @rdname prepare_weight_matrix
 #' @param W A square numeric weight matrix.
 #' @return Adjusted weight matrix using row-wise scaling by `1 - diag(W)`.
 adjust_weight_matrix <- function(W, zero_diag = TRUE, eps = 1e-8) {
@@ -113,6 +101,8 @@ truncate_top_v_rows <- function(W, top_v = NULL, keep_ties = TRUE,
       } else {
         keep <- order(row, decreasing = TRUE)[seq_len(top_v)]
       }
+      ## Non-finite input entries were ranked as -Inf; never keep them.
+      keep <- keep[is.finite(row[keep])]
       ii <- c(ii, rep(i, length(keep)))
       jj <- c(jj, keep)
       xx <- c(xx, W[i, keep])
@@ -134,6 +124,8 @@ truncate_top_v_rows <- function(W, top_v = NULL, keep_ties = TRUE,
     } else {
       keep <- order(row, decreasing = TRUE)[seq_len(top_v)]
     }
+    ## Non-finite input entries were ranked as -Inf; never keep them.
+    keep <- keep[is.finite(row[keep])]
     drop <- setdiff(seq_len(p), keep)
     if (length(drop) > 0) {
       out[i, drop] <- 0

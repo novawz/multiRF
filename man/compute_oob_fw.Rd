@@ -15,6 +15,8 @@ An n x n OOB forest-weight matrix.
 \description{
 Given an rfsrc model fitted with \code{membership = TRUE}, reconstructs
 the out-of-bag forest weight matrix.  For each sample i, only trees
-where i is OOB contribute to its weight row.
+where i is OOB contribute to its weight row.  The target sample is
+excluded from its own donor row (zero diagonal) and rows are
+renormalized, matching \code{compute_oob_forest_wt_cpp()} semantics.
 }
 \keyword{internal}

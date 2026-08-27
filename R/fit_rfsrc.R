@@ -61,6 +61,9 @@ fit_forest <- function(X, Y = NULL,
   X <- as.data.frame(X, check.names = FALSE)
   if (missing(type) && is.null(Y)) type <- "unsupervised"
   type <- match.arg(type)
+  if (identical(type, "regression") && is.null(Y)) {
+    stop("`Y` is required for regression; use type = 'unsupervised' for X-only fitting.")
+  }
   samptype <- match.arg(samptype)
   forest.wt <- match.arg(forest.wt, c("all", "inbag", "oob"))
   proximity <- match.arg(proximity, c("all", "inbag", "oob", "none"))
@@ -183,7 +186,10 @@ fit_forest <- function(X, Y = NULL,
   # rfsrc only accepts integer mtry/ytry; resolve formula strings here
   n.xvar <- ncol(data.frame(X))
   if (is.character(mtry)) mtry <- resolve_param(mtry, p = n.xvar, default = NULL, name = "mtry")
-  if (is.character(ytry)) ytry <- resolve_param(ytry, p = ncol(data.frame(Y)), default = NULL, name = "ytry")
+  # Unsupervised has no Y; resolve ytry formulas against ncol(X) there,
+  # matching the native unsupervised path.
+  ytry_p <- if (identical(type, "unsupervised")) n.xvar else ncol(data.frame(Y))
+  if (is.character(ytry)) ytry <- resolve_param(ytry, p = ytry_p, default = NULL, name = "ytry")
 
   if(type == "classification"){
 
@@ -274,7 +280,8 @@ fit_forest <- function(X, Y = NULL,
 #' @param dat.list A list that contains multi-omics datasets with samples in rows and features in columns. Samples should be matched in each dataset.
 #' @param connect_list A pre-defined connection list between datasets. If `NULL`,
 #' all directed pairwise connections are enumerated.
-#' @param var.wt Optional variable-weight list aligned with `dat.list`.
+#' @param var.wt Optional named list of variable weights; names must cover
+#' the block names in `names(dat.list)`.
 #' @param yprob Deprecated. Use `ytry` directly instead.
 #' @param ytry Number of response variables randomly selected per split.
 #'   Default `NULL` means the native engine uses `ceiling(qy/3)`.
@@ -290,6 +297,15 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
     enumerate_connections(names(dat.list))
   } else {
     connect_list
+  }
+
+  # var.wt is subset by block name below; an unnamed (positional) list would
+  # silently yield NULL weights, so require explicit names.
+  if (!is.null(var.wt) &&
+      (is.null(names(var.wt)) || !all(names(dat.list) %in% names(var.wt)))) {
+    stop(
+      "`var.wt` must be a named list whose names cover `names(dat.list)`."
+    )
   }
 
   fit_one <- function(d){
@@ -323,7 +339,20 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
       fallback = 1L
     )
     n_par <- min(n_conn, n_par)
-    mod_l <- parallel::mclapply(connection_used, fit_one, mc.cores = n_par)
+    n_par <- .portable_mc_cores(n_par)
+    ## One parallel layer at a time: see fit_sub_mrf() — forked children
+    ## default to single-threaded forests unless multiRF.nthread is set.
+    mod_l <- parallel::mclapply(
+      connection_used,
+      function(conn) {
+        if (is.null(getOption("multiRF.nthread"))) {
+          old <- options(multiRF.nthread = 1L)
+          on.exit(options(old), add = TRUE)
+        }
+        fit_one(conn)
+      },
+      mc.cores = n_par
+    )
   } else {
     mod_l <- lapply(connection_used, fit_one)
   }
@@ -350,6 +379,8 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
 }
 
 # Backward compatibility aliases
+#' @rdname fit_forest
+#' @export
 fit_rfsrc <- function(X, Y = NULL, type = "regression", nodedepth = NULL,
                       max_depth = NULL, nodesize = NULL,
                       ntree = 200, forest.wt = "all", proximity = "all",
@@ -390,6 +421,8 @@ fit_rfsrc <- function(X, Y = NULL, type = "regression", nodedepth = NULL,
   )
 }
 
+#' @rdname fit_forest
+#' @export
 fit_multi_rfsrc <- function(dat.list, connect_list = NULL, var.wt = NULL,
                             yprob = 1, ytry = NULL, seed = 529L, ...) {
   .Deprecated("fit_multi_forest")

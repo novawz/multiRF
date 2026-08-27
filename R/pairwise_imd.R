@@ -10,6 +10,10 @@
 #'   `"selected"` (default), `"weights_nonzero"`, or `"all"`.
 #' @param normalized Logical; whether to return degree-normalized adjacency.
 #'
+#' @details Pairwise IMD is only defined for two-block connections; fits with
+#'   single-block (self) connections are rejected with an error. Feature names
+#'   must also be unique across omics blocks.
+#'
 #' @return A list with `adj_var_mat`, `adj_dat_mat`, `var_use`, and
 #'   `feature_source`.
 #' @export
@@ -20,6 +24,15 @@ pairwise_imd <- function(x,
 
   mod <- pairwise_imd_extract_object(x)
 
+  conn_lens <- lengths(mod$connection)
+  if (length(conn_lens) > 0L && any(conn_lens != 2L)) {
+    stop("`pairwise_imd()` requires two-block connections, but ",
+         sum(conn_lens != 2L), " connection(s) have length ",
+         paste(sort(unique(conn_lens[conn_lens != 2L])), collapse = ", "),
+         ". Single-block (self) connections are not supported.",
+         call. = FALSE)
+  }
+
   ## ---- Fast path: native engine with pre-computed pairwise_xy ----
   has_precomputed <- inherits(x, "mrf3_fit") && !is.null(x$models) &&
     any(vapply(x$models, function(m) !is.null(m$pairwise_xy), logical(1)))
@@ -29,6 +42,7 @@ pairwise_imd <- function(x,
     imd_wts <- x$imd
     dat_names <- names(imd_wts)
     var_names_all <- lapply(imd_wts, names)
+    pairwise_imd_check_names(var_names_all)
     var_use <- pairwise_imd_feature_set(x, mod, feature_source = feature_source)
 
     # Build block-level adjacency
@@ -99,6 +113,7 @@ pairwise_imd <- function(x,
 
     var_use <- pairwise_imd_feature_set(x, mod, feature_source = feature_source)
     var_names_all <- lapply(mod$imd, names)
+    pairwise_imd_check_names(var_names_all)
 
     nt <- mod$ntree
     if (is.null(nt) || !is.finite(nt) || nt <= 0) nt <- 1L
@@ -156,7 +171,10 @@ pairwise_imd <- function(x,
     ok <- d > 0
     inv_sqrt <- rep(0, length(d))
     inv_sqrt[ok] <- d[ok]^(-1 / 2)
-    l <- diag(inv_sqrt) %*% adj_var_mat %*% diag(inv_sqrt)
+    # diag(x) on a length-1 numeric builds an identity matrix of that
+    # dimension; force the diagonal-matrix interpretation with `nrow`.
+    d_mat <- diag(inv_sqrt, nrow = length(inv_sqrt))
+    l <- d_mat %*% adj_var_mat %*% d_mat
     dimnames(l) <- dimnames(adj_var_mat)
     adj_var_mat <- l
   }
@@ -199,12 +217,27 @@ print.pairwise_imd_analysis <- function(x, ...) {
 }
 
 
+pairwise_imd_check_names <- function(var_names_all) {
+  all_names <- unlist(var_names_all, use.names = FALSE)
+  dup <- unique(all_names[duplicated(all_names)])
+  if (length(dup) > 0L) {
+    stop("`pairwise_imd()` requires feature names to be unique across blocks; ",
+         "duplicated name(s): ",
+         paste(utils::head(dup, 5L), collapse = ", "),
+         if (length(dup) > 5L) paste0(" (and ", length(dup) - 5L, " more)") else "",
+         ". Rename features (e.g. prefix them with the block name) before fitting.",
+         call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+
 pairwise_imd_extract_object <- function(x) {
   if (inherits(x, "mrf3_fit")) {
     return(list(
       net = x$imd_net,
       connection = x$connection,
-      weights = x$imd,
+      imd = x$imd,
       ntree = x$config$ntree
     ))
   }
@@ -212,7 +245,7 @@ pairwise_imd_extract_object <- function(x) {
     return(list(
       net = x$net,
       connection = x$connection,
-      weights = x$imd,
+      imd = x$imd,
       ntree = x$ntree
     ))
   }

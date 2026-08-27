@@ -92,6 +92,17 @@ List build_tree_network_cpp(CharacterVector var_conc,
     return child_id;
   };
 
+  // Helper lambda: recover a node's own nodesize from the edge where it
+  // appears as `to`; the root never appears as `to`, so fall back to nodeSZ[0].
+  auto find_node_size = [&](const std::string& nm, int edge_idx) -> double {
+    for (int k = edge_idx - 1; k >= 0; k--) {
+      if (as<std::string>(to_vec[k]) == nm) {
+        return (double)nodesize_vec[k];
+      }
+    }
+    return (double)nodeSZ[0];
+  };
+
   std::string from_node = as<std::string>(var_conc[0]);
   int from_id = var_tip_id[0];
   double ns_all = (double)nodeSZ[0];
@@ -127,9 +138,11 @@ List build_tree_network_cpp(CharacterVector var_conc,
       while (cur_nc >= 0 && nc_counts[cur_nc] == 2) {
         from_node = find_parent(from_node, edge_idx);
         from_id = find_parent_id(from_id, edge_idx);
-        ns_all = ns_part;
         cur_nc = find_nc(from_node);
       }
+      // The next edge starts at the (possibly re-entered) ancestor: use its
+      // own nodesize as the parent size, not the just-processed leaf's.
+      ns_all = find_node_size(from_node, edge_idx);
     }
   }
 

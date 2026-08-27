@@ -38,7 +38,11 @@ and optional refitting.}
 \item{method}{Feature-selection rule. \code{"filter"} adaptively tunes the
 cutoff \code{tau * sd(IMD)} using OOB error; \code{"mixture"} fits a
 point-mass/two-component model; and \code{"test"} (alias
-\code{"transformation"}) implements the Eq. 16 Student-t transformation.
+\code{"transformation"}) selects by the Eq. 16 t-score IMD: each
+feature's forest IMD is standardized against the mean forest IMD of
+all features in the block, using the feature's across-tree standard
+error, and features in the upper tail of a Student-t reference with
+\code{ntree - 1} degrees of freedom (\code{p < level}) are kept; see Details.
 \code{"thres"} applies a fixed \code{se * sd(IMD)} cutoff.}
 
 \item{signal}{Which signal component to select on: \code{"shared"} (cross-modal),
@@ -97,4 +101,21 @@ results are retained in \code{signal_results}.
 }
 \description{
 MRF variable selection
+}
+\details{
+For \code{method = "transformation"}, every connected forest supplies a
+per-tree IMD matrix (features x trees) per block. Feature \code{v} is
+standardized as the t-score IMD of Eq. 16,
+\code{t_v = (M_v - mu) / SE(M_v)}, where \code{M_v} is the feature's forest IMD
+(its per-tree IMD averaged over the \code{B} trees), \code{mu} is the mean forest
+IMD over all features of the block, and \code{SE(M_v)} is the feature's
+across-tree standard error (\verb{sd(per-tree IMD) / sqrt(B)}). Features
+with an upper-tail \verb{p = P(T_\{B-1\} > t_v) < level} are selected, i.e.
+features whose forest IMD lies significantly above the block-wide
+mean. When several connected forests cover the same block, each forest
+is evaluated separately and a feature is retained by strict majority
+vote across forests; the reported t-scores and p-values are averaged.
+Because per-tree IMDs within a forest are correlated (trees share the
+training data) and \code{mu} is treated as a fixed reference, the p-values
+are screening scores rather than exact test levels.
 }

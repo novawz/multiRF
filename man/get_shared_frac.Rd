@@ -25,8 +25,9 @@ extracted from it.}
 \value{
 A data.frame with one row per omics block:
 \code{data}, \code{frob_shared}, \code{frob_specific}, \code{specific_ratio}, \code{shared_frac},
-and \code{method}. For backward compatibility, it also includes
-\code{frob_data}, \code{frob_residual}, and \code{residual_ratio}.
+and \code{method}. \code{frob_shared} is the Frobenius norm of the reconstructed
+(shared) matrix \code{X_pred = X - R}. For backward compatibility, it also
+includes \code{frob_data}, \code{frob_residual}, and \code{residual_ratio}.
 }
 \description{
 Shared fraction is computed by the signal-based definition:

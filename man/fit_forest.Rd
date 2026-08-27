@@ -3,6 +3,8 @@
 \name{fit_forest}
 \alias{fit_forest}
 \alias{fit_multi_forest}
+\alias{fit_rfsrc}
+\alias{fit_multi_rfsrc}
 \title{Fit random forest model and create model lists}
 \usage{
 fit_forest(
@@ -41,6 +43,43 @@ fit_multi_forest(
   seed = 529L,
   parallel_connections = FALSE,
   cores_connections = NULL,
+  ...
+)
+
+fit_rfsrc(
+  X,
+  Y = NULL,
+  type = "regression",
+  nodedepth = NULL,
+  max_depth = NULL,
+  nodesize = NULL,
+  ntree = 200,
+  forest.wt = "all",
+  proximity = "all",
+  mtry = NULL,
+  ytry = NULL,
+  nsplit = 10,
+  samptype = c("swor", "swr"),
+  nthread = getOption("multiRF.nthread", 0L),
+  xvar.wt = NULL,
+  yvar.wt = NULL,
+  split.wt = NULL,
+  case.wt = NULL,
+  seed = 529L,
+  engine = getOption("multiRF.engine", "native"),
+  enhanced_prox = FALSE,
+  sibling_gamma = 0.5,
+  leaf_embed_dim = 10L,
+  ...
+)
+
+fit_multi_rfsrc(
+  dat.list,
+  connect_list = NULL,
+  var.wt = NULL,
+  yprob = 1,
+  ytry = NULL,
+  seed = 529L,
   ...
 )
 }
@@ -112,7 +151,8 @@ when \code{engine != "native"}.}
 \item{connect_list}{A pre-defined connection list between datasets. If \code{NULL},
 all directed pairwise connections are enumerated.}
 
-\item{var.wt}{Optional variable-weight list aligned with \code{dat.list}.}
+\item{var.wt}{Optional named list of variable weights; names must cover
+the block names in \code{names(dat.list)}.}
 
 \item{yprob}{Deprecated. Use \code{ytry} directly instead.}
 

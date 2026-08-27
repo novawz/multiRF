@@ -28,3 +28,8 @@ Run pairwise IMD as a standalone post-fit analysis. By default, this uses
 the selected features from the variable-selection / robust-clustering stage
 when available, rather than all variables.
 }
+\details{
+Pairwise IMD is only defined for two-block connections; fits with
+single-block (self) connections are rejected with an error. Feature names
+must also be unique across omics blocks.
+}

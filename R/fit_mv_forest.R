@@ -175,13 +175,21 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL, nsplit = 10L,
   embed_mat <- NULL
   if (isTRUE(enhanced_prox)) {
     embed_k <- max(1L, min(as.integer(leaf_embed_dim),
-                            ncol(X_mat) - 1L,
+                            ncol(X_mat),
                             nrow(X_mat) - 1L))
     embed_mat <- tryCatch({
       pc <- stats::prcomp(X_mat, center = TRUE, scale. = TRUE, rank. = embed_k)
       pc$x[, seq_len(min(embed_k, ncol(pc$x))), drop = FALSE]
     }, error = function(e) {
-      scale(X_mat)[, seq_len(embed_k), drop = FALSE]
+      # prcomp(scale. = TRUE) most commonly fails on zero-variance columns;
+      # drop them before scaling so the fallback does not emit NaN columns.
+      keep <- which(apply(X_mat, 2, stats::sd) > 0)
+      if (length(keep) == 0L) {
+        stop("Cannot build enhanced-proximity embedding: ",
+             "all columns have zero variance.")
+      }
+      scaled <- scale(X_mat[, keep, drop = FALSE])
+      scaled[, seq_len(min(embed_k, ncol(scaled))), drop = FALSE]
     })
   }
 
@@ -392,7 +400,15 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
         )
         pc$x[, seq_len(min(embed_k, ncol(pc$x))), drop = FALSE]
       }, error = function(e) {
-        scale(dat)[, seq_len(embed_k), drop = FALSE]
+        # prcomp(scale. = TRUE) most commonly fails on zero-variance columns;
+        # drop them before scaling so the fallback does not emit NaN columns.
+        keep <- which(apply(dat, 2, stats::sd) > 0)
+        if (length(keep) == 0L) {
+          stop("Cannot build enhanced-proximity embedding: ",
+               "all columns have zero variance.")
+        }
+        scaled <- scale(dat[, keep, drop = FALSE])
+        scaled[, seq_len(min(embed_k, ncol(scaled))), drop = FALSE]
       })
     }
     embed_x <- build_embed(X_mat)
@@ -548,6 +564,9 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
 #'
 #' Uses the native multivariate regression forest on a one-hot encoded response,
 #' then reconstructs training-set class probabilities and labels.
+#' `err.rate` is the out-of-bag misclassification rate computed from OOB
+#' forest weights (`NA` when OOB information is unavailable); samples with
+#' zero forest weight receive `NA` probabilities and predictions.
 #'
 #' @keywords internal
 fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL, nsplit = 10L,
@@ -568,6 +587,9 @@ fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL, nsplit = 10L,
   }
 
   y_fac <- as.factor(Y)
+  if (anyNA(y_fac)) {
+    stop("Classification response `Y` contains missing values.")
+  }
   if (nlevels(y_fac) < 2L) {
     stop("Classification requires at least two response classes.")
   }
@@ -598,26 +620,42 @@ fit_class_forest <- function(X, Y, ntree = 500L, mtry = NULL, nsplit = 10L,
 
   fw <- fit$forest.wt
   rs <- rowSums(fw)
-  prob <- matrix(0, nrow = nrow(fw), ncol = ncol(y_mat))
+  prob <- matrix(NA_real_, nrow = nrow(fw), ncol = ncol(y_mat))
   colnames(prob) <- colnames(y_mat)
   rownames(prob) <- rownames(X)
   ok <- rs > 0
   if (any(ok)) {
     prob[ok, ] <- (fw[ok, , drop = FALSE] / rs[ok]) %*% y_mat
   }
-  if (any(!ok)) {
-    prob[!ok, ] <- y_mat[!ok, , drop = FALSE]
-  }
 
-  pred_idx <- max.col(prob, ties.method = "first")
-  pred_class <- factor(colnames(prob)[pred_idx], levels = levels(y_fac))
+  ## Samples with zero forest weight have no valid prediction: keep NA
+  ## rather than "predicting" their true label.
+  pred_class <- factor(rep(NA_character_, nrow(prob)), levels = levels(y_fac))
+  if (any(ok)) {
+    pred_idx <- max.col(prob[ok, , drop = FALSE], ties.method = "first")
+    pred_class[ok] <- colnames(prob)[pred_idx]
+  }
   names(pred_class) <- rownames(X)
+
+  ## OOB misclassification rate from OOB forest weights, so `err.rate`
+  ## matches rfsrc's OOB semantics regardless of the forest.wt display mode
+  ## (forest.wt = "all" would give optimistic resubstitution error).
+  err_rate <- NA_real_
+  if (!is.null(fit$membership) && !is.null(fit$inbag)) {
+    W_oob <- compute_oob_forest_wt(fit)
+    oob_prob <- W_oob %*% y_mat
+    oob_ok <- rowSums(is.na(oob_prob)) == 0L & rowSums(oob_prob) > 0
+    if (any(oob_ok)) {
+      oob_idx <- max.col(oob_prob[oob_ok, , drop = FALSE], ties.method = "first")
+      err_rate <- mean(colnames(y_mat)[oob_idx] != as.character(y_fac)[oob_ok])
+    }
+  }
 
   fit$yvar <- data.frame(Y = y_fac, stringsAsFactors = FALSE)
   rownames(fit$yvar) <- rownames(X)
   fit$predicted <- pred_class
   fit$class.prob <- prob
-  fit$err.rate <- mean(pred_class != y_fac)
+  fit$err.rate <- err_rate
   class(fit) <- c("multiRF_native", "grow", "class+")
 
   fit

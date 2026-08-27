@@ -379,11 +379,10 @@ extract_plot_weights <- function(x, source = c("auto", "imd", "cluster_imd", "mr
   source <- match.arg(source)
 
   if (identical(source, "mrf")) {
-    wts <- x$imd
-    if (!is.list(x) || is.null(wts)) {
+    if (!is.list(x) || is.null(x$imd)) {
       stop("`source = 'mrf'` requires an mrf3-like object with `$imd`.")
     }
-    return(as_weight_list(wts))
+    return(as_weight_list(x$imd))
   }
 
   if (is_mrf3_fit_object(x)) {

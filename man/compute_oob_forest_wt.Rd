@@ -8,7 +8,9 @@ compute_oob_forest_wt(mod)
 }
 \arguments{
 \item{mod}{A fitted model object from \code{fit_forest} (must contain
-\code{$membership} and \code{$inbag}).}
+\code{$membership} and \code{$inbag}), or any model carrying a
+pre-computed \code{$forest.wt.oob} matrix (e.g. from
+\code{fit_sub_mrf}), which is returned directly.}
 }
 \value{
 An n x n numeric matrix of OOB forest weights. Rows are \code{NA} for

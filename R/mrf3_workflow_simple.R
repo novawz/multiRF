@@ -99,12 +99,3 @@ mrf3 <- function(dat.list,
   final_args <- utils::modifyList(base_args, dots)
   do.call(mrf3_fit, final_args)
 }
-
-#' Full mrf3 entry point
-#'
-#' @inheritParams mrf3_fit
-#' @return An object of class `"mrf3_fit"`.
-#' @export
-mrf3_full <- function(...) {
-  mrf3_fit(...)
-}

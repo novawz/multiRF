@@ -64,12 +64,17 @@ reuse it across all candidates for speed.}
 \item{parallel}{Logical; whether to evaluate candidate grid values in parallel
 (POSIX systems only). Default is \code{TRUE}.}
 
-\item{cores}{Number of cores used when \code{parallel = TRUE}.}
+\item{cores}{Number of cores used when \code{parallel = TRUE}. Default \code{NULL}
+uses \code{max(1, parallel::detectCores() - 1)} cores.}
 
 \item{seed}{Random seed used for optional sample subsampling.}
 
 \item{object}{Objective used to choose \code{fused_top_v}
-(\code{"entropy_elbow"} (default), \code{"diss"}, \code{"silhouette"}, or \code{"eigen"}).}
+(\code{"entropy_elbow"} (default), \code{"diss"}, \code{"silhouette"}, or \code{"eigen"}).
+For \code{"entropy_elbow"}, the elbow is selected among interior grid points,
+so the smallest grid candidate and the no-truncation baseline cannot be
+selected directly (no truncation is recovered separately via the
+\code{v >= 0.8 * n} rule in the workflow).}
 
 \item{early_stop}{Logical; when \code{TRUE} and \code{object = "entropy_elbow"},
 stop tuning once a stable small-gain elbow is reached. Default is \code{FALSE}

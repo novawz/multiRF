@@ -24,7 +24,9 @@ mrf3_sample_names <- function(x) {
 }
 
 align_labels_to_samples <- function(labels, sample_names) {
+  nms <- names(labels)
   labels <- as.character(labels)
+  names(labels) <- nms
   if (!is.null(names(labels)) && all(sample_names %in% names(labels))) {
     return(labels[sample_names])
   }
@@ -91,7 +93,9 @@ safe_mean <- function(x) {
 #'
 #' @param x An object from `mrf3_fit()`.
 #' @param branches Branches to evaluate. Supported:
-#' `"specific_shared"` and `"robust_clustering"`.
+#' `"specific_shared"` and `"robust_clustering"`. Branches unavailable in
+#' `x` are skipped with a warning; an error is raised only if none of the
+#' requested branches are available.
 #' @param n_rep Number of repeats.
 #' @param sample_frac Sampling fraction per repeat.
 #' @param sample_mode Sampling mode: `"subsample"` or `"bootstrap"`.
@@ -159,7 +163,8 @@ mrf3_stability <- function(x,
       S <- x$shared$clustering$similarity
       cl0 <- if (is.list(x$clusters) && !is.null(names(x$clusters))) x$clusters$shared else x$clusters
       if (is.null(S) || is.null(cl0)) {
-        stop("`specific_shared` branch is unavailable in `mrf3_fit` output.")
+        warning("`specific_shared` branch is unavailable in `mrf3_fit` output; skipping.")
+        return(NULL)
       }
       S <- as.matrix(S)
       list(
@@ -172,9 +177,10 @@ mrf3_stability <- function(x,
       )
     } else {
       dat <- x$robust_detail$shared$clustering$similarity
-      cl0 <- x$robust_clusters
+      cl0 <- if (is.list(x$robust_clusters) && !is.null(names(x$robust_clusters))) x$robust_clusters$shared else x$robust_clusters
       if (is.null(dat) || is.null(cl0)) {
-        stop("`robust_clustering` branch is unavailable in `mrf3_fit` output.")
+        warning("`robust_clustering` branch is unavailable in `mrf3_fit` output; skipping.")
+        return(NULL)
       }
       dat <- as.matrix(dat)
       kind <- if (nrow(dat) == ncol(dat)) "similarity" else "feature"
@@ -191,10 +197,25 @@ mrf3_stability <- function(x,
 
   branch_inputs <- lapply(branches, build_branch_input)
   names(branch_inputs) <- branches
+  branch_inputs <- Filter(Negate(is.null), branch_inputs)
+  if (length(branch_inputs) == 0L) {
+    stop("None of the requested `branches` are available in `mrf3_fit` output.")
+  }
 
   if (verbose) {
     message("Running stability repeats: n_rep = ", n_rep, ", sample_size = ", n_sub, "/", n)
   }
+  # Fix RNG state for reproducible repeats without clobbering the caller's
+  # RNG stream; restore `.Random.seed` on exit.
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
   set.seed(seed)
 
   out_branches <- vector("list", length(branch_inputs))
@@ -401,160 +422,4 @@ print.mrf3_stability <- function(x, ...) {
     cat("No summary available.\n")
   }
   invisible(x)
-}
-
-
-#' Tidy cluster labels from mrf3_fit
-#'
-#' @param x An object from `mrf3_fit()`.
-#'
-#' @return A tibble with columns:
-#' `sample`, `branch`, `omics`, `cluster`.
-mrf3_tidy_clusters <- function(x) {
-  if (!is_mrf3_fit_object(x)) {
-    stop("`x` must be an `mrf3_fit` object.")
-  }
-  sample_names <- mrf3_sample_names(x)
-  rows <- list()
-  rid <- 1L
-
-  push_rows <- function(branch, cl, omics = NA_character_) {
-    if (is.null(cl)) {
-      return(invisible(NULL))
-    }
-    cl <- as.character(cl)
-    if (length(cl) != length(sample_names)) {
-      return(invisible(NULL))
-    }
-    rows[[rid]] <<- tibble::tibble(
-      sample = sample_names,
-      branch = branch,
-      omics = omics,
-      cluster = cl
-    )
-    rid <<- rid + 1L
-    invisible(NULL)
-  }
-
-  if (is.list(x$clusters) && !is.null(names(x$clusters))) {
-    push_rows("specific_shared", x$clusters$shared)
-    for (nm in setdiff(names(x$clusters), "shared")) {
-      push_rows("specific_specific", x$clusters[[nm]], omics = nm)
-    }
-  } else {
-    push_rows("specific_shared", x$clusters)
-  }
-  if (is.list(x$robust_clusters) && !is.null(names(x$robust_clusters))) {
-    push_rows("robust_clustering", x$robust_clusters$shared)
-  } else {
-    push_rows("robust_clustering", x$robust_clusters)
-  }
-
-  by_omics <- x$specific$clustering$by_omics
-  if (is.list(by_omics) && length(by_omics) > 0L) {
-    for (nm in names(by_omics)) {
-      push_rows("specific_specific", by_omics[[nm]]$cl, omics = nm)
-    }
-  }
-
-  if (length(rows) == 0L) {
-    return(tibble::tibble(
-      sample = character(0),
-      branch = character(0),
-      omics = character(0),
-      cluster = character(0)
-    ))
-  }
-  do.call(rbind, rows)
-}
-
-
-#' Tidy IMD weights from mrf3_fit
-#'
-#' @param x An object from `mrf3_fit()`.
-#' @param top_n Optional top-n variables per block.
-#' @param abs_weight Logical; whether to rank by absolute weight.
-#' @param cluster Optional cluster id. If provided, export IMD from
-#' `x$cluster_imd$by_cluster[[cluster]]`.
-#'
-#' @return A tibble with columns:
-#' `source`, `cluster`, `block`, `variable`, `weight`, `abs_weight`, `rank`.
-mrf3_tidy_imd <- function(x, top_n = NULL, abs_weight = TRUE, cluster = NULL) {
-  if (!is_mrf3_fit_object(x)) {
-    stop("`x` must be an `mrf3_fit` object.")
-  }
-  if (!is.null(top_n)) {
-    if (!is.numeric(top_n) || length(top_n) != 1L || !is.finite(top_n) || top_n < 1) {
-      stop("`top_n` must be NULL or a single integer >= 1.")
-    }
-    top_n <- as.integer(top_n)
-  }
-
-  source <- "imd"
-  w_list <- x$imd
-  cl_name <- NA_character_
-  if (!is.null(cluster)) {
-    source <- "cluster_imd"
-    cl_name <- as.character(cluster)[1]
-    w_list <- x$cluster_imd$by_cluster[[cl_name]]$imd$weight_list
-  }
-  if (!is.list(w_list) || length(w_list) == 0L) {
-    return(tibble::tibble(
-      source = character(0),
-      cluster = character(0),
-      block = character(0),
-      variable = character(0),
-      weight = numeric(0),
-      abs_weight = numeric(0),
-      rank = integer(0)
-    ))
-  }
-
-  rows <- lapply(names(w_list), function(b) {
-    w <- as.numeric(w_list[[b]])
-    nm <- names(w_list[[b]])
-    if (is.null(nm) || length(nm) != length(w)) {
-      nm <- paste0("V", seq_along(w))
-    }
-    aw <- if (isTRUE(abs_weight)) abs(w) else w
-    ord <- order(aw, decreasing = TRUE)
-    w <- w[ord]
-    aw <- aw[ord]
-    nm <- nm[ord]
-    rk <- seq_along(w)
-    if (!is.null(top_n)) {
-      keep <- seq_len(min(top_n, length(w)))
-      w <- w[keep]
-      aw <- aw[keep]
-      nm <- nm[keep]
-      rk <- rk[keep]
-    }
-    tibble::tibble(
-      source = source,
-      cluster = cl_name,
-      block = b,
-      variable = nm,
-      weight = w,
-      abs_weight = aw,
-      rank = as.integer(rk)
-    )
-  })
-  do.call(rbind, rows)
-}
-
-
-#' Tidy shared-fraction summary from mrf3_fit
-#'
-#' @param x An object from `mrf3_fit()`.
-#'
-#' @return A tibble. Empty tibble when unavailable.
-mrf3_tidy_shared <- function(x) {
-  if (!is_mrf3_fit_object(x)) {
-    stop("`x` must be an `mrf3_fit` object.")
-  }
-  tb <- x$shared$frac
-  if (!is.data.frame(tb) || nrow(tb) == 0L) {
-    return(tibble::tibble())
-  }
-  tibble::as_tibble(tb)
 }
