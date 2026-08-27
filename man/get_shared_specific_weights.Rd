@@ -69,8 +69,8 @@ signal at the cost of proportionally more computation. Default \code{1L}
 structure inherited from the main forest workflow for residual
 unsupervised forests.}
 
-\item{specific_nsplit, specific_nthread}{Candidate cutpoint count and native
-thread count inherited from the main workflow.}
+\item{specific_nsplit, specific_nthread}{Candidate cutpoint and thread counts
+inherited from the main workflow.}
 
 \item{specific_nodesize, specific_max_depth}{Residual-tree stopping settings.}
 

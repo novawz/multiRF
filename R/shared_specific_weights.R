@@ -60,8 +60,8 @@
 #' @param specific_ntree,specific_samptype,specific_ytry,specific_proximity RF
 #' structure inherited from the main forest workflow for residual
 #' unsupervised forests.
-#' @param specific_nsplit,specific_nthread Candidate cutpoint count and native
-#' thread count inherited from the main workflow.
+#' @param specific_nsplit,specific_nthread Candidate cutpoint and thread counts
+#' inherited from the main workflow.
 #' @param specific_nodesize,specific_max_depth Residual-tree stopping settings.
 #' @param specific_forest_wt Forest-weight mode for residual forests. The
 #' bioRxiv clustering definition uses `"all"`.

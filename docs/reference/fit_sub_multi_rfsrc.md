@@ -164,6 +164,6 @@ follow the `"response_predictor"` convention used by
 
 ## Details
 
-Sub-MRF uses the default engine (native C++) for its internal fits. OOB
+Sub-MRF uses the default multiRF C++ engine for its internal fits. OOB
 forest-weight reconstruction uses the `inbag` matrix returned by the
-native engine.
+multiRF engine.

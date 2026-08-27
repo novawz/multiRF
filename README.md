@@ -8,11 +8,11 @@ blocks, learns sample-by-sample similarity from shared terminal-node structure,
 and decomposes the result into shared and omics-specific components for
 clustering, variable selection, and visualization.
 
-The package now uses a native C++ backend for multivariate regression,
+The package uses a C++ forest engine for multivariate regression,
 unsupervised forests, forest weights, proximity matrices, and enhanced
 proximity with sibling-leaf corrections. In practice, this gives a simpler
 installation path and a faster MRF than the `randomForestSRC`-based MRF while
-keeping the same overall modeling logic. Parts of the native engine, including
+keeping the same overall modeling logic. Parts of the multiRF forest engine, including
 its sampling and random-number-generation routines, are adapted from
 `randomForestSRC` under GPL (>= 3), which is also available as an optional
 fallback.
@@ -149,7 +149,7 @@ If you use `multiRF` in your research, please cite:
 
 > Zhang, W. et al. (2025). An integrative multi-omics random forest framework for robust biomarker discovery. *GigaScience*, 14, giaf148. [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
-The native forest engine and optional fallback build on `randomForestSRC`;
+The multiRF forest engine and optional fallback build on `randomForestSRC`;
 please also cite:
 
 > Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast Unified Random Forests for Survival, Regression, and Classification (RF-SRC)*. R package version 3.6.2. [doi:10.32614/CRAN.package.randomForestSRC](https://doi.org/10.32614/CRAN.package.randomForestSRC)

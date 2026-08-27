@@ -152,10 +152,10 @@ plot_umap(
   `"reconstruction_weight_all"`, `"reconstruction_weight_block"`,
   `"reconstruction_fused_block"`. `plot_network()` and `plot_circos()`
   additionally accept a `pairwise_imd_analysis` object with
-  `source = "adj_var"` or `"adj_dat"`. The native t-SNE model path
-  requires a square sample-similarity source; use the `dat` argument for
-  a raw rectangular feature matrix. For `plot_weights()`, supported
-  values are: `"auto"`, `"imd"`, `"cluster_imd"`, `"mrf"`.
+  `source = "adj_var"` or `"adj_dat"`. The t-SNE model path requires a
+  square sample-similarity source; use the `dat` argument for a raw
+  rectangular feature matrix. For `plot_weights()`, supported values
+  are: `"auto"`, `"imd"`, `"cluster_imd"`, `"mrf"`.
 
 - omics:
 

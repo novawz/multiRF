@@ -2,7 +2,7 @@
 % Please edit documentation in R/fit_mv_forest.R
 \name{fit_mv_forest}
 \alias{fit_mv_forest}
-\title{Fit a multivariate regression forest (native C++ engine)}
+\title{Fit a multivariate regression forest with the multiRF C++ engine}
 \usage{
 fit_mv_forest(
   X,
@@ -55,7 +55,7 @@ a formula string (\code{"sqrt(p)"}, \code{"p/3"}), or \code{NULL} for the defaul
 
 \item{samptype}{Sampling scheme: \code{"swor"} or \code{"swr"}.}
 
-\item{nthread}{Number of OpenMP threads used by the native engine.}
+\item{nthread}{Number of OpenMP threads used by the multiRF forest engine.}
 
 \item{xvar.wt}{Optional non-negative predictor sampling weights.}
 

@@ -60,7 +60,7 @@ function, so every option of the underlying function stays reachable.
 Supported \code{type} values and their targets:
 \itemize{
 \item \code{"tsne"} (default): \code{\link[=plot_tsne]{plot_tsne()}} on the fitted similarity matrix
-(native t-SNE), coloured by shared cluster.
+(t-SNE), coloured by shared cluster.
 \item \code{"umap"}: \code{\link[=plot_umap]{plot_umap()}} on the fitted similarity matrix.
 \item \code{"embed"}: deprecated pairs display via \code{\link[=plot_embed]{plot_embed()}}, drawn on the top
 principal components of the fitted similarity matrix (control the number

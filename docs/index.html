@@ -51,7 +51,7 @@
 </h1></div>
 <p><strong>Fast multivariate random forests for multi-omics integration</strong></p>
 <p><code>multiRF</code> is an R package for integrating matched multi-omics datasets with multivariate random forests (MRF). It fits directed forest models across omics blocks, learns sample-by-sample similarity from shared terminal-node structure, and decomposes the result into shared and omics-specific components for clustering, variable selection, and visualization.</p>
-<p>The package now uses a native C++ backend for multivariate regression, unsupervised forests, forest weights, proximity matrices, and enhanced proximity with sibling-leaf corrections. In practice, this gives a simpler installation path and a faster MRF than the <code>randomForestSRC</code>-based MRF while keeping the same overall modeling logic. Parts of the native engine, including its sampling and random-number-generation routines, are adapted from <code>randomForestSRC</code> under GPL (&gt;= 3), which is also available as an optional fallback.</p>
+<p>The package uses a C++ forest engine for multivariate regression, unsupervised forests, forest weights, proximity matrices, and enhanced proximity with sibling-leaf corrections. In practice, this gives a simpler installation path and a faster MRF than the <code>randomForestSRC</code>-based MRF while keeping the same overall modeling logic. Parts of the multiRF forest engine, including its sampling and random-number-generation routines, are adapted from <code>randomForestSRC</code> under GPL (&gt;= 3), which is also available as an optional fallback.</p>
 <p>Project website: <a href="https://novawz.github.io/multiRF/" class="external-link">https://novawz.github.io/multiRF/</a></p>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
@@ -187,7 +187,7 @@
 <blockquote>
 <p>Zhang, W. et al. (2025). An integrative multi-omics random forest framework for robust biomarker discovery. <em>GigaScience</em>, 14, giaf148. <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728" class="external-link">doi:10.1093/gigascience/giaf148</a></p>
 </blockquote>
-<p>The native forest engine and optional fallback build on <code>randomForestSRC</code>; please also cite:</p>
+<p>The multiRF forest engine and optional fallback build on <code>randomForestSRC</code>; please also cite:</p>
 <blockquote>
 <p>Ishwaran, H., and Kogalur, U. B. (2026). <em>randomForestSRC: Fast Unified Random Forests for Survival, Regression, and Classification (RF-SRC)</em>. R package version 3.6.2. <a href="https://doi.org/10.32614/CRAN.package.randomForestSRC" class="external-link">doi:10.32614/CRAN.package.randomForestSRC</a></p>
 </blockquote>

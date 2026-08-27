@@ -113,7 +113,7 @@ features are sub-sampled from both blocks independently, and the
 resulting n x n matrices are averaged across replicates.
 }
 \details{
-Sub-MRF uses the default engine (native C++) for its internal fits.
+Sub-MRF uses the default multiRF C++ engine for its internal fits.
 OOB forest-weight reconstruction uses the \code{inbag} matrix returned by
-the native engine.
+the multiRF engine.
 }

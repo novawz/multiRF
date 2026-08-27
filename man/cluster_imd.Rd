@@ -66,7 +66,7 @@ node-score fast path cannot honor \code{get_multi_weights()} options.}
 per-tree network traversal of \code{get_multi_weights()} on each cluster's
 subset model. \code{TRUE} uses the node-score fast path
 (\code{cluster_weighted_imd()}): the per-node split statistics stored by the
-native engine are averaged per variable, weighted by the fraction of the
+multiRF forest engine are averaged per variable, weighted by the fraction of the
 cluster's samples whose root-to-leaf paths visit each node. The fast
 path is deterministic and typically 100-900x faster, but it is a
 \emph{different, split-score-weighted} estimator whose weights stay close to

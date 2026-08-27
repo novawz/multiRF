@@ -112,7 +112,7 @@ NULL
 #' @param mtry Number of candidate X variables per split. Passed through to
 #'   `fit_forest()`.
 #' @param ytry Number of candidate Y variables per split. `NULL` delegates to
-#'   the forest engine (the native default is `ceiling(qy / 3)`).
+#'   the forest engine (the multiRF default is `ceiling(qy / 3)`).
 #' @param min_response  Minimum number of response columns per sub-MRF.
 #' @param min_predictor  Minimum number of predictor columns per sub-MRF.
 #' @param enhanced  Logical; if `TRUE`, compute soft enhanced proximity
@@ -281,7 +281,7 @@ fit_sub_mrf <- function(X, Y,
     ## Compute IMD on this sub-model before it is discarded
     if (isTRUE(compute_imd)) {
       if (!is.null(mod$imd_weights)) {
-        # Native forests expose Eq. 6-8 inverse minimal depth directly,
+        # multiRF forests expose Eq. 6-8 inverse minimal depth directly,
         # including the actual response selected as MSRV at every split.
         # Recomputing through the historical traversal would instead use a
         # post-hoc split score and can disagree with response subsampling.
@@ -500,9 +500,9 @@ fit_sub_mrf <- function(X, Y,
 #'   `fit_multi_forest()`.  Each object contains `forest.wt`, `forest.wt.oob`,
 #'   `proximity`, `xvar`, `yvar`.
 #' @details
-#' Sub-MRF uses the default engine (native C++) for its internal fits.
+#' Sub-MRF uses the default multiRF C++ engine for its internal fits.
 #' OOB forest-weight reconstruction uses the `inbag` matrix returned by
-#' the native engine.
+#' the multiRF engine.
 fit_sub_multi_rfsrc <- function(dat.list,
                                 connect_list,
                                 n_sub = 15L,

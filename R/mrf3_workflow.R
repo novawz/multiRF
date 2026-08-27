@@ -317,7 +317,7 @@ mrf3_fit <- function(dat.list,
     dots = dots
   )
 
-  # When enhanced_proximity is requested and the native engine is active,
+  # When enhanced_proximity is requested and the multiRF engine is active,
   # compute enhanced proximity inside C++ during tree building.
   # This avoids the slow R-level cl_forest() foreach loop.
   if (identical(main_clustering, "enhanced_proximity") &&

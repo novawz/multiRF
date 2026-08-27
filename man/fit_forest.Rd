@@ -110,37 +110,39 @@ samples, and \code{"oob"} evaluates each target only on trees where it is OOB.}
 \code{ceiling(px/3)} for multivariate regression.}
 
 \item{ytry}{Number of response variables randomly selected per split.
-Default \code{NULL} means the native engine uses \code{ceiling(qy/3)}.
+Default \code{NULL} means the multiRF engine uses \code{ceiling(qy/3)}.
 Set to a specific integer to override (e.g., \code{ytry = ncol(Y) / 2}).}
 
 \item{nsplit}{Number of candidate numeric cutpoints evaluated per variable.
-Native and \code{randomForestSRC} both default to \code{10}; set \code{0} to scan all.}
+The multiRF engine and \code{randomForestSRC} both default to \code{10}; set \code{0} to
+scan all.}
 
 \item{samptype}{Sampling scheme: \code{"swor"} (without replacement) or \code{"swr"}
 (with replacement).}
 
-\item{nthread}{Number of threads used by the native engine.}
+\item{nthread}{Number of threads used by the multiRF forest engine.}
 
 \item{xvar.wt, yvar.wt}{Optional non-negative predictor/response sampling
-weights used by the native multivariate forest.}
+weights used by the multiRF multivariate forest.}
 
 \item{split.wt, case.wt}{Optional split/case weights. These are forwarded to
-\code{randomForestSRC}; the native engine fails explicitly because it does not
+\code{randomForestSRC}; the multiRF engine fails explicitly because it does not
 yet implement them.}
 
 \item{seed}{Random seed passed to the selected engine.}
 
 \item{engine}{Forest backend. Default is \code{getOption("multiRF.engine", "native")}.
-Native is the default and recommended engine. \code{randomForestSRC} is used only
-as a non-native fallback when explicitly requested.}
+The value \code{"native"} selects the default and recommended multiRF forest
+engine. \code{randomForestSRC} is used only as an optional fallback when
+explicitly requested.}
 
 \item{enhanced_prox}{Logical; whether to compute enhanced proximity in the
-native engine.}
+multiRF forest engine.}
 
 \item{sibling_gamma}{Strength of the sibling-leaf correction used by
 enhanced proximity.}
 
-\item{leaf_embed_dim}{Embedding dimension used by the native enhanced
+\item{leaf_embed_dim}{Embedding dimension used by the multiRF enhanced
 proximity path.}
 
 \item{...}{Additional arguments passed to \code{randomForestSRC::rfsrc()}
@@ -169,7 +171,7 @@ A model list
 Fit random forest model and create model lists
 }
 \details{
-\code{fit_forest()} now defaults to the package-native engine for
+\code{fit_forest()} defaults to the multiRF forest engine for
 classification, multivariate regression, and unsupervised fitting.
 \code{randomForestSRC} is optional and is only used when \code{engine != "native"}.
 If \code{type} is omitted and \code{Y = NULL}, unsupervised fitting is selected.

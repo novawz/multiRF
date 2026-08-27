@@ -74,7 +74,7 @@ fit_sub_mrf(
 - ytry:
 
   Number of candidate Y variables per split. `NULL` delegates to the
-  forest engine (the native default is `ceiling(qy / 3)`).
+  forest engine (the multiRF default is `ceiling(qy / 3)`).
 
 - min_response:
 

@@ -2,7 +2,7 @@
 % Please edit documentation in R/fit_mv_forest.R
 \name{fit_class_forest}
 \alias{fit_class_forest}
-\title{Fit a classification forest (native engine)}
+\title{Fit a classification forest with the multiRF engine}
 \usage{
 fit_class_forest(
   X,
@@ -21,7 +21,7 @@ fit_class_forest(
 )
 }
 \description{
-Uses the native multivariate regression forest on a one-hot encoded response,
+Uses the multiRF multivariate regression forest on a one-hot encoded response,
 then reconstructs training-set class probabilities and labels.
 \code{err.rate} is the out-of-bag misclassification rate computed from OOB
 forest weights (\code{NA} when OOB information is unavailable); samples with

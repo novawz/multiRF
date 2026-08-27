@@ -129,7 +129,7 @@ Supported values for \code{mrf3_fit} inputs:
 \code{"reconstruction_weight_block"}, \code{"reconstruction_fused_block"}.
 \code{plot_network()} and \code{plot_circos()} additionally accept a
 \code{pairwise_imd_analysis} object with \code{source = "adj_var"} or \code{"adj_dat"}.
-The native t-SNE model path requires a square sample-similarity source;
+The t-SNE model path requires a square sample-similarity source;
 use the \code{dat} argument for a raw rectangular feature matrix.
 For \code{plot_weights()}, supported values are:
 \code{"auto"}, \code{"imd"}, \code{"cluster_imd"}, \code{"mrf"}.}

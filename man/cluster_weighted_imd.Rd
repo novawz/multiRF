@@ -7,7 +7,7 @@
 cluster_weighted_imd(mod, cluster, normalized = TRUE)
 }
 \arguments{
-\item{mod}{A single fitted forest model from the native engine (with
+\item{mod}{A single fitted forest model from the multiRF engine (with
 \verb{$tree_info}, \verb{$membership}, \verb{$xvar}, \verb{$yvar}). \verb{$membership} is expected
 in the remapped form stored by \code{fit_mv_forest()}: sequential 1-based DFS
 leaf IDs per tree (this function inverts that remap internally to recover
@@ -24,7 +24,7 @@ A named list: one element per cluster label, each containing
 \code{Y} has length zero for unsupervised (single-block) models.
 }
 \description{
-Aggregates the per-node split statistics that the native C++ engine stores
+Aggregates the per-node split statistics that the multiRF C++ engine stores
 on every fitted forest (\code{tree_info[[t]]$imd_x_score} and
 \code{tree_info[[t]]$imd_y_stats}) into cluster-specific variable weights,
 without refitting the forest and without re-traversing trees per sample in

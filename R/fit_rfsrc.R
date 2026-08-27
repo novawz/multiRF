@@ -7,7 +7,7 @@
 #' @param max_depth Maximum tree depth; `0` means unlimited.
 #' @param nodesize Minimum terminal-node size. Defaults to 5 for regression,
 #' 1 for classification, and 3 for unsupervised forests.
-#' @param nthread Number of threads used by the native engine.
+#' @param nthread Number of threads used by the multiRF forest engine.
 #' @param ntree Number of trees.
 #' @param forest.wt Forest-weight output mode: `"all"` gives all-sample
 #' terminal-node weights, `"inbag"` restricts donors to bootstrap
@@ -19,28 +19,30 @@
 #' @param ytry Number of candidate Y variables per split. Default `NULL` =
 #'   `ceiling(qy/3)` for supervised, `15` for unsupervised.
 #' @param nsplit Number of candidate numeric cutpoints evaluated per variable.
-#'   Native and `randomForestSRC` both default to `10`; set `0` to scan all.
+#'   The multiRF engine and `randomForestSRC` both default to `10`; set `0` to
+#'   scan all.
 #' @param samptype Sampling scheme: `"swor"` (without replacement) or `"swr"`
 #'   (with replacement).
 #' @param xvar.wt,yvar.wt Optional non-negative predictor/response sampling
-#' weights used by the native multivariate forest.
+#' weights used by the multiRF multivariate forest.
 #' @param split.wt,case.wt Optional split/case weights. These are forwarded to
-#' `randomForestSRC`; the native engine fails explicitly because it does not
+#' `randomForestSRC`; the multiRF engine fails explicitly because it does not
 #' yet implement them.
 #' @param seed Random seed passed to the selected engine.
 #' @param engine Forest backend. Default is `getOption("multiRF.engine", "native")`.
-#' Native is the default and recommended engine. `randomForestSRC` is used only
-#' as a non-native fallback when explicitly requested.
+#' The value `"native"` selects the default and recommended multiRF forest
+#' engine. `randomForestSRC` is used only as an optional fallback when
+#' explicitly requested.
 #' @param enhanced_prox Logical; whether to compute enhanced proximity in the
-#'   native engine.
+#'   multiRF forest engine.
 #' @param sibling_gamma Strength of the sibling-leaf correction used by
 #'   enhanced proximity.
-#' @param leaf_embed_dim Embedding dimension used by the native enhanced
+#' @param leaf_embed_dim Embedding dimension used by the multiRF enhanced
 #'   proximity path.
 #' @param ... Additional arguments passed to `randomForestSRC::rfsrc()`
 #' when `engine != "native"`.
 #' @return A model list
-#' @details `fit_forest()` now defaults to the package-native engine for
+#' @details `fit_forest()` defaults to the multiRF forest engine for
 #' classification, multivariate regression, and unsupervised fitting.
 #' `randomForestSRC` is optional and is only used when `engine != "native"`.
 #' If `type` is omitted and `Y = NULL`, unsupervised fitting is selected.
@@ -92,7 +94,7 @@ fit_forest <- function(X, Y = NULL,
 
   if (identical(engine, "native")) {
     if (!is.null(split.wt) || !is.null(case.wt)) {
-      stop("The native engine does not yet implement `split.wt` or `case.wt`.")
+      stop("The multiRF forest engine does not yet implement `split.wt` or `case.wt`.")
     }
     dot_args <- list(...)
     if (length(dot_args) > 0L) {
@@ -100,7 +102,7 @@ fit_forest <- function(X, Y = NULL,
       if (is.null(dot_names)) dot_names <- rep("<unnamed>", length(dot_args))
       dot_names[dot_names == ""] <- "<unnamed>"
       stop(
-        "Unsupported native `fit_forest()` argument(s): ",
+        "Unsupported multiRF `fit_forest()` argument(s): ",
         paste(dot_names, collapse = ", "), "."
       )
     }
@@ -124,7 +126,7 @@ fit_forest <- function(X, Y = NULL,
     ))
   }
 
-  # Use native C++ engine for multivariate regression (default)
+  # Use the multiRF C++ forest engine for multivariate regression (default)
   if (identical(engine, "native") && identical(type, "regression") && !is.null(Y)) {
     return(fit_mv_forest(
       X = X, Y = Y,
@@ -147,11 +149,11 @@ fit_forest <- function(X, Y = NULL,
     ))
   }
 
-  # Keep the all-native unsupervised path independent of the optional
+  # Keep the built-in unsupervised path independent of the optional
   # randomForestSRC package.
   if (identical(engine, "native") && identical(type, "unsupervised")) {
     if (!is.null(xvar.wt) || !is.null(yvar.wt)) {
-      stop("Native unsupervised forests do not currently support variable weights.")
+      stop("multiRF unsupervised forests do not currently support variable weights.")
     }
     return(fit_mv_forest_unsup(
       X = X,
@@ -173,8 +175,8 @@ fit_forest <- function(X, Y = NULL,
 
   if (!requireNamespace("randomForestSRC", quietly = TRUE)) {
     stop(
-      "`randomForestSRC` is only needed for non-native fallback paths. ",
-      "Install it or use `engine = 'native'`.",
+      "`randomForestSRC` is only needed for the optional fallback. ",
+      "Install it or use the default `engine = 'native'`.",
       call. = FALSE
     )
   }
@@ -187,7 +189,7 @@ fit_forest <- function(X, Y = NULL,
   n.xvar <- ncol(data.frame(X))
   if (is.character(mtry)) mtry <- resolve_param(mtry, p = n.xvar, default = NULL, name = "mtry")
   # Unsupervised has no Y; resolve ytry formulas against ncol(X) there,
-  # matching the native unsupervised path.
+  # matching the multiRF unsupervised path.
   ytry_p <- if (identical(type, "unsupervised")) n.xvar else ncol(data.frame(Y))
   if (is.character(ytry)) ytry <- resolve_param(ytry, p = ytry_p, default = NULL, name = "ytry")
 
@@ -220,7 +222,7 @@ fit_forest <- function(X, Y = NULL,
 
     Y <- as.data.frame(Y, check.names = FALSE)
     # Keep the alternative backend on the same response-subsampling default
-    # as the native implementation (qtry = ceil(q/3)).
+    # as the multiRF implementation (qtry = ceil(q/3)).
     if (is.null(ytry)) ytry <- ceiling(ncol(Y) / 3)
 
     mrf <- randomForestSRC::rfsrc(
@@ -284,7 +286,7 @@ fit_forest <- function(X, Y = NULL,
 #' the block names in `names(dat.list)`.
 #' @param yprob Deprecated. Use `ytry` directly instead.
 #' @param ytry Number of response variables randomly selected per split.
-#'   Default `NULL` means the native engine uses `ceiling(qy/3)`.
+#'   Default `NULL` means the multiRF engine uses `ceiling(qy/3)`.
 #'   Set to a specific integer to override (e.g., `ytry = ncol(Y) / 2`).
 #' @rdname fit_forest
 #' @export

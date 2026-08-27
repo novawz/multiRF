@@ -109,7 +109,7 @@ mrf3_palette <- function(n = NULL) {
 #' Supported `type` values and their targets:
 #'
 #' * `"tsne"` (default): [plot_tsne()] on the fitted similarity matrix
-#'   (native t-SNE), coloured by shared cluster.
+#'   (t-SNE), coloured by shared cluster.
 #' * `"umap"`: [plot_umap()] on the fitted similarity matrix.
 #' * `"embed"`: deprecated pairs display via [plot_embed()], drawn on the top
 #'   principal components of the fitted similarity matrix (control the number
@@ -298,7 +298,7 @@ plot.mrf3_fit <- function(x,
       if (!has_pairwise && is.null(x$imd_net)) {
         stop(
           "`type = \"circos\"` requires pairwise IMD input: fitted models ",
-          "with `pairwise_xy` (native engine) or an IMD network (`imd_net`). ",
+          "with `pairwise_xy` (multiRF engine) or an IMD network (`imd_net`). ",
           "Refit with `run_imd = TRUE` and `compact_output = FALSE`.",
           call. = FALSE
         )

@@ -9,11 +9,17 @@
 Integrates multi-omics datasets using multivariate random forests for model fitting, variable selection, clustering, and visualization.
 }
 \author{
-\strong{Maintainer}: Wei Zhang \email{wzhang0739@gmail.com}
+\strong{Maintainer}: Wei Zhang \email{wzhang0739@gmail.com} [copyright holder]
 
 Authors:
 \itemize{
-  \item Wei Zhang \email{wzhang0739@gmail.com}
+  \item Wei Zhang \email{wzhang0739@gmail.com} [copyright holder]
+}
+
+Other contributors:
+\itemize{
+  \item Hemant Ishwaran \email{hemant.ishwaran@gmail.com} (Copyright holder of adapted randomForestSRC source portions) [copyright holder]
+  \item Udaya B. Kogalur \email{ubk@kogalur.com} (Copyright holder of adapted randomForestSRC source portions) [copyright holder]
 }
 
 }

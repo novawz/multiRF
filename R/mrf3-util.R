@@ -14,7 +14,7 @@
 
 # Pre-process nativeArray once and split by treeID
 .prep_tree_dfs <- function(mod) {
-  # Native C++ engine: build nativeArray-equivalent from tree_info
+  # multiRF C++ engine: build nativeArray-equivalent from tree_info
   if (!is.null(mod$tree_info) && is.null(mod$forest$nativeArray)) {
     return(.prep_tree_dfs_native(mod))
   }
@@ -39,7 +39,7 @@
   split(na_df, na_df$treeID)
 }
 
-# Convert native engine tree_info to nativeArray-like per-tree data frames.
+# Convert multiRF engine tree_info to nativeArray-like per-tree data frames.
 # The C++ engine stores nodes in BFS order, but build_tree_network_cpp
 # expects pre-order (DFS) traversal, so we reorder here.
 .prep_tree_dfs_native <- function(mod) {
@@ -97,7 +97,7 @@ get_tree_net <- function(mod, tree.id, tree_dfs = NULL){
   } else {
     # Fallback: compute on the fly (slow, for backwards compat)
     if (!is.null(mod$tree_info) && is.null(mod$forest$nativeArray)) {
-      # Native engine: build single-tree df from tree_info (DFS order)
+      # multiRF engine: build single-tree df from tree_info (DFS order)
       ti <- mod$tree_info[[tree.id]]
       n_nodes <- length(ti$split_var)
       dfs_order <- .bfs_to_preorder(ti$left, ti$right, n_nodes)
@@ -522,7 +522,7 @@ update_iter_imp <- function(mod, tree.id, calc = "Both", robust = FALSE, w = NUL
 }
 
 #' Get forest importance
-#' @param mod A fitted forest model from the native multiRF engine or the
+#' @param mod A fitted forest model from the multiRF engine or the
 #' optional `randomForestSRC` fallback.
 #' @param parallel Logical; whether to parallelize across trees.
 #' @param robust Logical; whether to use robust matrix-based aggregation.
@@ -868,11 +868,11 @@ get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  u
   model_labels[is.na(model_labels) | !nzchar(model_labels)] <-
     paste0("model_", which(is.na(model_labels) | !nzchar(model_labels)))
 
-  # Fast path: if ALL models have pre-computed imd_weights (native engine),
+  # Fast path: if ALL models have pre-computed imd_weights (multiRF engine),
   # skip the expensive post-hoc tree traversal entirely.
   all_have_imd <- all(vapply(mod_list, function(m) !is.null(m$imd_weights), logical(1)))
   if (all_have_imd) {
-    message("  Using pre-computed IMD weights from native engine (zero extra cost).")
+    message("  Using pre-computed IMD weights from the multiRF engine (zero extra cost).")
     weight_l <- lapply(seq_along(mod_list), function(i) {
       m_name <- model_labels[[i]]
       mod_i <- mod_list[[i]]
@@ -952,7 +952,7 @@ get_multi_weights <- function(mod_list, dat.list, y = NULL, weighted = FALSE,  u
   }
 
   # Slow path: post-hoc tree traversal (used when models come from rfsrc or
-  # native engine without pre-computed IMD)
+  # multiRF engine without pre-computed IMD)
   results <- get_results(mod_list = mod_list, parallel = parallel, robust = robust, weighted = weighted, normalized = FALSE, use_depth = use_depth,
                          calc = calc, w = w, cores = cores, ytry = ytry, seed = seed)
 
