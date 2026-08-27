@@ -51,7 +51,7 @@
 </h1></div>
 <p><strong>Fast multivariate random forests for multi-omics integration</strong></p>
 <p><code>multiRF</code> is an R package for integrating matched multi-omics datasets with multivariate random forests (MRF). It fits directed forest models across omics blocks, learns sample-by-sample similarity from shared terminal-node structure, and decomposes the result into shared and omics-specific components for clustering, variable selection, and visualization.</p>
-<p>The package now uses a native C++ backend for multivariate regression, unsupervised forests, forest weights, proximity matrices, and enhanced proximity with sibling-leaf corrections. In practice, this gives a simpler installation path and a faster MRF than the <code>randomForestSRC</code>-based MRF while keeping the same overall modeling logic.</p>
+<p>The package now uses a native C++ backend for multivariate regression, unsupervised forests, forest weights, proximity matrices, and enhanced proximity with sibling-leaf corrections. In practice, this gives a simpler installation path and a faster MRF than the <code>randomForestSRC</code>-based MRF while keeping the same overall modeling logic. Parts of the native engine, including its sampling and random-number-generation routines, are adapted from <code>randomForestSRC</code> under GPL (&gt;= 3), which is also available as an optional fallback.</p>
 <p>Project website: <a href="https://novawz.github.io/multiRF/" class="external-link">https://novawz.github.io/multiRF/</a></p>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
@@ -90,7 +90,7 @@
 <span><span class="fu"><a href="https://rdrr.io/r/base/table.html" class="external-link">table</a></span><span class="op">(</span><span class="fu"><a href="reference/get_clusters.html">get_clusters</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="reference/get_top_vars.html">get_top_vars</a></span><span class="op">(</span><span class="va">fit</span>, n <span class="op">=</span> <span class="fl">10</span><span class="op">)</span></span></code></pre></div>
 <p><code><a href="reference/mrf3.html">mrf3()</a></code> is the main user-facing entry point. It wraps the staged workflow in <code><a href="reference/mrf3_fit.html">mrf3_fit()</a></code> and forwards advanced arguments through <code>...</code>. Both entry points use automatic feature filtering by default; set <code>filter_mode = "none"</code> when working with an already curated feature set, as in the example above.</p>
-<p>The default similarity workflow retains all directed forests. It removes their diagonal weights, row-normalizes after model top-v truncation, normalizes modularity scores within each response block, and uniformly averages the per-response matrices (Eqs. 6–8). A top-v value at least 80% of the sample size is treated as no truncation. Shared and omics-specific similarities use <code>S = W W^T</code> with a zero diagonal and spectral clustering by default.</p>
+<p>The default similarity workflow retains all directed forests. It removes their diagonal weights, row-normalizes after model top-v truncation, normalizes modularity scores within each response block, and uniformly averages the per-response matrices. A top-v value at least 80% of the sample size is treated as no truncation. Shared and omics-specific similarities use <code>S = W W^T</code> with a zero diagonal and spectral clustering by default.</p>
 </div>
 <div class="section level2">
 <h2 id="what-it-provides">What it provides<a class="anchor" aria-label="anchor" href="#what-it-provides"></a>
@@ -187,14 +187,24 @@
 <blockquote>
 <p>Zhang, W. et al. (2025). An integrative multi-omics random forest framework for robust biomarker discovery. <em>GigaScience</em>, 14, giaf148. <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728" class="external-link">doi:10.1093/gigascience/giaf148</a></p>
 </blockquote>
+<p>The native forest engine and optional fallback build on <code>randomForestSRC</code>; please also cite:</p>
+<blockquote>
+<p>Ishwaran, H., and Kogalur, U. B. (2026). <em>randomForestSRC: Fast Unified Random Forests for Survival, Regression, and Classification (RF-SRC)</em>. R package version 3.6.2. <a href="https://doi.org/10.32614/CRAN.package.randomForestSRC" class="external-link">doi:10.32614/CRAN.package.randomForestSRC</a></p>
+</blockquote>
+<blockquote>
+<p>Ishwaran, H., and Kogalur, U. B. (2007). Random survival forests for R. <em>R News</em>, 7(2), 25–31. <a href="https://journal.r-project.org/articles/RN-2007-015/" class="external-link">Article</a></p>
+</blockquote>
+</div>
+<div class="section level2">
+<h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>
+</h2>
+<p><code>multiRF</code> is distributed under GPL version 3 or later. Portions adapted from <code>randomForestSRC</code> retain their original copyright; see <a href="https://github.com/novawz/multiRF/blob/main/inst/COPYRIGHTS" class="external-link"><code>inst/COPYRIGHTS</code></a> for details.</p>
 </div>
 </div>
   </main><aside class="col-md-3"><div class="license">
 <h2 data-toc-skip>License</h2>
 <ul class="list-unstyled">
-<li>
-<a href="https://opensource.org/licenses/mit-license.php" class="external-link">MIT</a> + file <a href="LICENSE-text.html">LICENSE</a>
-</li>
+<li>GPL (&gt;= 3)</li>
 </ul>
 </div>
 
@@ -209,7 +219,8 @@
 <div class="developers">
 <h2 data-toc-skip>Developers</h2>
 <ul class="list-unstyled">
-<li>Wei Zhang <br><small class="roles"> Author, maintainer </small>   </li>
+<li>Wei Zhang <br><small class="roles"> Author, maintainer, copyright holder </small>   </li>
+<li><a href="authors.html">More about authors...</a></li>
 </ul>
 </div>
 

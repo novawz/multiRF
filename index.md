@@ -14,7 +14,9 @@ unsupervised forests, forest weights, proximity matrices, and enhanced
 proximity with sibling-leaf corrections. In practice, this gives a
 simpler installation path and a faster MRF than the
 `randomForestSRC`-based MRF while keeping the same overall modeling
-logic.
+logic. Parts of the native engine, including its sampling and
+random-number-generation routines, are adapted from `randomForestSRC`
+under GPL (\>= 3), which is also available as an optional fallback.
 
 Project website: <https://novawz.github.io/multiRF/>
 
@@ -67,10 +69,10 @@ working with an already curated feature set, as in the example above.
 The default similarity workflow retains all directed forests. It removes
 their diagonal weights, row-normalizes after model top-v truncation,
 normalizes modularity scores within each response block, and uniformly
-averages the per-response matrices (Eqs. 6–8). A top-v value at least
-80% of the sample size is treated as no truncation. Shared and
-omics-specific similarities use `S = W W^T` with a zero diagonal and
-spectral clustering by default.
+averages the per-response matrices. A top-v value at least 80% of the
+sample size is treated as no truncation. Shared and omics-specific
+similarities use `S = W W^T` with a zero diagonal and spectral
+clustering by default.
 
 ## What it provides
 
@@ -172,3 +174,22 @@ If you use `multiRF` in your research, please cite:
 > Zhang, W. et al. (2025). An integrative multi-omics random forest
 > framework for robust biomarker discovery. *GigaScience*, 14, giaf148.
 > [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
+
+The native forest engine and optional fallback build on
+`randomForestSRC`; please also cite:
+
+> Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast
+> Unified Random Forests for Survival, Regression, and Classification
+> (RF-SRC)*. R package version 3.6.2.
+> [doi:10.32614/CRAN.package.randomForestSRC](https://doi.org/10.32614/CRAN.package.randomForestSRC)
+
+> Ishwaran, H., and Kogalur, U. B. (2007). Random survival forests for
+> R. *R News*, 7(2), 25–31.
+> [Article](https://journal.r-project.org/articles/RN-2007-015/)
+
+## License
+
+`multiRF` is distributed under GPL version 3 or later. Portions adapted
+from `randomForestSRC` retain their original copyright; see
+[`inst/COPYRIGHTS`](https://github.com/novawz/multiRF/blob/main/inst/COPYRIGHTS)
+for details.

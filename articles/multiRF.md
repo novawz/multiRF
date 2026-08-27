@@ -16,8 +16,10 @@ random forests. The current workflow has four main stages:
 The native C++ engine is the default. It implements multivariate
 regression, unsupervised residual forests, all-sample and out-of-bag
 forest weights, ordinary and enhanced proximity, weighted
-candidate-variable sampling, and depth-based forest IMD.
-`randomForestSRC` is an optional fallback rather than a requirement for
+candidate-variable sampling, and depth-based forest IMD. Parts of the
+native engine, including its sampling and random-number-generation
+routines, are adapted from `randomForestSRC` under GPL (\>= 3). RF-SRC
+is also available as an optional fallback rather than a requirement for
 the standard workflow.
 
 This vignette uses a small deterministic subset of the bundled TCGA BRCA
@@ -303,10 +305,63 @@ forest weight matrix. The default similarity path then:
 4.  averages the response-level matrices uniformly; and
 5.  optionally applies fused top-v truncation and row normalization.
 
-This response-stratified fusion is summarized by Eqs. 6–8 in the method
-description. A tuned or fixed top-v at least 80% of the sample size is
-interpreted as no truncation. `model_top_v = Inf` and
-`fused_top_v = Inf` also request no truncation explicitly.
+The corresponding operations are written explicitly below. Let $`F_m`$
+be the raw forest-weight matrix for directed model $`m`$, let
+$`\mathcal{T}_v`$ retain the top-$`v`$ entries in each row (including
+ties at the cutoff), and let $`\mathcal{R}`$ denote row normalization.
+Model-level preprocessing is
+
+``` math
+A_{m,ij} =
+\begin{cases}
+F_{m,ij}/\max\{1-F_{m,ii},\varepsilon\}, & i \ne j,\\
+0, & i=j,
+\end{cases}
+\qquad
+W_m = \mathcal{R}\!\left\{\mathcal{T}_{v_m}(A_m)\right\}.
+```
+
+For response block $`k`$, define
+$`\mathcal{M}^{(k)}=\{m:\operatorname{response}(m)=k\}`$. If $`q_m`$ is
+the connection score, the within-response weights and fused matrix are
+
+``` math
+\begin{aligned}
+s_m &=
+\begin{cases}
+[\max\{q_m,c\}]^\gamma, & \text{weighted fusion},\\
+1, & \text{uniform fusion},
+\end{cases}\\
+\alpha_{km}
+&= \frac{s_m}{\sum_{r\in\mathcal{M}^{(k)}}s_r},
+\qquad
+W^{(k)}
+= \mathcal{R}\!\left(
+\sum_{m\in\mathcal{M}^{(k)}}\alpha_{km}W_m
+\right).
+\end{aligned}
+```
+
+The default global fusion then averages the $`K`$ response-level
+matrices before the optional fused top-$`v`$ step:
+
+``` math
+\overline{W}=\frac{1}{K}\sum_{k=1}^{K}W^{(k)},
+\qquad
+W_{\mathcal{M}^*}
+=\mathcal{R}\!\left\{\mathcal{T}_{v_f}(\overline{W})\right\}.
+```
+
+Thus, [model-level preprocessing](#fusion-model-weight) feeds
+[within-response fusion](#fusion-within-response), followed by
+[across-response fusion](#fusion-across-response). Weighted fusion uses
+the connection modularity by default, with $`c=0`$ and $`\gamma=1`$; if
+all scores in a response block are invalid or non-positive, the default
+fallback is uniform weighting. A tuned or fixed top-v at least 80% of
+the sample size is interpreted as no truncation. `model_top_v = Inf` and
+`fused_top_v = Inf` also request no truncation explicitly; without fused
+truncation, $`\mathcal{T}_{v_f}`$ in the across-response formula is the
+identity.
 
 The shared and residual-specific affinities are constructed as
 `S = W %*% t(W)`, with the diagonal set to zero. Spectral clustering is
@@ -332,12 +387,12 @@ fit$shared$frac[, c("data", "shared_frac", "specific_ratio")]
 #> 3 mirna   0.2447749      0.7552251
 ```
 
-For block `k`, the response-specific forest weight matrix gives the
-shared reconstruction `Xhat^(k) = W^(k) X^(k)` and the residual
-`R^(k) = X^(k) - Xhat^(k)`. An unsupervised forest is then fitted to
-each residual matrix to obtain its block-specific weight matrix and
-similarity. The reported `shared_frac` is
-`1 - ||R^(k)||_F^2 / ||X^(k)||_F^2`. It is a descriptive signal
+For block `k`, the [response-specific forest weight
+matrix](#fusion-within-response) gives the shared reconstruction
+`Xhat^(k) = W^(k) X^(k)` and the residual `R^(k) = X^(k) - Xhat^(k)`. An
+unsupervised forest is then fitted to each residual matrix to obtain its
+block-specific weight matrix and similarity. The reported `shared_frac`
+is `1 - ||R^(k)||_F^2 / ||X^(k)||_F^2`. It is a descriptive signal
 fraction, not a hypothesis-test p-value.
 
 ## Variable selection
@@ -351,7 +406,7 @@ scale:
 | Method | Selection rule | When to use it |
 |:---|:---|:---|
 | `"filter"` | Select above `tau * sd(IMD)`; tune `tau` with true OOB normalized MSE across predictor and response coordinates | Adaptive OOB rule; most computationally intensive |
-| `"transformation"` (`"test"`) | Eq. 16 t-score IMD: standardize each feature’s forest IMD against the block-wide mean forest IMD using the feature’s across-tree standard error; keep upper-tail `p < level` under a Student-t reference with `df = ntree - 1`, combined by majority vote across connected forests | Distribution-normalized inferential screening |
+| `"transformation"` (`"test"`) | Standardize each feature’s forest IMD relative to the block-wide IMD distribution; retain upper-tail features at the chosen `level`, combined by majority vote across connected forests | Distribution-normalized screening |
 | `"mixture"` | Explicit point mass at zero plus two components on positive IMD | Posterior noise-probability selection |
 
 `method = "thres"` is also available when a fixed `se * sd(IMD)` cutoff
@@ -381,11 +436,16 @@ lapply(get_selected_vars(fit), utils::head)
 #> [6] "MIMAT0000754"
 ```
 
+Plots from an `mrf3_fit` object use the unified `plot(fit, type = ...)`
+interface. Recommended types are `"tsne"`, `"umap"`, `"network"`,
+`"circos"`, `"composition"`, `"km"`, and `"weights"`; additional
+arguments are forwarded to the corresponding plot implementation.
+
 IMD values can be inspected independently of the selected set:
 
 ``` r
 
-plot_weights(fit, weight_source = "imd", top = 8)
+plot(fit, type = "weights", weight_source = "imd", top = 8)
 ```
 
 ![](multiRF_files/figure-html/plot-imd-1.png)
@@ -475,11 +535,11 @@ check rather than an independent ground truth.
 All 94 primary tumors in the demonstration subset had a PAM50 call. The
 remaining 6 adjacent-normal samples had no tumor-subtype label and are
 excluded from this comparison. The same native t-SNE coordinates are
-used in panels a and b; only the coloring changes. Panel c uses
-[`plot_cluster_composition()`](../reference/plot_cluster_composition.md)
-to show the exact within-cluster composition. Both displays use package
-plotting functions; the assembly code is hidden here to keep the
-vignette concise.
+used in panels a and b; only the coloring changes. Panels a and b use
+`plot(..., type = "tsne")`, and panel c uses
+`plot(..., type = "composition")` to show the exact within-cluster
+composition. All three panels use the unified plotting interface; the
+assembly code is hidden here to keep the vignette concise.
 
 ![Relationship between the multiRF shared partition and PAM50
 annotations in the demonstration subset. (a, b) The same native t-SNE
@@ -541,8 +601,8 @@ supply `k` explicitly.
 diagnostic on the active graphics device and restores the prior
 base-graphics settings afterward.
 
-The ggplot-based helpers can be composed or exported at final figure
-size. For example,
+The ggplot objects returned by the unified interface can be composed or
+exported at final figure size. For example,
 `ggplot2::ggsave("shared-tsne.pdf", width = 85, height = 75, units = "mm")`
 writes a vector figure; use TIFF or PNG at 600 dpi when a raster file is
 required. The default `sans` family is portable across R devices.
@@ -669,6 +729,18 @@ If you use `multiRF`, please cite the method relevant to your analysis:
 > Zhang, W. et al. (2025). An integrative multi-omics random forest
 > framework for robust biomarker discovery. *GigaScience*, 14, giaf148.
 > [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
+
+The native forest engine and optional fallback build on
+`randomForestSRC`; please also cite:
+
+> Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast
+> Unified Random Forests for Survival, Regression, and Classification
+> (RF-SRC)*. R package version 3.6.2.
+> [doi:10.32614/CRAN.package.randomForestSRC](https://doi.org/10.32614/CRAN.package.randomForestSRC)
+
+> Ishwaran, H., and Kogalur, U. B. (2007). Random survival forests for
+> R. *R News*, 7(2), 25–31.
+> [Article](https://journal.r-project.org/articles/RN-2007-015/)
 
 ## Session information
 

@@ -120,8 +120,10 @@ and refit a robust model.</li>
 <p>The native C++ engine is the default. It implements multivariate
 regression, unsupervised residual forests, all-sample and out-of-bag
 forest weights, ordinary and enhanced proximity, weighted
-candidate-variable sampling, and depth-based forest IMD.
-<code>randomForestSRC</code> is an optional fallback rather than a
+candidate-variable sampling, and depth-based forest IMD. Parts of the
+native engine, including its sampling and random-number-generation
+routines, are adapted from <code>randomForestSRC</code> under GPL (&gt;=
+3). RF-SRC is also available as an optional fallback rather than a
 requirement for the standard workflow.</p>
 <p>This vignette uses a small deterministic subset of the bundled TCGA
 BRCA data so that every evaluated chunk runs quickly. For an analysis,
@@ -513,11 +515,79 @@ then:</p>
 <li>optionally applies fused top-v truncation and row
 normalization.</li>
 </ol>
-<p>This response-stratified fusion is summarized by Eqs. 6–8 in the
-method description. A tuned or fixed top-v at least 80% of the sample
-size is interpreted as no truncation. <code>model_top_v = Inf</code> and
-<code>fused_top_v = Inf</code> also request no truncation
-explicitly.</p>
+<p>The corresponding operations are written explicitly below. Let
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>F</mi><mi>m</mi></msub><annotation encoding="application/x-tex">F_m</annotation></semantics></math>
+be the raw forest-weight matrix for directed model
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>,
+let
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>𝒯</mi><mi>v</mi></msub><annotation encoding="application/x-tex">\mathcal{T}_v</annotation></semantics></math>
+retain the
+top-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>v</mi><annotation encoding="application/x-tex">v</annotation></semantics></math>
+entries in each row (including ties at the cutoff), and let
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ℛ</mi><annotation encoding="application/x-tex">\mathcal{R}</annotation></semantics></math>
+denote row normalization. Model-level preprocessing is</p>
+<p><a id="fusion-model-weight"></a></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mrow><mi>m</mi><mo>,</mo><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>F</mi><mrow><mi>m</mi><mo>,</mo><mi>i</mi><mi>j</mi></mrow></msub><mi>/</mi><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">{</mo><mn>1</mn><mo>−</mo><msub><mi>F</mi><mrow><mi>m</mi><mo>,</mo><mi>i</mi><mi>i</mi></mrow></msub><mo>,</mo><mi>ε</mi><mo stretchy="false" form="postfix">}</mo><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mi>i</mi><mo>≠</mo><mi>j</mi><mo>,</mo></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mn>0</mn><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mi>i</mi><mo>=</mo><mi>j</mi><mo>,</mo></mtd></mtr></mtable></mrow><mspace width="2.0em"></mspace><msub><mi>W</mi><mi>m</mi></msub><mo>=</mo><mi>ℛ</mi><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">{</mo><msub><mi>𝒯</mi><msub><mi>v</mi><mi>m</mi></msub></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>A</mi><mi>m</mi></msub><mo stretchy="false" form="postfix">)</mo><mo stretchy="true" form="postfix">}</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+A_{m,ij} =
+\begin{cases}
+F_{m,ij}/\max\{1-F_{m,ii},\varepsilon\}, &amp; i \ne j,\\
+0, &amp; i=j,
+\end{cases}
+\qquad
+W_m = \mathcal{R}\!\left\{\mathcal{T}_{v_m}(A_m)\right\}.
+</annotation></semantics></math></p>
+<p>For response block
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>,
+define
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>ℳ</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><mo>=</mo><mo stretchy="false" form="prefix">{</mo><mi>m</mi><mo>:</mo><mrow><mi mathvariant="normal">response</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>m</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>k</mi><mo stretchy="false" form="postfix">}</mo></mrow><annotation encoding="application/x-tex">\mathcal{M}^{(k)}=\{m:\operatorname{response}(m)=k\}</annotation></semantics></math>.
+If
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>q</mi><mi>m</mi></msub><annotation encoding="application/x-tex">q_m</annotation></semantics></math>
+is the connection score, the within-response weights and fused matrix
+are</p>
+<p><a id="fusion-within-response"></a></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mtable><mtr><mtd columnalign="right" style="text-align: right; padding-right: 0"><msub><mi>s</mi><mi>m</mi></msub></mtd><mtd columnalign="left" style="text-align: left; padding-left: 0"><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><mo stretchy="false" form="prefix">[</mo><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">{</mo><msub><mi>q</mi><mi>m</mi></msub><mo>,</mo><mi>c</mi><mo stretchy="false" form="postfix">}</mo><msup><mo stretchy="false" form="postfix">]</mo><mi>γ</mi></msup><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">weighted fusion</mtext><mo>,</mo></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mn>1</mn><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">uniform fusion</mtext><mo>,</mo></mtd></mtr></mtable></mrow></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right; padding-right: 0"><msub><mi>α</mi><mrow><mi>k</mi><mi>m</mi></mrow></msub></mtd><mtd columnalign="left" style="text-align: left; padding-left: 0"><mo>=</mo><mfrac><msub><mi>s</mi><mi>m</mi></msub><mrow><munder><mo>∑</mo><mrow><mi>r</mi><mo>∈</mo><msup><mi>ℳ</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup></mrow></munder><msub><mi>s</mi><mi>r</mi></msub></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><msup><mi>W</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><mo>=</mo><mi>ℛ</mi><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><munder><mo>∑</mo><mrow><mi>m</mi><mo>∈</mo><msup><mi>ℳ</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup></mrow></munder><msub><mi>α</mi><mrow><mi>k</mi><mi>m</mi></mrow></msub><msub><mi>W</mi><mi>m</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mtd></mtr></mtable><annotation encoding="application/x-tex">
+\begin{aligned}
+s_m &amp;=
+\begin{cases}
+[\max\{q_m,c\}]^\gamma, &amp; \text{weighted fusion},\\
+1, &amp; \text{uniform fusion},
+\end{cases}\\
+\alpha_{km}
+&amp;= \frac{s_m}{\sum_{r\in\mathcal{M}^{(k)}}s_r},
+\qquad
+W^{(k)}
+= \mathcal{R}\!\left(
+\sum_{m\in\mathcal{M}^{(k)}}\alpha_{km}W_m
+\right).
+\end{aligned}
+</annotation></semantics></math></p>
+<p>The default global fusion then averages the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math>
+response-level matrices before the optional fused
+top-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>v</mi><annotation encoding="application/x-tex">v</annotation></semantics></math>
+step:</p>
+<p><a id="fusion-across-response"></a></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover><mi>W</mi><mo accent="true">¯</mo></mover><mo>=</mo><mfrac><mn>1</mn><mi>K</mi></mfrac><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>1</mn></mrow><mi>K</mi></munderover><msup><mi>W</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>W</mi><msup><mi>ℳ</mi><mo>*</mo></msup></msub><mo>=</mo><mi>ℛ</mi><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">{</mo><msub><mi>𝒯</mi><msub><mi>v</mi><mi>f</mi></msub></msub><mo stretchy="false" form="prefix">(</mo><mover><mi>W</mi><mo accent="true">¯</mo></mover><mo stretchy="false" form="postfix">)</mo><mo stretchy="true" form="postfix">}</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\overline{W}=\frac{1}{K}\sum_{k=1}^{K}W^{(k)},
+\qquad
+W_{\mathcal{M}^*}
+=\mathcal{R}\!\left\{\mathcal{T}_{v_f}(\overline{W})\right\}.
+</annotation></semantics></math></p>
+<p>Thus, <a href="#fusion-model-weight">model-level preprocessing</a>
+feeds <a href="#fusion-within-response">within-response fusion</a>,
+followed by <a href="#fusion-across-response">across-response
+fusion</a>. Weighted fusion uses the connection modularity by default,
+with
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">c=0</annotation></semantics></math>
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\gamma=1</annotation></semantics></math>;
+if all scores in a response block are invalid or non-positive, the
+default fallback is uniform weighting. A tuned or fixed top-v at least
+80% of the sample size is interpreted as no truncation.
+<code>model_top_v = Inf</code> and <code>fused_top_v = Inf</code> also
+request no truncation explicitly; without fused truncation,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>𝒯</mi><msub><mi>v</mi><mi>f</mi></msub></msub><annotation encoding="application/x-tex">\mathcal{T}_{v_f}</annotation></semantics></math>
+in the across-response formula is the identity.</p>
 <p>The shared and residual-specific affinities are constructed as
 <code>S = W %*% t(W)</code>, with the diagonal set to zero. Spectral
 clustering is the default similarity backend.</p>
@@ -538,12 +608,12 @@ clustering is the default similarity backend.</p>
 <span><span class="co">#&gt; 1  gene   0.2726395      0.7273605</span></span>
 <span><span class="co">#&gt; 2 methy   0.2849687      0.7150313</span></span>
 <span><span class="co">#&gt; 3 mirna   0.2447749      0.7552251</span></span></code></pre></div>
-<p>For block <code>k</code>, the response-specific forest weight matrix
-gives the shared reconstruction <code>Xhat^(k) = W^(k) X^(k)</code> and
-the residual <code>R^(k) = X^(k) - Xhat^(k)</code>. An unsupervised
-forest is then fitted to each residual matrix to obtain its
-block-specific weight matrix and similarity. The reported
-<code>shared_frac</code> is
+<p>For block <code>k</code>, the <a href="#fusion-within-response">response-specific forest weight
+matrix</a> gives the shared reconstruction
+<code>Xhat^(k) = W^(k) X^(k)</code> and the residual
+<code>R^(k) = X^(k) - Xhat^(k)</code>. An unsupervised forest is then
+fitted to each residual matrix to obtain its block-specific weight
+matrix and similarity. The reported <code>shared_frac</code> is
 <code>1 - ||R^(k)||_F^2 / ||X^(k)||_F^2</code>. It is a descriptive
 signal fraction, not a hypothesis-test p-value.</p>
 </div>
@@ -579,12 +649,11 @@ response coordinates</td>
 <td align="left">
 <code>"transformation"</code>
 (<code>"test"</code>)</td>
-<td align="left">Eq. 16 t-score IMD: standardize each feature’s forest
-IMD against the block-wide mean forest IMD using the feature’s
-across-tree standard error; keep upper-tail <code>p &lt; level</code>
-under a Student-t reference with <code>df = ntree - 1</code>, combined
-by majority vote across connected forests</td>
-<td align="left">Distribution-normalized inferential screening</td>
+<td align="left">Standardize each feature’s forest IMD relative to the
+block-wide IMD distribution; retain upper-tail features at the chosen
+<code>level</code>, combined by majority vote across connected
+forests</td>
+<td align="left">Distribution-normalized screening</td>
 </tr>
 <tr class="odd">
 <td align="left"><code>"mixture"</code></td>
@@ -617,9 +686,15 @@ during refitting.</p>
 <span><span class="co">#&gt; $mirna</span></span>
 <span><span class="co">#&gt; [1] "MIMAT0000226" "MIMAT0001635" "MIMAT0000267" "MIMAT0004603" "MIMAT0000073"</span></span>
 <span><span class="co">#&gt; [6] "MIMAT0000754"</span></span></code></pre></div>
+<p>Plots from an <code>mrf3_fit</code> object use the unified
+<code>plot(fit, type = ...)</code> interface. Recommended types are
+<code>"tsne"</code>, <code>"umap"</code>, <code>"network"</code>,
+<code>"circos"</code>, <code>"composition"</code>, <code>"km"</code>,
+and <code>"weights"</code>; additional arguments are forwarded to the
+corresponding plot implementation.</p>
 <p>IMD values can be inspected independently of the selected set:</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/plot_tsne.html">plot_weights</a></span><span class="op">(</span><span class="va">fit</span>, weight_source <span class="op">=</span> <span class="st">"imd"</span>, top <span class="op">=</span> <span class="fl">8</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot</a></span><span class="op">(</span><span class="va">fit</span>, type <span class="op">=</span> <span class="st">"weights"</span>, weight_source <span class="op">=</span> <span class="st">"imd"</span>, top <span class="op">=</span> <span class="fl">8</span><span class="op">)</span></span></code></pre></div>
 <p><img src="multiRF_files/figure-html/plot-imd-1.png" class="r-plt" alt="" width="864" style="display: block; margin: auto;"></p>
 <p>For the adaptive OOB filter, use:</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
@@ -715,10 +790,12 @@ check rather than an independent ground truth.</p>
 <p>All 94 primary tumors in the demonstration subset had a PAM50 call.
 The remaining 6 adjacent-normal samples had no tumor-subtype label and
 are excluded from this comparison. The same native t-SNE coordinates are
-used in panels a and b; only the coloring changes. Panel c uses
-<code><a href="../reference/plot_cluster_composition.html">plot_cluster_composition()</a></code> to show the exact within-cluster
-composition. Both displays use package plotting functions; the assembly
-code is hidden here to keep the vignette concise.</p>
+used in panels a and b; only the coloring changes. Panels a and b use
+<code>plot(..., type = "tsne")</code>, and panel c uses
+<code>plot(..., type = "composition")</code> to show the exact
+within-cluster composition. All three panels use the unified plotting
+interface; the assembly code is hidden here to keep the vignette
+concise.</p>
 <div class="figure" style="text-align: center">
 <img src="multiRF_files/figure-html/pam50-comparison-1.png" class="r-plt" alt="Relationship between the multiRF shared partition and PAM50 annotations in the demonstration subset. (a, b) The same native t-SNE embedding of the learned shared similarity for 94 primary tumors, colored by multiRF cluster (a) or PAM50 annotation (b). t-SNE is used only for visualization. (c) Within-cluster PAM50 composition; labels show sample count and row percentage." width="1296"><p class="caption">
 Relationship between the multiRF shared partition and PAM50 annotations
@@ -789,8 +866,8 @@ hypothesis, supply <code>k</code> explicitly.
 <code><a href="../reference/tune_k_clusters.html">tune_k_clusters()</a></code> draws its diagnostic on the active
 graphics device and restores the prior base-graphics settings
 afterward.</p>
-<p>The ggplot-based helpers can be composed or exported at final figure
-size. For example,
+<p>The ggplot objects returned by the unified interface can be composed
+or exported at final figure size. For example,
 <code>ggplot2::ggsave("shared-tsne.pdf", width = 85, height = 75, units = "mm")</code>
 writes a vector figure; use TIFF or PNG at 600 dpi when a raster file is
 required. The default <code>sans</code> family is portable across R
@@ -918,6 +995,17 @@ Multivariate Random Forests for Cross-Modal Multi-Omics Integration.
 <p>Zhang, W. et al. (2025). An integrative multi-omics random forest
 framework for robust biomarker discovery. <em>GigaScience</em>, 14,
 giaf148. <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728" class="external-link">doi:10.1093/gigascience/giaf148</a></p>
+</blockquote>
+<p>The native forest engine and optional fallback build on
+<code>randomForestSRC</code>; please also cite:</p>
+<blockquote>
+<p>Ishwaran, H., and Kogalur, U. B. (2026). <em>randomForestSRC: Fast
+Unified Random Forests for Survival, Regression, and Classification
+(RF-SRC)</em>. R package version 3.6.2. <a href="https://doi.org/10.32614/CRAN.package.randomForestSRC" class="external-link">doi:10.32614/CRAN.package.randomForestSRC</a></p>
+</blockquote>
+<blockquote>
+<p>Ishwaran, H., and Kogalur, U. B. (2007). Random survival forests for
+R. <em>R News</em>, 7(2), 25–31. <a href="https://journal.r-project.org/articles/RN-2007-015/" class="external-link">Article</a></p>
 </blockquote>
 </div>
 <div class="section level2">

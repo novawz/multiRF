@@ -2,7 +2,13 @@
 
 ## Authors
 
-- **Wei Zhang**. Author, maintainer.
+- **Wei Zhang**. Author, maintainer, copyright holder.
+
+- **Hemant Ishwaran**. Copyright holder.  
+  Copyright holder of adapted randomForestSRC source portions
+
+- **Udaya B. Kogalur**. Copyright holder.  
+  Copyright holder of adapted randomForestSRC source portions
 
 ## Citation
 
