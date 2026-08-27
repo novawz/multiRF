@@ -141,15 +141,17 @@ fit_full <- mrf3(
 )
 ```
 
-Variable selection uses raw forest IMD on `[0, 1]`; `filter` tunes
-`tau * sd(IMD)` using true OOB normalized MSE across predictor and
-response coordinates; `mixture` includes a point mass at zero; and
-`transformation` standardizes each feature’s forest IMD against the mean
-forest IMD of all features (the Eq. 16 t-score IMD, using the feature’s
-across-tree standard error) and keeps features in the upper tail of a
-Student-t reference with `df = ntree - 1` at the chosen `level`. The
-newer connection-selection strategy is independent of these
-feature-selection rules.
+Variable selection uses raw forest IMD values on `[0, 1]`:
+
+- `filter` tunes an IMD cutoff of `tau * sd(IMD)` using OOB normalized
+  MSE and retains features above the selected cutoff.
+- `mixture` models the IMD distribution with a point mass at zero and
+  retains features assigned to the nonzero signal component.
+- `transformation` standardizes each feature’s IMD relative to the
+  overall forest IMD distribution and retains features in the upper tail
+  at the chosen `level`.
+
+Connection selection is independent of these feature-selection rules.
 
 ## Bundled data
 
