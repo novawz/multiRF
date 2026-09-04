@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">multiRF</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.3</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -20,6 +20,7 @@
 <li class="active nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
+<li class="nav-item"><a class="external-link nav-link" href="https://github.com/novawz/multiRF/" aria-label="GitHub"><span class="fa fab fa-github fa-lg"></span></a></li>
       </ul></div>
 
 
@@ -29,14 +30,21 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Changelog</h1>
-
+      <small>Source: <a href="https://github.com/novawz/multiRF/blob/HEAD/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.3.0" id="multirf-030">multiRF 0.3.0<a class="anchor" aria-label="anchor" href="#multirf-030"></a></h2>
+<ul><li>Added permutation-null filtering for residual-specific IMD; shared filtering continues to tune its cutoff with OOB error.</li>
+<li>Made saturation-based entropy selection the default for model and fused top-v, with closed-form fused entropy and the earlier methods retained.</li>
+<li>Replaced fork-based parallel paths with PSOCK workers and safer serial defaults for tuning grids.</li>
+<li>Reconstructed missing ordinary proximity from tree membership and improved related validation, tests, and documentation.</li>
+</ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.3" id="multirf-023">multiRF 0.2.3<a class="anchor" aria-label="anchor" href="#multirf-023"></a></h2>
 <ul><li>Added the unified <code>plot(fit, type = ...)</code> interface and pkgdown site.</li>
 <li>Fixed clustering, OOB weights, IMD, stability, and related edge cases.</li>
-<li>Improved C++ forest speed, parallel safety, and cross-platform reproducibility; seeded unsupervised results change once from 0.2.2.</li>
+<li>Improved forest-fitting speed, parallel safety, and cross-platform reproducibility; seeded unsupervised results change once from 0.2.2.</li>
 <li>Added an optional fast <code><a href="../reference/cluster_imd.html">cluster_imd()</a></code> path and simplified internals, dependencies, tests, and documentation.</li>
 <li>Relicensed under GPL (&gt;= 3) with RF-SRC provenance and citations.</li>
 </ul></div>
@@ -51,10 +59,9 @@
 </ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.0" id="multirf-020">multiRF 0.2.0<a class="anchor" aria-label="anchor" href="#multirf-020"></a></h2>
-<ul><li>C++ multivariate regression forest engine with OpenMP parallelism.</li>
+<ul><li>Added multivariate regression and unsupervised forests with parallel fitting.</li>
 <li>Partition-based ranger-style tree building for faster splits.</li>
 <li>IMD importance computed during tree building (zero-cost).</li>
-<li>Unsupervised forest mode.</li>
 </ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.1" id="multirf-011">multiRF 0.1.1<a class="anchor" aria-label="anchor" href="#multirf-011"></a></h2>

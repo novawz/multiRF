@@ -13,7 +13,7 @@
 
 - Added the unified `plot(fit, type = ...)` interface and pkgdown site.
 - Fixed clustering, OOB weights, IMD, stability, and related edge cases.
-- Improved C++ forest speed, parallel safety, and cross-platform
+- Improved forest-fitting speed, parallel safety, and cross-platform
   reproducibility; seeded unsupervised results change once from 0.2.2.
 - Added an optional fast `cluster_imd()` path and simplified internals,
   dependencies, tests, and documentation.
@@ -31,10 +31,9 @@
 
 # multiRF 0.2.0
 
-- C++ multivariate regression forest engine with OpenMP parallelism.
+- Added multivariate regression and unsupervised forests with parallel fitting.
 - Partition-based ranger-style tree building for faster splits.
 - IMD importance computed during tree building (zero-cost).
-- Unsupervised forest mode.
 
 # multiRF 0.1.1
 

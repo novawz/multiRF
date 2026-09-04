@@ -80,13 +80,13 @@ random forests. The current workflow has four main stages:
 4. optionally calculate inverse minimal depth (IMD), select variables, and
    refit a robust model.
 
-The multiRF C++ forest engine is the default. It implements multivariate regression,
-unsupervised residual forests, all-sample and out-of-bag forest weights,
-ordinary and enhanced proximity, weighted candidate-variable sampling, and
-depth-based forest IMD. Parts of the multiRF forest engine, including its sampling and
-random-number-generation routines, are adapted from `randomForestSRC` under GPL
-(>= 3). RF-SRC is also available as an optional fallback rather than a
-requirement for the standard workflow.
+`multiRF` directly supports multivariate regression, unsupervised residual
+forests, all-sample and out-of-bag forest weights, ordinary and enhanced
+proximity, weighted candidate-variable sampling, and depth-based forest IMD.
+Parts of the implementation, including sampling and random-number-generation
+routines, are adapted from `randomForestSRC` under GPL (>= 3). RF-SRC is also
+available as an optional fallback rather than a requirement for the standard
+workflow.
 
 This vignette uses a small deterministic subset of the bundled TCGA BRCA data
 so that every evaluated chunk runs quickly. For an analysis, use all eligible
@@ -105,8 +105,7 @@ rows and features are columns. Every block must have:
 
 Do not pass unordered blocks and rely on their row positions. Align them by
 sample identifier before fitting. Missing values and categorical predictors
-should be imputed or encoded explicitly before using the multiRF numeric
-forest engine.
+should be imputed or encoded explicitly before fitting with `multiRF`.
 
 ```{r prepare-data}
 full_dimensions <- data.frame(
@@ -756,8 +755,8 @@ get_weights(fit_cluster_imd$cluster_imd, cluster = 1)
 - Use a non-negative integer `seed` for a reproducible multiRF fit; 529 is the
   package default. A negative seed deliberately requests system entropy.
   Reproducible seeds give the same result across thread counts.
-- Set `options(multiRF.nthread = n)` or pass `nthread = n` to control C++
-  forest parallelism.
+- Set `options(multiRF.nthread = n)` or pass `nthread = n` to control parallel
+  tree construction.
 - Keep `samptype = "swor"` for the default workflow. Sampling with replacement
   is supported when it is scientifically intended.
 - Forest weights and proximity matrices are `n` by `n`. For large cohorts,
@@ -825,8 +824,8 @@ If you use `multiRF`, please cite the method relevant to your analysis:
 > for robust biomarker discovery. *GigaScience*, 14, giaf148.
 > [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
-The multiRF forest engine and optional fallback build on `randomForestSRC`;
-please also cite:
+`multiRF` adapts parts of `randomForestSRC` and also supports it as an optional
+fallback; please also cite:
 
 > Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast Unified
 > Random Forests for Survival, Regression, and Classification (RF-SRC)*.

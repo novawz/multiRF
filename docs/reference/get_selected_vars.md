@@ -1,6 +1,7 @@
 # Get selected variable names
 
-Extract variable names selected by [`mrf3_vs()`](mrf3_vs.md).
+Extract variable names selected by
+[`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md).
 
 ## Usage
 

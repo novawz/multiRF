@@ -1,10 +1,10 @@
 # Fit sub-MRF ensemble for a multi-omics connection list
 
 Higher-level wrapper that matches the interface of
-[`fit_multi_forest()`](fit_forest.md). For each directed connection
-(response_block -\> predictor_block), features are sub-sampled from both
-blocks independently, and the resulting n x n matrices are averaged
-across replicates.
+[`fit_multi_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md).
+For each directed connection (response_block -\> predictor_block),
+features are sub-sampled from both blocks independently, and the
+resulting n x n matrices are averaged across replicates.
 
 ## Usage
 
@@ -46,7 +46,7 @@ fit_sub_multi_rfsrc(
 
   A list of connections, each a character vector of length 2:
   `c(response_name, predictor_name)`. Same format as used by
-  [`fit_multi_forest()`](fit_forest.md).
+  [`fit_multi_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md).
 
 - n_sub:
 
@@ -75,7 +75,7 @@ fit_sub_multi_rfsrc(
 - mtry:
 
   Number of candidate X variables per split. Passed through to
-  [`fit_forest()`](fit_forest.md).
+  [`fit_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md).
 
 - ytry:
 
@@ -110,9 +110,9 @@ fit_sub_multi_rfsrc(
   Logical; if `TRUE`, compute soft enhanced proximity using full-data
   sample embeddings within each sub-model. The result is stored as
   `$enhanced_prox` in the output so that
-  [`mrf3_cl_prox()`](mrf3_cl_prox.md) can use it directly without
-  re-traversing trees. Default `FALSE` because the extra computation is
-  non-trivial.
+  [`mrf3_cl_prox()`](https://novawz.github.io/multiRF/reference/mrf3_cl_prox.md)
+  can use it directly without re-traversing trees. Default `FALSE`
+  because the extra computation is non-trivial.
 
 - compute_imd:
 
@@ -121,7 +121,8 @@ fit_sub_multi_rfsrc(
 - imd_args:
 
   Named list of arguments passed to
-  [`get_imp_forest()`](get_imp_forest.md) when `compute_imd = TRUE`.
+  [`get_imp_forest()`](https://novawz.github.io/multiRF/reference/get_imp_forest.md)
+  when `compute_imd = TRUE`.
 
 - seed:
 
@@ -129,18 +130,17 @@ fit_sub_multi_rfsrc(
 
 - parallel:
 
-  Logical; if `TRUE`, use
-  [`parallel::mclapply()`](https://rdrr.io/r/parallel/mclapply.html).
+  Logical; if `TRUE`, fit replicates in fresh PSOCK worker processes.
 
 - cores:
 
-  Number of cores when `parallel = TRUE`; `NULL` (default) uses
-  `parallel::detectCores() - 1`.
+  Number of cores used for within-connection parallelism. The default
+  for this wrapper is `2L`.
 
 - parallel_connections:
 
-  Logical; whether distinct directed connections may be fitted in
-  parallel.
+  Logical; whether distinct directed connections may be fitted in fresh
+  PSOCK worker processes.
 
 - cores_connections:
 
@@ -152,18 +152,20 @@ fit_sub_multi_rfsrc(
 
 - ...:
 
-  Passed to [`fit_sub_mrf()`](fit_sub_mrf.md) and then
-  [`fit_forest()`](fit_forest.md).
+  Passed to
+  [`fit_sub_mrf()`](https://novawz.github.io/multiRF/reference/fit_sub_mrf.md)
+  and then
+  [`fit_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md).
 
 ## Value
 
 A **named list** of rfsrc-compatible objects, one per connection. Names
 follow the `"response_predictor"` convention used by
-[`fit_multi_forest()`](fit_forest.md). Each object contains `forest.wt`,
-`forest.wt.oob`, `proximity`, `xvar`, `yvar`.
+[`fit_multi_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md).
+Each object contains `forest.wt`, `forest.wt.oob`, `proximity`, `xvar`,
+`yvar`.
 
 ## Details
 
-Sub-MRF uses the default multiRF C++ engine for its internal fits. OOB
-forest-weight reconstruction uses the `inbag` matrix returned by the
-multiRF engine.
+Sub-MRF uses multiRF for its internal fits. OOB forest-weight
+reconstruction uses the returned `inbag` matrix.

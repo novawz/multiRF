@@ -36,17 +36,17 @@ mrf3_specific_clustering(
 - recon:
 
   Reconstruction output from
-  [`get_reconstr_matrix()`](mrf3_reconstr.md).
+  [`get_reconstr_matrix()`](https://novawz.github.io/multiRF/reference/mrf3_reconstr.md).
 
 - shared_specific:
 
   Output from
-  [`get_shared_specific_weights()`](get_shared_specific_weights.md).
+  [`get_shared_specific_weights()`](https://novawz.github.io/multiRF/reference/get_shared_specific_weights.md).
 
 - shared_mode:
 
   Shared clustering mode passed to
-  [`cluster_shared_similarity()`](cluster_shared_similarity.md).
+  [`cluster_shared_similarity()`](https://novawz.github.io/multiRF/reference/cluster_shared_similarity.md).
 
 - shared_dat_use:
 
@@ -67,7 +67,7 @@ mrf3_specific_clustering(
 - specific_k:
 
   Optional `k` configuration passed to
-  [`cluster_specific_similarity()`](cluster_specific_similarity.md).
+  [`cluster_specific_similarity()`](https://novawz.github.io/multiRF/reference/cluster_specific_similarity.md).
 
 - specific_method:
 

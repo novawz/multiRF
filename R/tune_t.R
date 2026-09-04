@@ -1325,8 +1325,8 @@ prepare_tune_inputs <- function(dat.list, mod, sample_n = NULL, sample_frac = NU
 
 eval_grid <- function(grid, eval_fun, parallel = FALSE, cores = NULL) {
   eval_fun <- match.fun(eval_fun)
-  ## One parallel layer at a time: each candidate evaluation fits forests
-  ## whose C++ engine is already OpenMP-parallel, and the PSOCK workers
+  ## One parallel layer at a time: each candidate evaluation already uses
+  ## thread-level forest parallelism, and the PSOCK workers
   ## must serialize the full closure (model + data) — measured slower
   ## than serial evaluation on realistic sizes. Outer process-level
   ## parallelism therefore requires an explicit `cores`.

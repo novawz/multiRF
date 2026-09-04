@@ -298,7 +298,7 @@ plot.mrf3_fit <- function(x,
       if (!has_pairwise && is.null(x$imd_net)) {
         stop(
           "`type = \"circos\"` requires pairwise IMD input: fitted models ",
-          "with `pairwise_xy` (multiRF engine) or an IMD network (`imd_net`). ",
+          "with pre-computed `pairwise_xy` or an IMD network (`imd_net`). ",
           "Refit with `run_imd = TRUE` and `compact_output = FALSE`.",
           call. = FALSE
         )

@@ -13,7 +13,8 @@ summary(object, ...)
 
 - object:
 
-  Output from [`mrf3_fit()`](mrf3_fit.md).
+  Output from
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md).
 
 - ...:
 

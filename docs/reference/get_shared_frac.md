@@ -27,8 +27,8 @@ get_shared_frac(
 - shared_specific:
 
   Optional output from
-  [`get_shared_specific_weights()`](get_shared_specific_weights.md). If
-  provided, `residual` and (when needed) reconstructed `dat.list` are
+  [`get_shared_specific_weights()`](https://novawz.github.io/multiRF/reference/get_shared_specific_weights.md).
+  If provided, `residual` and (when needed) reconstructed `dat.list` are
   extracted from it.
 
 - eps:

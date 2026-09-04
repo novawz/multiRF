@@ -325,8 +325,8 @@ mrf3_fit <- function(dat.list,
     dots = dots
   )
 
-  # When enhanced_proximity is requested and the multiRF engine is active,
-  # compute enhanced proximity inside C++ during tree building.
+  # When enhanced_proximity is requested with the default implementation,
+  # compute it during tree building.
   # This avoids the slow R-level cl_forest() tree loop.
   if (identical(main_clustering, "enhanced_proximity") &&
       identical(getOption("multiRF.engine", "native"), "native")) {
@@ -339,7 +339,7 @@ mrf3_fit <- function(dat.list,
       dots$leaf_embed_dim <- clustering_args$leaf_embed_dim
     }
     # Also inject into shared_specific_args so the residual unsupervised
-    # forests (for specific clustering) also get enhanced_prox computed in C++.
+    # forests (for specific clustering) also get enhanced_prox during fitting.
     if (is.null(shared_specific_args$enhanced_prox)) {
       shared_specific_args$enhanced_prox <- TRUE
     }

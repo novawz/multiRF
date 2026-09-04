@@ -1,6 +1,6 @@
 # multiRF
 
-**Fast multivariate random forests for multi-omics integration**
+**Multivariate random forests for multi-omics integration**
 
 `multiRF` is an R package for integrating matched multi-omics datasets
 with multivariate random forests (MRF). It fits directed forest models
@@ -9,20 +9,22 @@ terminal-node structure, and decomposes the result into shared and
 omics-specific components for clustering, variable selection, and
 visualization.
 
-The package uses a C++ forest engine for multivariate regression,
-unsupervised forests, forest weights, proximity matrices, and enhanced
-proximity with sibling-leaf corrections. In practice, this gives a
-simpler installation path and a faster MRF than the
-`randomForestSRC`-based MRF while keeping the same overall modeling
-logic. Parts of the multiRF forest engine, including its sampling and
-random-number-generation routines, are adapted from `randomForestSRC`
-under GPL (\>= 3), which is also available as an optional fallback.
+`multiRF` directly supports multivariate regression and unsupervised
+random forests, including forest weights, proximity matrices, enhanced
+proximity with sibling-leaf corrections, and forest IMD. The standard
+workflow does not require `randomForestSRC`, which remains available as
+an optional fallback. Parts of the implementation, including sampling
+and random-number-generation routines, are adapted from
+`randomForestSRC` under GPL (\>= 3).
 
 Project website: <https://novawz.github.io/multiRF/>
 
 ## Installation
 
-`remotes``::``install_github``(``"novawz/multiRF"``)`
+``` r
+
+remotes::install_github("novawz/multiRF")
+```
 
 The package compiles from source and requires a C++17 toolchain:
 
@@ -35,11 +37,32 @@ is not required for the default workflow.
 
 ## Quick start
 
-[`library`](https://rdrr.io/r/base/library.html)`(``multiRF``)`` `[`data`](https://rdrr.io/r/utils/data.html)`(``"tcga_brca_data"``)`` `` `[`names`](https://rdrr.io/r/base/names.html)`(``tcga_brca``)`` ``#> [1] "gene" "methy" "mirna"`` `` ``fit`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` filter_mode ``=`` ``"none"``,`` `` run_imd ``=`` ``TRUE``,`` `` seed ``=`` ``529`` ``)`` `` `[`summary`](https://rdrr.io/r/base/summary.html)`(``fit``)`` `[`table`](https://rdrr.io/r/base/table.html)`(`[`get_clusters`](reference/get_clusters.md)`(``fit``)``)`` `[`get_top_vars`](reference/get_top_vars.md)`(``fit``, n ``=`` ``10``)`
+``` r
 
-[`mrf3()`](reference/mrf3.md) is the main user-facing entry point. It
-wraps the staged workflow in [`mrf3_fit()`](reference/mrf3_fit.md) and
-forwards advanced arguments through `...`. Both entry points use
+library(multiRF)
+data("tcga_brca_data")
+
+names(tcga_brca)
+#> [1] "gene"  "methy" "mirna"
+
+fit <- mrf3(
+  tcga_brca,
+  k = 4,
+  ntree = 100,
+  filter_mode = "none",
+  run_imd = TRUE,
+  seed = 529
+)
+
+summary(fit)
+table(get_clusters(fit))
+get_top_vars(fit, n = 10)
+```
+
+[`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md) is the
+main user-facing entry point. It wraps the staged workflow in
+[`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md)
+and forwards advanced arguments through `...`. Both entry points use
 automatic feature filtering by default; set `filter_mode = "none"` when
 working with an already curated feature set, as in the example above.
 
@@ -53,38 +76,77 @@ clustering by default.
 
 ## What it provides
 
-- [`mrf3()`](reference/mrf3.md): end-to-end workflow for fitting,
-  reconstruction, and clustering
-- [`mrf3_fit()`](reference/mrf3_fit.md): staged workflow with the full
-  parameter surface exposed
-- [`mrf3_vs()`](reference/mrf3_vs.md): variable selection from IMD
-  weights
-- [`mrf3_stability()`](reference/mrf3_stability.md): resampling-based
-  cluster stability assessment
-- [`pairwise_imd()`](reference/pairwise_imd.md): variable-level
-  co-occurrence network analysis
-- [`plot_weights()`](reference/plot_tsne.md),
-  [`plot_cluster_composition()`](reference/plot_cluster_composition.md),
-  [`plot_tsne()`](reference/plot_tsne.md),
-  [`plot_umap()`](reference/plot_tsne.md),
-  [`plot_network()`](reference/plot_tsne.md): consistent,
-  publication-oriented result visualizations
-- [`plot_km()`](reference/plot_km.md),
-  [`plot_circos()`](reference/plot_tsne.md): optional clinical and
-  circular-network visualizations
+- [`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md):
+  end-to-end workflow for fitting, reconstruction, and clustering
+- [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md):
+  staged workflow with the full parameter surface exposed
+- [`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md):
+  variable selection from IMD weights
+- [`mrf3_stability()`](https://novawz.github.io/multiRF/reference/mrf3_stability.md):
+  resampling-based cluster stability assessment
+- [`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md):
+  variable-level co-occurrence network analysis
+- [`plot_weights()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+  [`plot_cluster_composition()`](https://novawz.github.io/multiRF/reference/plot_cluster_composition.md),
+  [`plot_tsne()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+  [`plot_umap()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+  [`plot_network()`](https://novawz.github.io/multiRF/reference/plot_tsne.md):
+  consistent, publication-oriented result visualizations
+- [`plot_km()`](https://novawz.github.io/multiRF/reference/plot_km.md),
+  [`plot_circos()`](https://novawz.github.io/multiRF/reference/plot_tsne.md):
+  optional clinical and circular-network visualizations
 
 ## Clustering modes
 
-`fit_sim`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` main_clustering ``=`` ``"similarity"``, ``# default`` `` seed ``=`` ``529`` ``)`` `` ``fit_prox`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` main_clustering ``=`` ``"proximity"``,`` `` seed ``=`` ``529`` ``)`` `` ``fit_enh`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``100``,`` `` main_clustering ``=`` ``"enhanced_proximity"``,`` `` seed ``=`` ``529`` ``)`
+``` r
+
+fit_sim <- mrf3(
+  tcga_brca,
+  k = 4,
+  ntree = 100,
+  main_clustering = "similarity", # default
+  seed = 529
+)
+
+fit_prox <- mrf3(
+  tcga_brca,
+  k = 4,
+  ntree = 100,
+  main_clustering = "proximity",
+  seed = 529
+)
+
+fit_enh <- mrf3(
+  tcga_brca,
+  k = 4,
+  ntree = 100,
+  main_clustering = "enhanced_proximity",
+  seed = 529
+)
+```
 
 ## Full workflow example
 
-`fit_full`` ``<-`` `[`mrf3`](reference/mrf3.md)`(`` `` ``tcga_brca``,`` `` k ``=`` ``4``,`` `` ntree ``=`` ``200``,`` `` run_imd ``=`` ``TRUE``,`` `` run_variable_selection ``=`` ``TRUE``,`` `` run_robust_clustering ``=`` ``TRUE``,`` `` variable_selection_args ``=`` `[`list`](https://rdrr.io/r/base/list.html)`(``method ``=`` ``"mixture"``)``,`` `` model_top_v ``=`` ``50``,`` `` fused_top_v ``=`` ``30``,`` `` seed ``=`` ``529`` ``)`
+``` r
+
+fit_full <- mrf3(
+  tcga_brca,
+  k = 4,
+  ntree = 200,
+  run_imd = TRUE,
+  run_variable_selection = TRUE,
+  run_robust_clustering = TRUE,
+  variable_selection_args = list(method = "mixture"),
+  model_top_v = 50,
+  fused_top_v = 30,
+  seed = 529
+)
+```
 
 Variable selection uses raw forest IMD values on `[0, 1]`:
 
-- `filter` tunes an IMD cutoff of `tau * sd(IMD)` using OOB normalized
-  MSE and retains features above the selected cutoff.
+- `filter` uses OOB normalized MSE to tune the shared-IMD cutoff and a
+  permutation-null cutoff for residual-specific IMD.
 - `mixture` models the IMD distribution with a point mass at zero and
   retains features assigned to the nonzero signal component.
 - `transformation` standardizes each feature’s IMD relative to the
@@ -113,8 +175,8 @@ If you use `multiRF` in your research, please cite:
 > framework for robust biomarker discovery. *GigaScience*, 14, giaf148.
 > [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
-The multiRF forest engine and optional fallback build on
-`randomForestSRC`; please also cite:
+`multiRF` adapts parts of `randomForestSRC` and also supports it as an
+optional fallback; please also cite:
 
 > Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast
 > Unified Random Forests for Survival, Regression, and Classification
@@ -134,43 +196,50 @@ for details.
 
 # Package index
 
-## Fitting and engines
+## Forest fitting
 
 Fit directed multivariate random forests across omics blocks, discover
 optimal connections, and compute out-of-bag quantities.
 
-- [`fit_forest()`](fit_forest.md) [`fit_multi_forest()`](fit_forest.md)
-  [`fit_rfsrc()`](fit_forest.md) [`fit_multi_rfsrc()`](fit_forest.md) :
-  Fit random forest model and create model lists
-- [`fit_sub_mrf()`](fit_sub_mrf.md) : Fit an ensemble of sub-sampled MRF
-  models for a single connection
-- [`fit_sub_multi_rfsrc()`](fit_sub_multi_rfsrc.md) : Fit sub-MRF
-  ensemble for a multi-omics connection list
-- [`find_connection()`](find_connection.md) : Find optimal directional
-  connections from fitted RF models
-- [`filter_omics()`](filter_omics.md) : Filter multi-omics feature
-  blocks before RF fitting
-- [`compute_oob_forest_wt()`](compute_oob_forest_wt.md) : Compute OOB
-  forest weight matrix
-- [`get_oob_nmse()`](get_oob_nmse.md) : OOB normalized MSE for a fitted
-  forest model
+- [`fit_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  [`fit_multi_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  [`fit_rfsrc()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  [`fit_multi_rfsrc()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  : Fit random forest model and create model lists
+- [`fit_sub_mrf()`](https://novawz.github.io/multiRF/reference/fit_sub_mrf.md)
+  : Fit an ensemble of sub-sampled MRF models for a single connection
+- [`fit_sub_multi_rfsrc()`](https://novawz.github.io/multiRF/reference/fit_sub_multi_rfsrc.md)
+  : Fit sub-MRF ensemble for a multi-omics connection list
+- [`find_connection()`](https://novawz.github.io/multiRF/reference/find_connection.md)
+  : Find optimal directional connections from fitted RF models
+- [`filter_omics()`](https://novawz.github.io/multiRF/reference/filter_omics.md)
+  : Filter multi-omics feature blocks before RF fitting
+- [`compute_oob_forest_wt()`](https://novawz.github.io/multiRF/reference/compute_oob_forest_wt.md)
+  : Compute OOB forest weight matrix
+- [`get_oob_nmse()`](https://novawz.github.io/multiRF/reference/get_oob_nmse.md)
+  : OOB normalized MSE for a fitted forest model
 
 ## The mrf3 workflow
 
 High-level entry points for the staged mrf3 pipeline, from initial fit
 to the full analysis.
 
-- [`mrf3()`](mrf3.md) : Simplified mrf3 Entry Point
+- [`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md) :
+  Simplified mrf3 Entry Point
 
-- [`mrf3_init()`](mrf3_init.md) : Fit an initial MRF model
+- [`mrf3_init()`](https://novawz.github.io/multiRF/reference/mrf3_init.md)
+  : Fit an initial MRF model
 
-- [`mrf3_fit()`](mrf3_fit.md) : Stage-based multiRF fitting pipeline
+- [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md)
+  : Stage-based multiRF fitting pipeline
 
-- [`print(`*`<mrf3>`*`)`](print.mrf3.md) :
+- [`print(`*`<mrf3>`*`)`](https://novawz.github.io/multiRF/reference/print.mrf3.md)
+  :
 
   Print method for `mrf3` objects
 
-- [`print(`*`<mrf3_fit>`*`)`](print.mrf3_fit.md) :
+- [`print(`*`<mrf3_fit>`*`)`](https://novawz.github.io/multiRF/reference/print.mrf3_fit.md)
+  :
 
   Print `mrf3_fit` object in compact form
 
@@ -179,48 +248,53 @@ to the full analysis.
 Cluster samples from learned similarity, tune the number of clusters,
 and score agreement between clusterings.
 
-- [`mrf3_cl_prox()`](mrf3_cl_prox.md) : MRF unsupervised clustering –
-  Proximity method
-- [`mrf3_specific_clustering()`](mrf3_specific_clustering.md) : Joint
-  Shared/Specific Similarity Clustering Wrapper
-- [`run_cluster_pipeline()`](run_cluster_pipeline.md) : Run
-  Shared/Specific Clustering Pipeline
-- [`tune_k_clusters()`](tune_k_clusters.md)
-  [`spectral_cl()`](tune_k_clusters.md) [`pam_cl()`](tune_k_clusters.md)
+- [`mrf3_cl_prox()`](https://novawz.github.io/multiRF/reference/mrf3_cl_prox.md)
+  : MRF unsupervised clustering – Proximity method
+- [`mrf3_specific_clustering()`](https://novawz.github.io/multiRF/reference/mrf3_specific_clustering.md)
+  : Joint Shared/Specific Similarity Clustering Wrapper
+- [`run_cluster_pipeline()`](https://novawz.github.io/multiRF/reference/run_cluster_pipeline.md)
+  : Run Shared/Specific Clustering Pipeline
+- [`tune_k_clusters()`](https://novawz.github.io/multiRF/reference/tune_k_clusters.md)
+  [`spectral_cl()`](https://novawz.github.io/multiRF/reference/tune_k_clusters.md)
+  [`pam_cl()`](https://novawz.github.io/multiRF/reference/tune_k_clusters.md)
   : Tune the number of clusters
-- [`get_clusters()`](get_clusters.md) : Get cluster labels
-- [`cluster_similarity_matrix()`](cluster_similarity_matrix.md) :
-  Cluster A Similarity Matrix
-- [`cluster_shared_similarity()`](cluster_shared_similarity.md) :
-  Cluster Shared Similarity From Reconstruction Weights
-- [`cluster_specific_similarity()`](cluster_specific_similarity.md) :
-  Cluster Specific Similarities Per Omics Block
-- [`cluster_metrics()`](cluster_metrics.md) : Compute multiple
-  clustering metrics at once
-- [`cluster_ari()`](cluster_ari.md)
-  [`cluster_jaccard()`](cluster_ari.md)
-  [`cluster_nmi()`](cluster_ari.md) [`cluster_purity()`](cluster_ari.md)
+- [`get_clusters()`](https://novawz.github.io/multiRF/reference/get_clusters.md)
+  : Get cluster labels
+- [`cluster_similarity_matrix()`](https://novawz.github.io/multiRF/reference/cluster_similarity_matrix.md)
+  : Cluster A Similarity Matrix
+- [`cluster_shared_similarity()`](https://novawz.github.io/multiRF/reference/cluster_shared_similarity.md)
+  : Cluster Shared Similarity From Reconstruction Weights
+- [`cluster_specific_similarity()`](https://novawz.github.io/multiRF/reference/cluster_specific_similarity.md)
+  : Cluster Specific Similarities Per Omics Block
+- [`cluster_metrics()`](https://novawz.github.io/multiRF/reference/cluster_metrics.md)
+  : Compute multiple clustering metrics at once
+- [`cluster_ari()`](https://novawz.github.io/multiRF/reference/cluster_ari.md)
+  [`cluster_jaccard()`](https://novawz.github.io/multiRF/reference/cluster_ari.md)
+  [`cluster_nmi()`](https://novawz.github.io/multiRF/reference/cluster_ari.md)
+  [`cluster_purity()`](https://novawz.github.io/multiRF/reference/cluster_ari.md)
   : Clustering Metrics
-- [`cluster_metric_matrix()`](cluster_metric_matrix.md) : Pairwise
-  metric matrix across multiple clusterings
+- [`cluster_metric_matrix()`](https://novawz.github.io/multiRF/reference/cluster_metric_matrix.md)
+  : Pairwise metric matrix across multiple clusterings
 
 ## Variable selection and tuning
 
 Select informative features per omics block and tune top-v truncation
 parameters.
 
-- [`mrf3_vs()`](mrf3_vs.md) : MRF variable selection
-- [`get_selected_vars()`](get_selected_vars.md) : Get selected variable
-  names
-- [`get_vs_summary()`](get_vs_summary.md) : Get variable selection
-  summary
-- [`get_top_vars()`](get_top_vars.md) : Get top weighted variables per
-  block
-- [`select_top_v_neff()`](select_top_v_neff.md) : Select top-v from
-  effective neighbourhood size
-- [`tune_model_top_v()`](tune_model_top_v.md) : Tune model-level top-v
-- [`tune_fused_top_v()`](tune_fused_top_v.md) : Tune fused weight top-v
-  truncation
+- [`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md) :
+  MRF variable selection
+- [`get_selected_vars()`](https://novawz.github.io/multiRF/reference/get_selected_vars.md)
+  : Get selected variable names
+- [`get_vs_summary()`](https://novawz.github.io/multiRF/reference/get_vs_summary.md)
+  : Get variable selection summary
+- [`get_top_vars()`](https://novawz.github.io/multiRF/reference/get_top_vars.md)
+  : Get top weighted variables per block
+- [`select_top_v_neff()`](https://novawz.github.io/multiRF/reference/select_top_v_neff.md)
+  : Select top-v from effective neighbourhood size
+- [`tune_model_top_v()`](https://novawz.github.io/multiRF/reference/tune_model_top_v.md)
+  : Tune model-level top-v
+- [`tune_fused_top_v()`](https://novawz.github.io/multiRF/reference/tune_fused_top_v.md)
+  : Tune fused weight top-v truncation
 
 ## Weights, IMD and reconstruction
 
@@ -228,44 +302,47 @@ Forest weights, intersample measure of dissimilarity (IMD),
 reconstruction of shared and omics-specific structure, and related print
 methods.
 
-- [`get_weights()`](get_weights.md) : Get IMD weights
+- [`get_weights()`](https://novawz.github.io/multiRF/reference/get_weights.md)
+  : Get IMD weights
 
-- [`get_multi_weights()`](get_multi_weights.md) : Get multi-omics
-  weights
+- [`get_multi_weights()`](https://novawz.github.io/multiRF/reference/get_multi_weights.md)
+  : Get multi-omics weights
 
-- [`get_imp_forest()`](get_imp_forest.md) : Get forest importance
+- [`get_imp_forest()`](https://novawz.github.io/multiRF/reference/get_imp_forest.md)
+  : Get forest importance
 
-- [`prepare_weight_matrix()`](prepare_weight_matrix.md)
-  [`adjust_weight_matrix()`](prepare_weight_matrix.md)
-  [`truncate_top_v_rows()`](prepare_weight_matrix.md)
-  [`row_normalize_weights()`](prepare_weight_matrix.md) : Preprocess a
-  weight matrix for downstream steps
+- [`prepare_weight_matrix()`](https://novawz.github.io/multiRF/reference/prepare_weight_matrix.md)
+  [`adjust_weight_matrix()`](https://novawz.github.io/multiRF/reference/prepare_weight_matrix.md)
+  [`truncate_top_v_rows()`](https://novawz.github.io/multiRF/reference/prepare_weight_matrix.md)
+  [`row_normalize_weights()`](https://novawz.github.io/multiRF/reference/prepare_weight_matrix.md)
+  : Preprocess a weight matrix for downstream steps
 
-- [`build_similarity_from_weights()`](build_similarity_from_weights.md)
+- [`build_similarity_from_weights()`](https://novawz.github.io/multiRF/reference/build_similarity_from_weights.md)
   : Build Similarity Matrix From Forest Weights
 
-- [`mrf3_reconstr()`](mrf3_reconstr.md)
-  [`get_reconstr_matrix()`](mrf3_reconstr.md) : MRF unsupervised
-  clustering – Reconstruction method
+- [`mrf3_reconstr()`](https://novawz.github.io/multiRF/reference/mrf3_reconstr.md)
+  [`get_reconstr_matrix()`](https://novawz.github.io/multiRF/reference/mrf3_reconstr.md)
+  : MRF unsupervised clustering – Reconstruction method
 
-- [`get_shared_specific_weights()`](get_shared_specific_weights.md) :
-  Build Shared/Specific Weights From Reconstruction
+- [`get_shared_specific_weights()`](https://novawz.github.io/multiRF/reference/get_shared_specific_weights.md)
+  : Build Shared/Specific Weights From Reconstruction
 
-- [`get_shared_frac()`](get_shared_frac.md) : Compute Shared Fraction
-  Per Omics Block
+- [`get_shared_frac()`](https://novawz.github.io/multiRF/reference/get_shared_frac.md)
+  : Compute Shared Fraction Per Omics Block
 
-- [`pairwise_imd()`](pairwise_imd.md) : Pairwise IMD Analysis After
-  Model Fitting
+- [`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md)
+  : Pairwise IMD Analysis After Model Fitting
 
-- [`cluster_imd()`](cluster_imd.md) : Compute Cluster-Specific IMD
-  Without Pairwise IMD
+- [`cluster_imd()`](https://novawz.github.io/multiRF/reference/cluster_imd.md)
+  : Compute Cluster-Specific IMD Without Pairwise IMD
 
-- [`print(`*`<pairwise_imd_analysis>`*`)`](print.pairwise_imd_analysis.md)
+- [`print(`*`<pairwise_imd_analysis>`*`)`](https://novawz.github.io/multiRF/reference/print.pairwise_imd_analysis.md)
   :
 
   Print `pairwise_imd_analysis`
 
-- [`print(`*`<cluster_imd>`*`)`](print.cluster_imd.md) :
+- [`print(`*`<cluster_imd>`*`)`](https://novawz.github.io/multiRF/reference/print.cluster_imd.md)
+  :
 
   Print `cluster_imd`
 
@@ -274,77 +351,91 @@ methods.
 Stability evaluation of a fitted pipeline, summaries, and tidy accessors
 for downstream analysis.
 
-- [`mrf3_stability()`](mrf3_stability.md) : mrf3 Stability Evaluation
-  (No Refit)
+- [`mrf3_stability()`](https://novawz.github.io/multiRF/reference/mrf3_stability.md)
+  : mrf3 Stability Evaluation (No Refit)
 
-- [`print(`*`<mrf3_stability>`*`)`](print.mrf3_stability.md) :
+- [`print(`*`<mrf3_stability>`*`)`](https://novawz.github.io/multiRF/reference/print.mrf3_stability.md)
+  :
 
   Print `mrf3_stability`
 
-- [`summary(`*`<mrf3_fit>`*`)`](summary.mrf3_fit.md) :
+- [`summary(`*`<mrf3_fit>`*`)`](https://novawz.github.io/multiRF/reference/summary.mrf3_fit.md)
+  :
 
   Summarize `mrf3_fit` output
 
-- [`print(`*`<summary.mrf3_fit>`*`)`](print.summary.mrf3_fit.md) : Print
-  mrf3 summary
+- [`print(`*`<summary.mrf3_fit>`*`)`](https://novawz.github.io/multiRF/reference/print.summary.mrf3_fit.md)
+  : Print mrf3 summary
 
 ## Visualization
 
 Embeddings and plots for similarity matrices, clusters, weights, and
 survival outcomes.
 
-- [`plot(`*`<mrf3_fit>`*`)`](plot.mrf3_fit.md) :
+- [`plot(`*`<mrf3_fit>`*`)`](https://novawz.github.io/multiRF/reference/plot.mrf3_fit.md)
+  :
 
   Plot an `mrf3_fit` object
 
-- [`mrf3_tsne()`](mrf3_tsne.md) : compute tSNE embedding for MRF
-  similarity matrix
+- [`mrf3_tsne()`](https://novawz.github.io/multiRF/reference/mrf3_tsne.md)
+  : compute tSNE embedding for MRF similarity matrix
 
-- [`plot_tsne()`](plot_tsne.md) [`plot_network()`](plot_tsne.md)
-  [`plot_weights()`](plot_tsne.md) [`plot_circos()`](plot_tsne.md)
-  [`plot_embed()`](plot_tsne.md) [`plot_umap()`](plot_tsne.md) :
-  Multiple plot functions
+- [`plot_tsne()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  [`plot_network()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  [`plot_weights()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  [`plot_circos()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  [`plot_embed()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  [`plot_umap()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  : Multiple plot functions
 
-- [`plot_cluster_composition()`](plot_cluster_composition.md) : Plot
-  cluster composition as a heatmap
+- [`plot_cluster_composition()`](https://novawz.github.io/multiRF/reference/plot_cluster_composition.md)
+  : Plot cluster composition as a heatmap
 
-- [`plot_km()`](plot_km.md) : Kaplan Meier plot
+- [`plot_km()`](https://novawz.github.io/multiRF/reference/plot_km.md) :
+  Kaplan Meier plot
 
 ## Data
 
 Bundled TCGA BRCA example data and multi-omics simulation.
 
-- [`tcga_brca`](tcga_brca.md) : TCGA BRCA Expression Data
-- [`tcga_brca_clinical`](tcga_brca_clinical.md) : TCGA BRCA Clinical
-  Data
-- [`simulate_intersim_shared_specific()`](simulate_intersim_shared_specific.md)
+- [`tcga_brca`](https://novawz.github.io/multiRF/reference/tcga_brca.md)
+  : TCGA BRCA Expression Data
+- [`tcga_brca_clinical`](https://novawz.github.io/multiRF/reference/tcga_brca_clinical.md)
+  : TCGA BRCA Clinical Data
+- [`simulate_intersim_shared_specific()`](https://novawz.github.io/multiRF/reference/simulate_intersim_shared_specific.md)
   : Simulate Shared + Specific Multi-Omics Data via InterSIM
 
 ## Utilities
 
 Accessors for components of fitted multiRF objects.
 
-- [`get_data()`](get_data.md) : Get data from a multiRF object
-- [`get_models()`](get_models.md) : Get fitted RF models
-- [`get_connection()`](get_connection.md) : Get connection list
+- [`get_data()`](https://novawz.github.io/multiRF/reference/get_data.md)
+  : Get data from a multiRF object
+- [`get_models()`](https://novawz.github.io/multiRF/reference/get_models.md)
+  : Get fitted RF models
+- [`get_connection()`](https://novawz.github.io/multiRF/reference/get_connection.md)
+  : Get connection list
 
 ## Deprecated
 
 Backward-compatible aliases retained from earlier releases; use the
 replacements noted on each page.
 
-- [`simulate_shared_specific_intersim()`](simulate_shared_specific_intersim.md)
+- [`simulate_shared_specific_intersim()`](https://novawz.github.io/multiRF/reference/simulate_shared_specific_intersim.md)
   :
 
   Backward-compatible alias of
-  [`simulate_intersim_shared_specific()`](../reference/simulate_intersim_shared_specific.md)
+  [`simulate_intersim_shared_specific()`](https://novawz.github.io/multiRF/reference/simulate_intersim_shared_specific.md)
 
-- [`fit_forest()`](fit_forest.md) [`fit_multi_forest()`](fit_forest.md)
-  [`fit_rfsrc()`](fit_forest.md) [`fit_multi_rfsrc()`](fit_forest.md) :
-  Fit random forest model and create model lists
+- [`fit_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  [`fit_multi_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  [`fit_rfsrc()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  [`fit_multi_rfsrc()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  : Fit random forest model and create model lists
 
 # Articles
 
 ### All vignettes
 
-- [Using multiRF for Multi-Omics Integration](multiRF.md):
+- [Using multiRF for Multi-Omics
+  Integration](https://novawz.github.io/multiRF/articles/multiRF.md):

@@ -17,7 +17,7 @@ proximity matrices."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">multiRF</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.3</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -30,6 +30,7 @@ proximity matrices."></head><body>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
+<li class="nav-item"><a class="external-link nav-link" href="https://github.com/novawz/multiRF/" aria-label="GitHub"><span class="fa fab fa-github fa-lg"></span></a></li>
       </ul></div>
 
 
@@ -39,7 +40,7 @@ proximity matrices."></head><body>
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Fit an ensemble of sub-sampled MRF models for a single connection</h1>
-
+      <small class="dont-index">Source: <a href="https://github.com/novawz/multiRF/blob/HEAD/R/fit_sub_mrf.R" class="external-link"><code>R/fit_sub_mrf.R</code></a></small>
       <div class="d-none name"><code>fit_sub_mrf.Rd</code></div>
     </div>
 
@@ -118,8 +119,8 @@ calls; the workflow inherits the main tree budget by using
 
 
 <dt id="arg-ytry">ytry<a class="anchor" aria-label="anchor" href="#arg-ytry"></a></dt>
-<dd><p>Number of candidate Y variables per split. <code>NULL</code> delegates to
-the forest engine (the multiRF default is <code>ceiling(qy / 3)</code>).</p></dd>
+<dd><p>Number of candidate Y variables per split. <code>NULL</code> uses the
+multiRF default, <code>ceiling(qy / 3)</code>.</p></dd>
 
 
 <dt id="arg-min-response">min_response<a class="anchor" aria-label="anchor" href="#arg-min-response"></a></dt>
@@ -152,7 +153,8 @@ Default <code>FALSE</code> because the extra computation is non-trivial.</p></dd
 
 
 <dt id="arg-parallel">parallel<a class="anchor" aria-label="anchor" href="#arg-parallel"></a></dt>
-<dd><p>Logical; if <code>TRUE</code>, use <code><a href="https://rdrr.io/r/parallel/mclapply.html" class="external-link">parallel::mclapply()</a></code>.</p></dd>
+<dd><p>Logical; if <code>TRUE</code>, fit replicates in fresh PSOCK worker
+processes.</p></dd>
 
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>

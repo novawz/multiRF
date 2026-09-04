@@ -354,7 +354,7 @@ mrf3_cl_prox <- function(rfit, k = NULL,
     is_sub_mrf <- vapply(rfit, function(r) !is.null(r$sub_mrf_info), logical(1))
 
     if (all(has_precomputed)) {
-      message("[mrf3_cl_prox] Using pre-computed C++ enhanced proximity (fast path)")
+      message("[mrf3_cl_prox] Using pre-computed enhanced proximity (fast path)")
       cl_mod <- NULL
       prox <- purrr::map(rfit, "enhanced_prox")
       prox <- combine_proximity_matrices(prox)

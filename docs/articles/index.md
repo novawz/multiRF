@@ -2,4 +2,5 @@
 
 ### All vignettes
 
-- [Using multiRF for Multi-Omics Integration](multiRF.md):
+- [Using multiRF for Multi-Omics
+  Integration](https://novawz.github.io/multiRF/articles/multiRF.md):

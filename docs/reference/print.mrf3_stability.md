@@ -13,7 +13,8 @@ print(x, ...)
 
 - x:
 
-  Output from [`mrf3_stability()`](mrf3_stability.md).
+  Output from
+  [`mrf3_stability()`](https://novawz.github.io/multiRF/reference/mrf3_stability.md).
 
 - ...:
 

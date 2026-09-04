@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">multiRF</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.3</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -20,6 +20,7 @@
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
+<li class="nav-item"><a class="external-link nav-link" href="https://github.com/novawz/multiRF/" aria-label="GitHub"><span class="fa fab fa-github fa-lg"></span></a></li>
       </ul></div>
 
 
@@ -29,7 +30,7 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>MRF unsupervised clustering – Proximity method</h1>
-
+      <small class="dont-index">Source: <a href="https://github.com/novawz/multiRF/blob/HEAD/R/mrf3_cl_prox.R" class="external-link"><code>R/mrf3_cl_prox.R</code></a></small>
       <div class="d-none name"><code>mrf3_cl_prox.Rd</code></div>
     </div>
 
@@ -68,16 +69,16 @@
 
 
 <dl><dt id="arg-rfit">rfit<a class="anchor" aria-label="anchor" href="#arg-rfit"></a></dt>
-<dd><p>A model list of random forest models</p></dd>
+<dd><p>A model list of random forest models.</p></dd>
 
 
 <dt id="arg-k">k<a class="anchor" aria-label="anchor" href="#arg-k"></a></dt>
-<dd><p>Pre-defined number of clusters. The default is selecting the optimal k by tuning method</p></dd>
+<dd><p>Pre-defined number of clusters. By default, the optimal value is
+selected by the requested tuning method.</p></dd>
 
 
 <dt id="arg-enhanced">enhanced<a class="anchor" aria-label="anchor" href="#arg-enhanced"></a></dt>
-<dd><p>A logical parameter that determines whether enhanced proximity is calculated when selecting Proximity as clustering method.
-The default is True.</p></dd>
+<dd><p>Logical; whether to calculate enhanced proximity.</p></dd>
 
 
 <dt id="arg-size-min">size_min<a class="anchor" aria-label="anchor" href="#arg-size-min"></a></dt>
@@ -97,16 +98,16 @@ The default is True.</p></dd>
 
 
 <dt id="arg-merge-quantile">merge_quantile<a class="anchor" aria-label="anchor" href="#arg-merge-quantile"></a></dt>
-<dd><p>Quantile threshold for sibling-pair merges in enhanced mode.
-<code>0.9</code> means keep top 10\<!-- % highest sibling correlations each iteration. -->
-Used only when <code>merge_mode = "hard"</code>.</p></dd>
+<dd><p>Quantile threshold for sibling-pair merges in enhanced
+mode. <code>0.9</code> keeps the top 10\<!-- % highest sibling correlations at each -->
+iteration. Used only when <code>merge_mode = "hard"</code>.</p></dd>
 
 
 <dt id="arg-merge-mode">merge_mode<a class="anchor" aria-label="anchor" href="#arg-merge-mode"></a></dt>
-<dd><p>Enhanced-proximity merge mode: <code>"soft"</code> (default) or <code>"hard"</code>.
-<code>"hard"</code> performs iterative sibling merges; <code>"soft"</code> directly builds per-tree
-similarity with same-leaf = 1 and sibling-leaf = <code>sibling_gamma * f(corr)</code>.
-In practice, <code>"soft"</code> is generally more stable.</p></dd>
+<dd><p>Enhanced-proximity merge mode: <code>"soft"</code> (default) or
+<code>"hard"</code>. <code>"hard"</code> performs iterative sibling merges; <code>"soft"</code> directly
+builds per-tree similarity with same-leaf = 1 and sibling-leaf =
+<code>sibling_gamma * f(corr)</code>. <code>"soft"</code> is generally more stable.</p></dd>
 
 
 <dt id="arg-sibling-gamma">sibling_gamma<a class="anchor" aria-label="anchor" href="#arg-sibling-gamma"></a></dt>
@@ -115,7 +116,7 @@ In practice, <code>"soft"</code> is generally more stable.</p></dd>
 
 <dt id="arg-sibling-fun">sibling_fun<a class="anchor" aria-label="anchor" href="#arg-sibling-fun"></a></dt>
 <dd><p>Correlation transform <code>f(corr)</code> used in soft merge mode.
-One of <code>"constant"</code>, <code>"positive"</code>, <code>"shift01"</code>, <code>"abs"</code>, <code>"identity"</code>.</p></dd>
+One of <code>"constant"</code>, <code>"positive"</code>, <code>"shift01"</code>, <code>"abs"</code>, or <code>"identity"</code>.</p></dd>
 
 
 <dt id="arg-sibling-cap">sibling_cap<a class="anchor" aria-label="anchor" href="#arg-sibling-cap"></a></dt>
@@ -124,12 +125,14 @@ One of <code>"constant"</code>, <code>"positive"</code>, <code>"shift01"</code>,
 
 <dt id="arg-hard-prox-mode">hard_prox_mode<a class="anchor" aria-label="anchor" href="#arg-hard-prox-mode"></a></dt>
 <dd><p>Proximity construction used after hard merge:
-<code>"soft_enhanced"</code> uses same-enhanced-leaf = 1 and sibling-enhanced-leaf
-= <code>sibling_gamma * f(corr)</code>, while <code>"binary"</code> uses same-enhanced-leaf only.</p></dd>
+<code>"soft_enhanced"</code> uses same-enhanced-leaf = 1 and sibling-enhanced-leaf =
+<code>sibling_gamma * f(corr)</code>, while <code>"binary"</code> uses same-enhanced-leaf only.</p></dd>
 
 
 <dt id="arg-parallel">parallel<a class="anchor" aria-label="anchor" href="#arg-parallel"></a></dt>
-<dd><p>Logical; whether to parallelize forest-level computation.</p></dd>
+<dd><p>Logical; whether to allow forest-level computation in fresh
+PSOCK worker processes. Parallel execution also requires an explicit
+<code>cores</code> value.</p></dd>
 
 
 <dt id="arg-sparse">sparse<a class="anchor" aria-label="anchor" href="#arg-sparse"></a></dt>
@@ -151,7 +154,8 @@ One of <code>"constant"</code>, <code>"positive"</code>, <code>"shift01"</code>,
 
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
-<dd><p>Number of CPU cores used by parallel steps.</p></dd>
+<dd><p>Number of CPU cores used by parallel steps. Default <code>NULL</code>
+keeps matrix-heavy forest reductions serial to limit peak memory.</p></dd>
 
 
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
@@ -160,7 +164,7 @@ One of <code>"constant"</code>, <code>"positive"</code>, <code>"shift01"</code>,
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
-    <p>mrf3 clustering object</p>
+    <p>An <code>mrf3</code> clustering object.</p>
     </div>
 
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

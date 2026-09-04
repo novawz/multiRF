@@ -133,14 +133,14 @@ fit_multi_rfsrc(
 - ytry:
 
   Number of response variables randomly selected per split. Default
-  `NULL` means the multiRF engine uses `ceiling(qy/3)`. Set to a
-  specific integer to override (e.g., `ytry = ncol(Y) / 2`).
+  `NULL` uses `ceiling(qy/3)` in multiRF. Set to a specific integer to
+  override (e.g., `ytry = ncol(Y) / 2`).
 
 - nsplit:
 
-  Number of candidate numeric cutpoints evaluated per variable. The
-  multiRF engine and `randomForestSRC` both default to `10`; set `0` to
-  scan all.
+  Number of candidate numeric cutpoints evaluated per variable.
+  `multiRF` and `randomForestSRC` both default to `10`; set `0` to scan
+  all.
 
 - samptype:
 
@@ -149,7 +149,7 @@ fit_multi_rfsrc(
 
 - nthread:
 
-  Number of threads used by the multiRF forest engine.
+  Number of threads used for fitting.
 
 - xvar.wt, yvar.wt:
 
@@ -159,24 +159,23 @@ fit_multi_rfsrc(
 - split.wt, case.wt:
 
   Optional split/case weights. These are forwarded to `randomForestSRC`;
-  the multiRF engine fails explicitly because it does not yet implement
-  them.
+  the default multiRF implementation fails explicitly because it does
+  not yet implement them.
 
 - seed:
 
-  Random seed passed to the selected engine.
+  Random seed passed to the selected backend.
 
 - engine:
 
   Forest backend. Default is `getOption("multiRF.engine", "native")`.
-  The value `"native"` selects the default and recommended multiRF
-  forest engine. `randomForestSRC` is used only as an optional fallback
-  when explicitly requested.
+  The value `"native"` selects the default multiRF implementation.
+  `randomForestSRC` is used only as an optional fallback when explicitly
+  requested.
 
 - enhanced_prox:
 
-  Logical; whether to compute enhanced proximity in the multiRF forest
-  engine.
+  Logical; whether to compute enhanced proximity during multiRF fitting.
 
 - sibling_gamma:
 
@@ -188,8 +187,9 @@ fit_multi_rfsrc(
 
 - ...:
 
-  Additional arguments passed to `randomForestSRC::rfsrc()` when
-  `engine != "native"`.
+  Additional arguments passed to
+  [`randomForestSRC::rfsrc()`](https://www.randomforestsrc.org//reference/rfsrc.html)
+  when `engine != "native"`.
 
 - dat.list:
 
@@ -212,7 +212,8 @@ fit_multi_rfsrc(
 
 - parallel_connections:
 
-  Logical; whether directed connections are fitted in parallel.
+  Logical; whether directed connections are fitted in fresh PSOCK worker
+  processes.
 
 - cores_connections:
 
@@ -224,7 +225,7 @@ A model list
 
 ## Details
 
-`fit_forest()` defaults to the multiRF forest engine for classification,
-multivariate regression, and unsupervised fitting. `randomForestSRC` is
-optional and is only used when `engine != "native"`. If `type` is
-omitted and `Y = NULL`, unsupervised fitting is selected.
+`fit_forest()` uses multiRF by default for classification, multivariate
+regression, and unsupervised fitting. `randomForestSRC` is optional and
+is only used when `engine != "native"`. If `type` is omitted and
+`Y = NULL`, unsupervised fitting is selected.

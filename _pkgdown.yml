@@ -1,7 +1,5 @@
 # pkgdown configuration for multiRF
-# Uncomment and set once the GitHub remote / Pages site exists
-# (README already points at this address):
-# url: https://novawz.github.io/multiRF/
+url: https://novawz.github.io/multiRF/
 
 template:
   bootstrap: 5
@@ -24,7 +22,7 @@ navbar:
       href: news/index.html
 
 reference:
-- title: Fitting and engines
+- title: Forest fitting
   desc: >
     Fit directed multivariate random forests across omics blocks, discover
     optimal connections, and compute out-of-bag quantities.

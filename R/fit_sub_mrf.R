@@ -97,8 +97,8 @@ NULL
 #'   `ceiling(ntree / n_sub)` unless explicitly overridden).
 #' @param mtry Number of candidate X variables per split. Passed through to
 #'   `fit_forest()`.
-#' @param ytry Number of candidate Y variables per split. `NULL` delegates to
-#'   the forest engine (the multiRF default is `ceiling(qy / 3)`).
+#' @param ytry Number of candidate Y variables per split. `NULL` uses the
+#'   multiRF default, `ceiling(qy / 3)`.
 #' @param min_response  Minimum number of response columns per sub-MRF.
 #' @param min_predictor  Minimum number of predictor columns per sub-MRF.
 #' @param enhanced  Logical; if `TRUE`, compute soft enhanced proximity
@@ -502,9 +502,8 @@ fit_sub_mrf <- function(X, Y,
 #'   `fit_multi_forest()`.  Each object contains `forest.wt`, `forest.wt.oob`,
 #'   `proximity`, `xvar`, `yvar`.
 #' @details
-#' Sub-MRF uses the default multiRF C++ engine for its internal fits.
-#' OOB forest-weight reconstruction uses the `inbag` matrix returned by
-#' the multiRF engine.
+#' Sub-MRF uses multiRF for its internal fits. OOB forest-weight
+#' reconstruction uses the returned `inbag` matrix.
 fit_sub_multi_rfsrc <- function(dat.list,
                                 connect_list,
                                 n_sub = 15L,

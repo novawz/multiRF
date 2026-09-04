@@ -33,18 +33,16 @@ mrf3_cl_prox(
 
 - rfit:
 
-  A model list of random forest models
+  A model list of random forest models.
 
 - k:
 
-  Pre-defined number of clusters. The default is selecting the optimal k
-  by tuning method
+  Pre-defined number of clusters. By default, the optimal value is
+  selected by the requested tuning method.
 
 - enhanced:
 
-  A logical parameter that determines whether enhanced proximity is
-  calculated when selecting Proximity as clustering method. The default
-  is True.
+  Logical; whether to calculate enhanced proximity.
 
 - size_min:
 
@@ -65,15 +63,14 @@ mrf3_cl_prox(
 - merge_quantile:
 
   Quantile threshold for sibling-pair merges in enhanced mode. `0.9`
-  means keep top 10\\ Used only when `merge_mode = "hard"`.
+  keeps the top 10\\ iteration. Used only when `merge_mode = "hard"`.
 
 - merge_mode:
 
   Enhanced-proximity merge mode: `"soft"` (default) or `"hard"`.
   `"hard"` performs iterative sibling merges; `"soft"` directly builds
   per-tree similarity with same-leaf = 1 and sibling-leaf =
-  `sibling_gamma * f(corr)`. In practice, `"soft"` is generally more
-  stable.
+  `sibling_gamma * f(corr)`. `"soft"` is generally more stable.
 
 - sibling_gamma:
 
@@ -82,7 +79,7 @@ mrf3_cl_prox(
 - sibling_fun:
 
   Correlation transform `f(corr)` used in soft merge mode. One of
-  `"constant"`, `"positive"`, `"shift01"`, `"abs"`, `"identity"`.
+  `"constant"`, `"positive"`, `"shift01"`, `"abs"`, or `"identity"`.
 
 - sibling_cap:
 
@@ -97,7 +94,9 @@ mrf3_cl_prox(
 
 - parallel:
 
-  Logical; whether to parallelize forest-level computation.
+  Logical; whether to allow forest-level computation in fresh PSOCK
+  worker processes. Parallel execution also requires an explicit `cores`
+  value.
 
 - sparse:
 
@@ -119,7 +118,8 @@ mrf3_cl_prox(
 
 - cores:
 
-  Number of CPU cores used by parallel steps.
+  Number of CPU cores used by parallel steps. Default `NULL` keeps
+  matrix-heavy forest reductions serial to limit peak memory.
 
 - ...:
 
@@ -127,4 +127,4 @@ mrf3_cl_prox(
 
 ## Value
 
-mrf3 clustering object
+An `mrf3` clustering object.

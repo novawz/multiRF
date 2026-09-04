@@ -2,7 +2,7 @@
 % Please edit documentation in R/fit_mv_forest.R
 \name{fit_class_forest}
 \alias{fit_class_forest}
-\title{Fit a classification forest with the multiRF engine}
+\title{Fit a classification forest}
 \usage{
 fit_class_forest(
   X,

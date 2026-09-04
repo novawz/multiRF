@@ -75,7 +75,7 @@ resolve_param <- function(value, p, default, name = "param") {
     stop("`", label, "` must contain at least two samples and one feature.")
   }
   if (!all(vapply(x, is.numeric, logical(1)))) {
-    stop("All columns in `", label, "` must be numeric for the multiRF forest engine.")
+    stop("All columns in `", label, "` must be numeric for multiRF.")
   }
   if (any(!is.finite(as.matrix(x)))) {
     stop("`", label, "` contains NA, NaN, or infinite values.")
@@ -105,7 +105,7 @@ resolve_param <- function(value, p, default, name = "param") {
   wt / sum(wt)
 }
 
-#' Fit an unsupervised random forest with the multiRF C++ engine
+#' Fit an unsupervised random forest
 #'
 #' Emulates rfsrc unsupervised mode: at each tree, randomly partition the
 #' columns of `X` into pseudo-predictor and pseudo-response halves, then fit
@@ -124,7 +124,7 @@ resolve_param <- function(value, p, default, name = "param") {
 #' @param nodesize Minimum terminal node size.
 #' @param max_depth Maximum tree depth (0 = unlimited).
 #' @param samptype Sampling scheme: `"swor"` or `"swr"`.
-#' @param nthread Number of OpenMP threads used by the multiRF forest engine.
+#' @param nthread Number of threads used for fitting.
 #' @param enhanced_prox Logical; whether to compute enhanced proximity.
 #' @param sibling_gamma Strength of the sibling-leaf correction used by
 #'   enhanced proximity.
@@ -293,7 +293,7 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL, nsplit = 10L,
   out
 }
 
-#' Fit a multivariate regression forest with the multiRF C++ engine
+#' Fit a multivariate regression forest
 #'
 #' Drop-in replacement for `fit_forest()` when `type = "regression"`.
 #' Returns an object with the same interface (`$forest.wt`, `$proximity`,
@@ -316,7 +316,7 @@ fit_mv_forest_unsup <- function(X, ntree = 500L, ytry = NULL, nsplit = 10L,
 #' @param nodesize Minimum terminal node size. Default: 5.
 #' @param max_depth Maximum tree depth (0 = unlimited). Default: 0.
 #' @param samptype Sampling scheme: `"swor"` or `"swr"`.
-#' @param nthread Number of OpenMP threads used by the multiRF forest engine.
+#' @param nthread Number of threads used for fitting.
 #' @param enhanced_prox Logical; whether to compute enhanced proximity.
 #' @param sibling_gamma Strength of the sibling-leaf correction used by
 #'   enhanced proximity.
@@ -417,7 +417,7 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
     embed_mat <- cbind(embed_x, embed_y)
   }
 
-  # C++ engine
+  # Compiled fitting path
   res <- fit_mv_forest_cpp(
     X = X_mat,
     Y = Y_mat,
@@ -560,7 +560,7 @@ fit_mv_forest <- function(X, Y, ntree = 500L,
   out
 }
 
-#' Fit a classification forest with the multiRF engine
+#' Fit a classification forest
 #'
 #' Uses the multiRF multivariate regression forest on a one-hot encoded response,
 #' then reconstructs training-set class probabilities and labels.

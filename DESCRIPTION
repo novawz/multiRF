@@ -15,6 +15,8 @@ Authors@R:
     )
 Description: Integrates multi-omics datasets using multivariate random forests for model fitting, variable selection, clustering, and
     visualization.
+URL: https://novawz.github.io/multiRF/, https://github.com/novawz/multiRF
+BugReports: https://github.com/novawz/multiRF/issues
 License: GPL (>= 3) + file LICENSE
 Copyright: See file inst/COPYRIGHTS.
 Encoding: UTF-8

@@ -24,12 +24,12 @@ get_imp_forest(
 
 - mod:
 
-  A fitted forest model from the multiRF engine or the optional
-  `randomForestSRC` fallback.
+  A fitted forest model from either supported backend.
 
 - parallel:
 
-  Logical; whether to parallelize across trees.
+  Logical; whether to parallelize across trees in fresh PSOCK worker
+  processes.
 
 - robust:
 

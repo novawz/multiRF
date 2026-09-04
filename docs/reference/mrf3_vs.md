@@ -21,7 +21,10 @@ mrf3_vs(
   ntree = NULL,
   scale = FALSE,
   k = 3,
+  tau_grid = seq(0.8, 3.1, by = 0.1),
   tol = 0.01,
+  perm_B = 20L,
+  perm_quantile = 0.95,
   iter = 1000,
   eps = 1e-05,
   normalized = FALSE,
@@ -45,9 +48,21 @@ mrf3_vs(
 - method:
 
   Feature-selection rule. `"filter"` adaptively tunes the cutoff
-  `tau * sd(IMD)` using OOB error; `"mixture"` fits a
-  point-mass/two-component model; and `"test"` (alias
-  `"transformation"`) selects by the Eq. 16 t-score IMD: each feature's
+  `tau * sd(IMD)` using OOB error: for the shared signal the cross-omics
+  forests are refitted at each candidate cutoff and scored by OOB
+  normalized prediction error across predictor and response coordinates,
+  and the cutoff is the first stable plateau of that error; for the
+  specific signal there is no second block to predict, so by default the
+  cutoff is the `perm_quantile` quantile of a permutation null: the
+  residual forest is refitted `perm_B` times on column-wise permuted
+  residuals (no between-variable structure, same marginals) and the
+  pooled IMD of those refits defines the importance reachable without
+  structure (an OOB search is not used for the specific signal because
+  the OOB error of a residual block barely changes with the cutoff). The
+  specific branch requires the residual matrices kept by
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md);
+  `"mixture"` fits a point-mass/two-component model; and `"test"` (alias
+  `"transformation"`) selects by a forest-level t-score: each feature's
   forest IMD is standardized against the mean forest IMD of all features
   in the block, using the feature's across-tree standard error, and
   features in the upper tail of a Student-t reference with `ntree - 1`
@@ -112,10 +127,25 @@ mrf3_vs(
 
   Number of repeated forest fits at each candidate filtering cutoff.
 
+- tau_grid:
+
+  Candidate multipliers of `sd(IMD)` evaluated by `method = "filter"`.
+  Default `seq(0.8, 3.1, by = 0.1)`.
+
 - tol:
 
   Tolerable adjacent change in mean OOB normalized MSE used to choose
   the filtering cutoff.
+
+- perm_B:
+
+  Number of permutation refits per residual block used by
+  `method = "filter"` for the specific signal.
+
+- perm_quantile:
+
+  Quantile of the pooled permutation-null IMD used as the
+  specific-signal cutoff.
 
 - iter:
 
@@ -149,10 +179,10 @@ results are retained in `signal_results`.
 
 For `method = "transformation"`, every connected forest supplies a
 per-tree IMD matrix (features x trees) per block. Feature `v` is
-standardized as the t-score IMD of Eq. 16, `t_v = (M_v - mu) / SE(M_v)`,
-where `M_v` is the feature's forest IMD (its per-tree IMD averaged over
-the `B` trees), `mu` is the mean forest IMD over all features of the
-block, and `SE(M_v)` is the feature's across-tree standard error
+standardized as `t_v = (M_v - mu) / SE(M_v)`, where `M_v` is the
+feature's forest IMD (its per-tree IMD averaged over the `B` trees),
+`mu` is the mean forest IMD over all features of the block, and
+`SE(M_v)` is the feature's across-tree standard error
 (`sd(per-tree IMD) / sqrt(B)`). Features with an upper-tail
 `p = P(T_{B-1} > t_v) < level` are selected, i.e. features whose forest
 IMD lies significantly above the block-wide mean. When several connected

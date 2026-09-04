@@ -2,7 +2,7 @@
 % Please edit documentation in R/fit_mv_forest.R
 \name{fit_mv_forest_unsup}
 \alias{fit_mv_forest_unsup}
-\title{Fit an unsupervised random forest with the multiRF C++ engine}
+\title{Fit an unsupervised random forest}
 \usage{
 fit_mv_forest_unsup(
   X,
@@ -45,7 +45,7 @@ trees in which the target sample is out of bag.}
 
 \item{samptype}{Sampling scheme: \code{"swor"} or \code{"swr"}.}
 
-\item{nthread}{Number of OpenMP threads used by the multiRF forest engine.}
+\item{nthread}{Number of threads used for fitting.}
 
 \item{enhanced_prox}{Logical; whether to compute enhanced proximity.}
 

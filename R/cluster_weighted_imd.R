@@ -1,7 +1,7 @@
 #' Compute cluster-weighted IMD from pre-computed per-node split scores
 #'
-#' Aggregates the per-node split statistics that the multiRF C++ engine stores
-#' on every fitted forest (`tree_info[[t]]$imd_x_score` and
+#' Aggregates the per-node split statistics stored on every fitted forest
+#' (`tree_info[[t]]$imd_x_score` and
 #' `tree_info[[t]]$imd_y_stats`) into cluster-specific variable weights,
 #' without refitting the forest and without re-traversing trees per sample in
 #' R.
@@ -34,7 +34,7 @@
 #' as a fast, deterministic descriptive screen with a mild cluster tilt --
 #' not as a substitute for the depth-based cluster IMD.
 #'
-#' @param mod A single fitted forest model from the multiRF engine (with
+#' @param mod A model fitted with `engine = "native"` (with
 #'   `$tree_info`, `$membership`, `$xvar`, `$yvar`). `$membership` is expected
 #'   in the remapped form stored by `fit_mv_forest()`: sequential 1-based DFS
 #'   leaf IDs per tree (this function inverts that remap internally to recover
@@ -51,10 +51,10 @@ cluster_weighted_imd <- function(mod, cluster, normalized = TRUE) {
   tree_info <- mod$tree_info
   membership <- mod$membership  # n x ntree, 1-based DFS leaf IDs (remapped in fit_mv_forest)
   if (!is.list(tree_info) || length(tree_info) == 0L) {
-    stop("`mod` has no `tree_info`; cluster_weighted_imd() requires a multiRF-engine fit.")
+    stop("`mod` has no `tree_info`; cluster_weighted_imd() requires `engine = 'native'`.")
   }
   if (is.null(tree_info[[1L]]$imd_x_score)) {
-    stop("`mod$tree_info` does not carry `imd_x_score`; refit with the multiRF engine.")
+    stop("`mod$tree_info` does not carry `imd_x_score`; refit with `engine = 'native'`.")
   }
   if (is.null(membership)) {
     stop("`mod` has no `membership` matrix.")

@@ -8,6 +8,15 @@
 \description{
 Integrates multi-omics datasets using multivariate random forests for model fitting, variable selection, clustering, and visualization.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://novawz.github.io/multiRF/}
+  \item \url{https://github.com/novawz/multiRF}
+  \item Report bugs at \url{https://github.com/novawz/multiRF/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Wei Zhang \email{wzhang0739@gmail.com} [copyright holder]
 

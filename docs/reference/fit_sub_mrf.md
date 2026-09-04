@@ -69,12 +69,12 @@ fit_sub_mrf(
 - mtry:
 
   Number of candidate X variables per split. Passed through to
-  [`fit_forest()`](fit_forest.md).
+  [`fit_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md).
 
 - ytry:
 
-  Number of candidate Y variables per split. `NULL` delegates to the
-  forest engine (the multiRF default is `ceiling(qy / 3)`).
+  Number of candidate Y variables per split. `NULL` uses the multiRF
+  default, `ceiling(qy / 3)`.
 
 - min_response:
 
@@ -89,9 +89,9 @@ fit_sub_mrf(
   Logical; if `TRUE`, compute soft enhanced proximity using full-data
   sample embeddings within each sub-model. The result is stored as
   `$enhanced_prox` in the output so that
-  [`mrf3_cl_prox()`](mrf3_cl_prox.md) can use it directly without
-  re-traversing trees. Default `FALSE` because the extra computation is
-  non-trivial.
+  [`mrf3_cl_prox()`](https://novawz.github.io/multiRF/reference/mrf3_cl_prox.md)
+  can use it directly without re-traversing trees. Default `FALSE`
+  because the extra computation is non-trivial.
 
 - compute_imd:
 
@@ -100,7 +100,8 @@ fit_sub_mrf(
 - imd_args:
 
   Named list of arguments passed to
-  [`get_imp_forest()`](get_imp_forest.md) when `compute_imd = TRUE`.
+  [`get_imp_forest()`](https://novawz.github.io/multiRF/reference/get_imp_forest.md)
+  when `compute_imd = TRUE`.
 
 - seed:
 
@@ -108,8 +109,7 @@ fit_sub_mrf(
 
 - parallel:
 
-  Logical; if `TRUE`, use
-  [`parallel::mclapply()`](https://rdrr.io/r/parallel/mclapply.html).
+  Logical; if `TRUE`, fit replicates in fresh PSOCK worker processes.
 
 - cores:
 
@@ -122,7 +122,8 @@ fit_sub_mrf(
 
 - ...:
 
-  Additional arguments forwarded to [`fit_forest()`](fit_forest.md).
+  Additional arguments forwarded to
+  [`fit_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md).
 
 ## Value
 
@@ -166,4 +167,4 @@ subsets produces a smoothed estimate.
 `inbag` matrices: for sample i, only trees where i is out-of-bag
 contribute to its weight row. This provides a regularized version
 suitable for connection selection via
-[`find_connection()`](find_connection.md).
+[`find_connection()`](https://novawz.github.io/multiRF/reference/find_connection.md).

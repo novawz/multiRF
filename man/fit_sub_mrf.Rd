@@ -49,8 +49,8 @@ calls; the workflow inherits the main tree budget by using
 \item{mtry}{Number of candidate X variables per split. Passed through to
 \code{fit_forest()}.}
 
-\item{ytry}{Number of candidate Y variables per split. \code{NULL} delegates to
-the forest engine (the multiRF default is \code{ceiling(qy / 3)}).}
+\item{ytry}{Number of candidate Y variables per split. \code{NULL} uses the
+multiRF default, \code{ceiling(qy / 3)}.}
 
 \item{min_response}{Minimum number of response columns per sub-MRF.}
 

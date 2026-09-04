@@ -61,23 +61,25 @@ mrf3_init(
 
 - filter_mode:
 
-  Feature filtering mode passed to [`filter_omics()`](filter_omics.md):
+  Feature filtering mode passed to
+  [`filter_omics()`](https://novawz.github.io/multiRF/reference/filter_omics.md):
   `"auto"`, `"none"`, or `"manual"`.
 
 - filter_method:
 
   Feature dispersion metric passed to
-  [`filter_omics()`](filter_omics.md): `"mad"` or `"variance"`.
+  [`filter_omics()`](https://novawz.github.io/multiRF/reference/filter_omics.md):
+  `"mad"` or `"variance"`.
 
 - top_n_by_type:
 
   Optional auto-filter overrides passed to
-  [`filter_omics()`](filter_omics.md).
+  [`filter_omics()`](https://novawz.github.io/multiRF/reference/filter_omics.md).
 
 - top_n_manual:
 
   Optional manual top-n configuration passed to
-  [`filter_omics()`](filter_omics.md).
+  [`filter_omics()`](https://novawz.github.io/multiRF/reference/filter_omics.md).
 
 - filter_verbose:
 
@@ -90,17 +92,18 @@ mrf3_init(
 - sub_mrf:
 
   Logical; if `TRUE`, uses
-  [`fit_sub_multi_rfsrc()`](fit_sub_multi_rfsrc.md) instead of
-  [`fit_multi_forest()`](fit_forest.md) for the final model fit. This
-  sub-samples response and predictor features per connection, fits
-  smaller MRFs, and averages the resulting n x n matrices. Useful when p
-  is large. Default is `FALSE`.
+  [`fit_sub_multi_rfsrc()`](https://novawz.github.io/multiRF/reference/fit_sub_multi_rfsrc.md)
+  instead of
+  [`fit_multi_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+  for the final model fit. This sub-samples response and predictor
+  features per connection, fits smaller MRFs, and averages the resulting
+  n x n matrices. Useful when p is large. Default is `FALSE`.
 
 - sub_mrf_args:
 
   Named list of arguments forwarded to
-  [`fit_sub_multi_rfsrc()`](fit_sub_multi_rfsrc.md) when
-  `sub_mrf = TRUE`. Common options: `n_sub` (number of replicates,
+  [`fit_sub_multi_rfsrc()`](https://novawz.github.io/multiRF/reference/fit_sub_multi_rfsrc.md)
+  when `sub_mrf = TRUE`. Common options: `n_sub` (number of replicates,
   default 15), `frac_response` (default 0.2), `frac_predictor` (default
   0.2), `ntree_per_sub` (by default `ceiling(ntree / n_sub)`),
   `min_response_for_sub` (default 500; blocks smaller than this use all
@@ -141,8 +144,9 @@ mrf3 object
 
 `mrf3_init()` now performs initialization only (filtering, forest
 fitting, and optional connection selection). IMD weights are computed
-downstream via [`get_multi_weights()`](get_multi_weights.md) (for
-example inside `mrf3_fit(..., run_imd = TRUE)`).
+downstream via
+[`get_multi_weights()`](https://novawz.github.io/multiRF/reference/get_multi_weights.md)
+(for example inside `mrf3_fit(..., run_imd = TRUE)`).
 
 When `sub_mrf = TRUE`, the final model fit uses a sub-sampling ensemble
 strategy: for each connection, features are randomly sub-sampled from

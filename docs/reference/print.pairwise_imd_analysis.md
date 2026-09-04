@@ -13,7 +13,8 @@ print(x, ...)
 
 - x:
 
-  Output from [`pairwise_imd()`](pairwise_imd.md).
+  Output from
+  [`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md).
 
 - ...:
 

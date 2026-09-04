@@ -19,8 +19,7 @@ get_imp_forest(
 )
 }
 \arguments{
-\item{mod}{A fitted forest model from the multiRF engine or the
-optional \code{randomForestSRC} fallback.}
+\item{mod}{A fitted forest model from either supported backend.}
 
 \item{parallel}{Logical; whether to parallelize across trees in fresh PSOCK
 worker processes.}

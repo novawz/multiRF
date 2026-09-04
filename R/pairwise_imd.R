@@ -33,12 +33,12 @@ pairwise_imd <- function(x,
          call. = FALSE)
   }
 
-  ## ---- Fast path: multiRF engine with pre-computed pairwise_xy ----
+  ## ---- Fast path: pre-computed pairwise_xy ----
   has_precomputed <- inherits(x, "mrf3_fit") && !is.null(x$models) &&
     any(vapply(x$models, function(m) !is.null(m$pairwise_xy), logical(1)))
 
   if (has_precomputed) {
-    message("  Using pre-computed pairwise_xy from the multiRF engine.")
+    message("  Using pairwise_xy stored during fitting.")
     imd_wts <- x$imd
     dat_names <- names(imd_wts)
     var_names_all <- lapply(imd_wts, names)
@@ -102,7 +102,7 @@ pairwise_imd <- function(x,
     ## ---- Slow path: post-hoc tree traversal ----
     if (is.null(mod$net) || is.null(mod$connection) || is.null(mod$imd)) {
       stop("`pairwise_imd()` requires `net`, `connection`, and `imd`, ",
-           "or models with pre-computed `pairwise_xy` (multiRF engine).",
+           "or models with pre-computed `pairwise_xy`.",
            call. = FALSE)
     }
 

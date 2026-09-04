@@ -13,7 +13,8 @@ get_top_vars(x, n = 20L, cluster = NULL, ...)
 
 - x:
 
-  Any object accepted by [`get_weights()`](get_weights.md).
+  Any object accepted by
+  [`get_weights()`](https://novawz.github.io/multiRF/reference/get_weights.md).
 
 - n:
 
@@ -21,11 +22,13 @@ get_top_vars(x, n = 20L, cluster = NULL, ...)
 
 - cluster:
 
-  Passed to [`get_weights()`](get_weights.md).
+  Passed to
+  [`get_weights()`](https://novawz.github.io/multiRF/reference/get_weights.md).
 
 - ...:
 
-  Additional arguments passed to [`get_weights()`](get_weights.md).
+  Additional arguments passed to
+  [`get_weights()`](https://novawz.github.io/multiRF/reference/get_weights.md).
 
 ## Value
 

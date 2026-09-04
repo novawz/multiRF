@@ -27,8 +27,8 @@
 #'   `FALSE` (the default) computes Eq. 6-8 inverse minimal depth via the
 #'   per-tree network traversal of `get_multi_weights()` on each cluster's
 #'   subset model. `TRUE` uses the node-score fast path
-#'   (`cluster_weighted_imd()`): the per-node split statistics stored by the
-#'   multiRF forest engine are averaged per variable, weighted by the fraction of the
+#'   (`cluster_weighted_imd()`): the per-node split statistics stored during
+#'   fitting are averaged per variable, weighted by the fraction of the
 #'   cluster's samples whose root-to-leaf paths visit each node. The fast
 #'   path is deterministic and typically 100-900x faster, but it is a
 #'   *different, split-score-weighted* estimator whose weights stay close to
@@ -173,7 +173,7 @@ cluster_imd <- function(x,
   ytry_use <- if (is.null(ytry)) base$ytry else ytry
 
   # ── Node-score fast path availability ──────────────────────────────────
-  # The multiRF engine stores per-node split statistics (`imd_x_score`,
+  # multiRF stores per-node split statistics (`imd_x_score`,
   # `imd_y_stats`) in `tree_info`; `cluster_weighted_imd()` turns them into
   # cluster-specific weights in a single deterministic pass, avoiding the
   # per-cluster per-tree network traversal entirely. Note this is a
@@ -200,9 +200,9 @@ cluster_imd <- function(x,
   } else if (isTRUE(use_node_imd)) {
     if (!has_node_imd) {
       stop(
-        "`use_node_imd = TRUE` requires multiRF-engine models carrying ",
-        "`tree_info` with `imd_x_score` (and `membership`). Refit with the ",
-        "multiRF engine or use `use_node_imd = FALSE`."
+        "`use_node_imd = TRUE` requires models fitted with `engine = \"native\"` ",
+        "and carrying `tree_info` with `imd_x_score` (and `membership`). ",
+        "Refit with `engine = \"native\"` or use `use_node_imd = FALSE`."
       )
     }
     if (length(fast_blockers) > 0L) {

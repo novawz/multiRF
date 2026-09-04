@@ -36,7 +36,7 @@ get_shared_specific_weights(
 - recon:
 
   Reconstruction output from
-  [`get_reconstr_matrix()`](mrf3_reconstr.md).
+  [`get_reconstr_matrix()`](https://novawz.github.io/multiRF/reference/mrf3_reconstr.md).
 
 - per_response_recon:
 
@@ -68,11 +68,12 @@ get_shared_specific_weights(
 
   Integer seed for the residual unsupervised forests. When `NULL`
   (default), falls back to 529 with a warning.
-  [`mrf3_fit()`](mrf3_fit.md) automatically injects the pipeline seed
-  here, so users calling [`mrf3()`](mrf3.md) or
-  [`mrf3_fit()`](mrf3_fit.md) need not set this. Direct callers of
-  `get_shared_specific_weights()` should pass an explicit positive seed
-  for reproducibility.
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md)
+  automatically injects the pipeline seed here, so users calling
+  [`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md) or
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md)
+  need not set this. Direct callers of `get_shared_specific_weights()`
+  should pass an explicit positive seed for reproducibility.
 
 - specific_n_consensus:
 
