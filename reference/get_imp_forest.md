@@ -29,7 +29,8 @@ get_imp_forest(
 
 - parallel:
 
-  Logical; whether to parallelize across trees.
+  Logical; whether to parallelize across trees in fresh PSOCK worker
+  processes.
 
 - robust:
 

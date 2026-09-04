@@ -108,8 +108,7 @@ fit_sub_mrf(
 
 - parallel:
 
-  Logical; if `TRUE`, use
-  [`parallel::mclapply()`](https://rdrr.io/r/parallel/mclapply.html).
+  Logical; if `TRUE`, fit replicates in fresh PSOCK worker processes.
 
 - cores:
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## multiRF 0.3.0
+
+- Added permutation-null filtering for residual-specific IMD; shared
+  filtering continues to tune its cutoff with OOB error.
+- Made saturation-based entropy selection the default for model and
+  fused top-v, with closed-form fused entropy and the earlier methods
+  retained.
+- Replaced fork-based parallel paths with PSOCK workers and safer serial
+  defaults for tuning grids.
+- Reconstructed missing ordinary proximity from tree membership and
+  improved related validation, tests, and documentation.
+
 ## multiRF 0.2.3
 
 - Added the unified `plot(fit, type = ...)` interface and pkgdown site.

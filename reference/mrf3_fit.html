@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">multiRF</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.3</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -72,7 +72,8 @@
 <span>  fused_top_v <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  fused_row_normalize <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  fused_keep_ties <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>  top_v_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"entropy_elbow"</span>, <span class="st">"neff"</span><span class="op">)</span>,</span>
+<span>  top_v_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"saturation"</span>, <span class="st">"entropy_elbow"</span>, <span class="st">"neff"</span><span class="op">)</span>,</span>
+<span>  top_v_tau <span class="op">=</span> <span class="fl">0.9</span>,</span>
 <span>  neff_quantile <span class="op">=</span> <span class="fl">0.5</span>,</span>
 <span>  model_top_v_tune_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  fused_top_v_tune_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
@@ -258,7 +259,17 @@ fused top-v tuning.</p></dd>
 
 <dt id="arg-top-v-method">top_v_method<a class="anchor" aria-label="anchor" href="#arg-top-v-method"></a></dt>
 <dd><p>Strategy used when auto-selecting <code>top_v</code>:
-<code>"entropy_elbow"</code> (default workflow) or <code>"neff"</code>.</p></dd>
+<code>"saturation"</code> (default), <code>"entropy_elbow"</code>, or <code>"neff"</code>. <code>"saturation"</code>
+keeps the smallest number of neighbours whose fused-weight row entropy
+reaches <code>top_v_tau</code> times the no-truncation entropy; it is independent of
+the candidate grid and has a single interpretable parameter.
+<code>"entropy_elbow"</code> is the previous small-gain elbow heuristic and <code>"neff"</code>
+uses the effective neighbourhood size without any grid search.</p></dd>
+
+
+<dt id="arg-top-v-tau">top_v_tau<a class="anchor" aria-label="anchor" href="#arg-top-v-tau"></a></dt>
+<dd><p>Saturation fraction in (0, 1) used by
+<code>top_v_method = "saturation"</code>. Default <code>0.9</code>.</p></dd>
 
 
 <dt id="arg-neff-quantile">neff_quantile<a class="anchor" aria-label="anchor" href="#arg-neff-quantile"></a></dt>
@@ -268,14 +279,14 @@ fused top-v tuning.</p></dd>
 
 <dt id="arg-model-top-v-tune-args">model_top_v_tune_args<a class="anchor" aria-label="anchor" href="#arg-model-top-v-tune-args"></a></dt>
 <dd><p>A named list of additional arguments passed to
-<code><a href="tune_model_top_v.html">tune_model_top_v()</a></code> (e.g., <code>tmin</code>, <code>by</code>, <code>k</code>).
-Workflow always uses <code>object = "entropy_elbow"</code>.</p></dd>
+<code><a href="tune_model_top_v.html">tune_model_top_v()</a></code> (e.g., <code>tmin</code>, <code>by</code>, <code>k</code>, <code>max_candidates</code>).
+The objective always follows <code>top_v_method</code>.</p></dd>
 
 
 <dt id="arg-fused-top-v-tune-args">fused_top_v_tune_args<a class="anchor" aria-label="anchor" href="#arg-fused-top-v-tune-args"></a></dt>
 <dd><p>A named list of additional arguments passed to
 <code><a href="tune_fused_top_v.html">tune_fused_top_v()</a></code> (e.g., <code>vmin</code>, <code>by</code>, <code>vmax</code>, <code>k</code>).
-Workflow always uses <code>object = "entropy_elbow"</code>.</p></dd>
+The objective always follows <code>top_v_method</code>.</p></dd>
 
 
 <dt id="arg-select-connection">select_connection<a class="anchor" aria-label="anchor" href="#arg-select-connection"></a></dt>

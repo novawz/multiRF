@@ -21,7 +21,8 @@ tune_fused_top_v(
   parallel = TRUE,
   cores = NULL,
   seed = 529,
-  object = "entropy_elbow",
+  object = "saturation",
+  tau = 0.9,
   early_stop = FALSE,
   elbow_rel_tol = 0.25,
   elbow_abs_tol = 1e-04,
@@ -89,13 +90,15 @@ tune_fused_top_v(
 
 - parallel:
 
-  Logical; whether to evaluate candidate grid values in parallel (POSIX
-  systems only). Default is `TRUE`.
+  Logical; whether to allow candidate-grid evaluation in fresh PSOCK
+  worker processes. Parallel evaluation also requires an explicit
+  `cores` value.
 
 - cores:
 
-  Number of cores used when `parallel = TRUE`. Default `NULL` uses
-  `max(1, parallel::detectCores() - 1)` cores.
+  Number of cores used when `parallel = TRUE`. Default `NULL` keeps
+  candidate-grid evaluation serial; supply a positive integer to use
+  process-level workers.
 
 - seed:
 
@@ -103,12 +106,24 @@ tune_fused_top_v(
 
 - object:
 
-  Objective used to choose `fused_top_v` (`"entropy_elbow"` (default),
-  `"diss"`, `"silhouette"`, or `"eigen"`). For `"entropy_elbow"`, the
-  elbow is selected among interior grid points, so the smallest grid
-  candidate and the no-truncation baseline cannot be selected directly
-  (no truncation is recovered separately via the `v >= 0.8 * n` rule in
-  the workflow).
+  Objective used to choose `fused_top_v`: `"saturation"` (default),
+  `"entropy_elbow"`, `"diss"`, `"silhouette"`, or `"eigen"`. For the two
+  entropy objectives the entropy of every truncation level is obtained
+  in closed form from the sorted fused weights (see
+  [`fused_entropy_curve()`](fused_entropy_curve.md)), so no candidate
+  matrices are rebuilt. `"saturation"` evaluates every integer `v` in
+  `[vmin, vmax]` and selects the smallest one whose entropy reaches
+  `tau` times the no-truncation entropy. `"entropy_elbow"` keeps the
+  previous small-gain elbow heuristic on the candidate grid; its elbow
+  is selected among interior grid points, so the smallest grid candidate
+  and the no-truncation baseline cannot be selected directly (no
+  truncation is recovered separately via the `v >= 0.8 * n` rule in the
+  workflow).
+
+- tau:
+
+  Saturation fraction in (0, 1) used by `object = "saturation"`. Default
+  `0.9`.
 
 - early_stop:
 

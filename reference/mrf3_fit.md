@@ -38,7 +38,8 @@ mrf3_fit(
   fused_top_v = NULL,
   fused_row_normalize = TRUE,
   fused_keep_ties = TRUE,
-  top_v_method = c("entropy_elbow", "neff"),
+  top_v_method = c("saturation", "entropy_elbow", "neff"),
+  top_v_tau = 0.9,
   neff_quantile = 0.5,
   model_top_v_tune_args = list(),
   fused_top_v_tune_args = list(),
@@ -232,8 +233,19 @@ mrf3_fit(
 
 - top_v_method:
 
-  Strategy used when auto-selecting `top_v`: `"entropy_elbow"` (default
-  workflow) or `"neff"`.
+  Strategy used when auto-selecting `top_v`: `"saturation"` (default),
+  `"entropy_elbow"`, or `"neff"`. `"saturation"` keeps the smallest
+  number of neighbours whose fused-weight row entropy reaches
+  `top_v_tau` times the no-truncation entropy; it is independent of the
+  candidate grid and has a single interpretable parameter.
+  `"entropy_elbow"` is the previous small-gain elbow heuristic and
+  `"neff"` uses the effective neighbourhood size without any grid
+  search.
+
+- top_v_tau:
+
+  Saturation fraction in (0, 1) used by `top_v_method = "saturation"`.
+  Default `0.9`.
 
 - neff_quantile:
 
@@ -243,14 +255,14 @@ mrf3_fit(
 - model_top_v_tune_args:
 
   A named list of additional arguments passed to
-  [`tune_model_top_v()`](tune_model_top_v.md) (e.g., `tmin`, `by`, `k`).
-  Workflow always uses `object = "entropy_elbow"`.
+  [`tune_model_top_v()`](tune_model_top_v.md) (e.g., `tmin`, `by`, `k`,
+  `max_candidates`). The objective always follows `top_v_method`.
 
 - fused_top_v_tune_args:
 
   A named list of additional arguments passed to
   [`tune_fused_top_v()`](tune_fused_top_v.md) (e.g., `vmin`, `by`,
-  `vmax`, `k`). Workflow always uses `object = "entropy_elbow"`.
+  `vmax`, `k`). The objective always follows `top_v_method`.
 
 - select_connection:
 

@@ -213,7 +213,8 @@ fit_multi_rfsrc(
 
 - parallel_connections:
 
-  Logical; whether directed connections are fitted in parallel.
+  Logical; whether directed connections are fitted in fresh PSOCK worker
+  processes.
 
 - cores_connections:
 

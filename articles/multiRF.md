@@ -143,7 +143,7 @@ summary(fit)
 #>   Models      : 6
 #>   Connections : 6
 #> 
-#>   Top-v: model=45, fused=55
+#>   Top-v: model=28, fused=37
 #> 
 #> Branches
 #>   - shared: ran (computed shared weights and shared clustering)
@@ -155,9 +155,9 @@ summary(fit)
 #> 
 #> Shared Fraction (top blocks)
 #>   data shared_frac specific_ratio           method
-#>  methy       0.285          0.715 signal_frobenius
-#>   gene       0.273          0.727 signal_frobenius
-#>  mirna       0.245          0.755 signal_frobenius
+#>  methy       0.311          0.689 signal_frobenius
+#>   gene       0.296          0.704 signal_frobenius
+#>  mirna       0.278          0.722 signal_frobenius
 
 fit_overview <- data.frame(
   quantity = c(
@@ -178,8 +178,8 @@ knitr::kable(fit_overview)
 | quantity           | value |
 |:-------------------|------:|
 | directed forests   |     6 |
-| model top-v        |    45 |
-| fused top-v        |    55 |
+| model top-v        |    28 |
+| fused top-v        |    37 |
 | shared clusters    |     3 |
 | selected variables |    28 |
 
@@ -192,7 +192,7 @@ head(get_clusters(fit))
 table(shared_cluster = get_clusters(fit))
 #> shared_cluster
 #>  1  2  3 
-#> 17 48 35
+#> 17 50 33
 
 specific_cluster_counts <- vapply(
   names(brca_demo),
@@ -363,6 +363,20 @@ the sample size is interpreted as no truncation. `model_top_v = Inf` and
 truncation, $`\mathcal{T}_{v_f}`$ in the across-response formula is the
 identity.
 
+When `model_top_v` or `fused_top_v` is left `NULL`, the workflow selects
+it from the mean normalized row entropy of the fused weight matrix,
+which rises monotonically with $`v`$ and saturates at the no-truncation
+value. The default `top_v_method = "saturation"` keeps the smallest
+$`v`$ whose entropy reaches `top_v_tau` (default 0.9) of that limit,
+interpolating linearly between candidates so the choice does not depend
+on the grid resolution; `model_top_v` is selected first and
+`fused_top_v` conditional on it, with the fused curve obtained in closed
+form for every integer $`v`$. The full entropy-versus-$`v`$ tables are
+stored in `fit$tuning_detail` for reporting.
+`top_v_method = "entropy_elbow"` (the earlier small-gain elbow
+heuristic) and `"neff"` (effective neighbourhood size, no grid) remain
+available.
+
 The shared and residual-specific affinities are constructed as
 `S = W %*% t(W)`, with the diagonal set to zero. Spectral clustering is
 the default similarity backend.
@@ -382,9 +396,9 @@ c(
 
 fit$shared$frac[, c("data", "shared_frac", "specific_ratio")]
 #>    data shared_frac specific_ratio
-#> 1  gene   0.2726395      0.7273605
-#> 2 methy   0.2849687      0.7150313
-#> 3 mirna   0.2447749      0.7552251
+#> 1  gene   0.2963977      0.7036023
+#> 2 methy   0.3110102      0.6889898
+#> 3 mirna   0.2784850      0.7215150
 ```
 
 For block `k`, the [response-specific forest weight
@@ -405,7 +419,7 @@ scale:
 
 | Method | Selection rule | When to use it |
 |:---|:---|:---|
-| `"filter"` | Select above `tau * sd(IMD)`; tune `tau` with true OOB normalized MSE across predictor and response coordinates | Adaptive OOB rule; most computationally intensive |
+| `"filter"` | For shared IMD, tune `tau * sd(IMD)` with true OOB normalized MSE; for residual-specific IMD, select above a permutation-null quantile | Adaptive forest-based screening; most computationally intensive |
 | `"transformation"` (`"test"`) | Standardize each feature’s forest IMD relative to the block-wide IMD distribution; retain upper-tail features at the chosen `level`, combined by majority vote across connected forests | Distribution-normalized screening |
 | `"mixture"` | Explicit point mass at zero plus two components on positive IMD | Posterior noise-probability selection |
 
@@ -450,7 +464,7 @@ plot(fit, type = "weights", weight_source = "imd", top = 8)
 
 ![](multiRF_files/figure-html/plot-imd-1.png)
 
-For the adaptive OOB filter, use:
+For the shared-signal adaptive OOB filter, use:
 
 ``` r
 
@@ -465,11 +479,15 @@ vs_filter <- mrf3_vs(
 get_selected_vars(vs_filter)
 ```
 
-The adaptive OOB filter is defined for shared IMD. With
-`signal = "all"`, the workflow uses adaptive filtering for shared IMD
-and the fixed cutoff for residual-specific IMD, then returns their
-union. The transformation and mixture methods can be applied directly to
-`signal = "shared"`, `"specific"`, or `"all"`.
+The filter is signal-specific: shared IMD uses the OOB search, while
+residual-specific IMD uses the `perm_quantile` of pooled IMD values from
+`perm_B` column-wise permutation refits. With `signal = "all"`, the
+workflow returns the union of these selections. The specific filter
+requires the residual matrices retained by
+[`mrf3_fit()`](../reference/mrf3_fit.md); if they are unavailable, it
+warns and uses the fixed cutoff. The transformation and mixture methods
+can be applied directly to `signal = "shared"`, `"specific"`, or
+`"all"`.
 
 ``` r
 
@@ -570,8 +588,8 @@ knitr::kable(pam50_metrics, digits = 3)
 
 | resolution              |   n |   ari | jaccard |   nmi | purity |
 |:------------------------|----:|------:|--------:|------:|-------:|
-| Unsupervised k = 3      |  94 | 0.275 |   0.385 | 0.480 |  0.734 |
-| Fixed k = 5 sensitivity |  94 | 0.204 |   0.279 | 0.409 |  0.734 |
+| Unsupervised k = 3      |  94 | 0.267 |   0.383 | 0.497 |  0.734 |
+| Fixed k = 5 sensitivity |  94 | 0.213 |   0.282 | 0.443 |  0.734 |
 
 The similarity workflow is the default. To compare representations on a
 full analysis, keep the data, tree settings, and positive seed fixed:
@@ -680,7 +698,7 @@ fit_final <- mrf3_fit(
   filter_mode = "none",
   main_clustering = "similarity",
   clustering_args = list(shared_k = 4, specific_k = 2),
-  top_v_method = "entropy_elbow",
+  top_v_method = "saturation",
   select_connection = FALSE,
   run_imd = TRUE,
   run_variable_selection = TRUE,
@@ -747,7 +765,7 @@ The multiRF forest engine and optional fallback build on
 ``` r
 
 packageVersion("multiRF")
-#> [1] '0.2.3'
+#> [1] '0.3.0'
 sessionInfo()
 #> R version 4.6.1 (2026-06-24)
 #> Platform: x86_64-pc-linux-gnu
@@ -770,24 +788,23 @@ sessionInfo()
 #> [1] stats     graphics  grDevices utils     datasets  methods   base     
 #> 
 #> other attached packages:
-#> [1] multiRF_0.2.3
+#> [1] multiRF_0.3.0
 #> 
 #> loaded via a namespace (and not attached):
-#>  [1] tidyr_1.3.2        sass_0.4.10        generics_0.1.4     rstatix_1.1.0     
+#>  [1] sass_0.4.10        generics_0.1.4     tidyr_1.3.2        rstatix_1.1.0     
 #>  [5] digest_0.6.39      magrittr_2.0.5     evaluate_1.0.5     grid_4.6.1        
-#>  [9] RColorBrewer_1.1-3 iterators_1.0.14   fastmap_1.2.0      foreach_1.5.2     
-#> [13] jsonlite_2.0.0     ggrepel_0.9.8      backports_1.5.1    Formula_1.2-6     
-#> [17] purrr_1.2.2        scales_1.4.0       codetools_0.2-20   textshaping_1.0.5 
-#> [21] jquerylib_0.1.4    abind_1.4-8        cli_3.6.6          rlang_1.3.0       
-#> [25] cowplot_1.2.0      withr_3.0.3        cachem_1.1.0       yaml_2.3.12       
-#> [29] otel_0.2.0         tools_4.6.1        parallel_4.6.1     ggsignif_0.6.4    
-#> [33] dplyr_1.2.1        ggplot2_4.0.3      ggpubr_1.0.0       broom_1.0.13      
-#> [37] vctrs_0.7.3        R6_2.6.1           lifecycle_1.0.5    car_3.1-5         
-#> [41] fs_2.1.0           htmlwidgets_1.6.4  ragg_1.5.2         cluster_2.1.8.2   
-#> [45] pkgconfig_2.0.3    desc_1.4.3         pkgdown_2.2.1      pillar_1.11.1     
-#> [49] bslib_0.12.0       gtable_0.3.6       glue_1.8.1         Rcpp_1.1.2        
-#> [53] systemfonts_1.3.2  xfun_0.60          tibble_3.3.1       tidyselect_1.2.1  
-#> [57] knitr_1.51         farver_2.1.2       htmltools_0.5.9    igraph_2.3.3      
-#> [61] carData_3.0-6      rmarkdown_2.31     labeling_0.4.3     compiler_4.6.1    
-#> [65] S7_0.2.2
+#>  [9] RColorBrewer_1.1-3 fastmap_1.2.0      jsonlite_2.0.0     ggrepel_0.9.8     
+#> [13] backports_1.5.1    Formula_1.2-6      purrr_1.2.2        scales_1.4.0      
+#> [17] textshaping_1.0.5  jquerylib_0.1.4    abind_1.4-8        cli_3.6.6         
+#> [21] rlang_1.3.0        cowplot_1.2.0      withr_3.0.3        cachem_1.1.0      
+#> [25] yaml_2.3.12        otel_0.2.0         tools_4.6.1        ggsignif_0.6.4    
+#> [29] dplyr_1.2.1        ggplot2_4.0.3      ggpubr_1.0.0       broom_1.0.13      
+#> [33] vctrs_0.7.3        R6_2.6.1           lifecycle_1.0.5    fs_2.1.0          
+#> [37] car_3.1-5          htmlwidgets_1.6.4  ragg_1.5.2         cluster_2.1.8.2   
+#> [41] pkgconfig_2.0.3    desc_1.4.3         pkgdown_2.2.1      pillar_1.11.1     
+#> [45] bslib_0.12.0       gtable_0.3.6       glue_1.8.1         Rcpp_1.1.2        
+#> [49] systemfonts_1.3.2  xfun_0.60          tibble_3.3.1       tidyselect_1.2.1  
+#> [53] knitr_1.51         farver_2.1.2       htmltools_0.5.9    igraph_2.3.3      
+#> [57] carData_3.0-6      rmarkdown_2.32     labeling_0.4.3     compiler_4.6.1    
+#> [61] S7_0.2.2
 ```

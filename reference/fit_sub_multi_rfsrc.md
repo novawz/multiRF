@@ -129,18 +129,17 @@ fit_sub_multi_rfsrc(
 
 - parallel:
 
-  Logical; if `TRUE`, use
-  [`parallel::mclapply()`](https://rdrr.io/r/parallel/mclapply.html).
+  Logical; if `TRUE`, fit replicates in fresh PSOCK worker processes.
 
 - cores:
 
-  Number of cores when `parallel = TRUE`; `NULL` (default) uses
-  `parallel::detectCores() - 1`.
+  Number of cores used for within-connection parallelism. The default
+  for this wrapper is `2L`.
 
 - parallel_connections:
 
-  Logical; whether distinct directed connections may be fitted in
-  parallel.
+  Logical; whether distinct directed connections may be fitted in fresh
+  PSOCK worker processes.
 
 - cores_connections:
 

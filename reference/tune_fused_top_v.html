@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">multiRF</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.3</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -55,7 +55,8 @@
 <span>  parallel <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  cores <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  seed <span class="op">=</span> <span class="fl">529</span>,</span>
-<span>  object <span class="op">=</span> <span class="st">"entropy_elbow"</span>,</span>
+<span>  object <span class="op">=</span> <span class="st">"saturation"</span>,</span>
+<span>  tau <span class="op">=</span> <span class="fl">0.9</span>,</span>
 <span>  early_stop <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  elbow_rel_tol <span class="op">=</span> <span class="fl">0.25</span>,</span>
 <span>  elbow_abs_tol <span class="op">=</span> <span class="fl">1e-04</span>,</span>
@@ -125,13 +126,15 @@ reuse it across all candidates for speed.</p></dd>
 
 
 <dt id="arg-parallel">parallel<a class="anchor" aria-label="anchor" href="#arg-parallel"></a></dt>
-<dd><p>Logical; whether to evaluate candidate grid values in parallel
-(POSIX systems only). Default is <code>TRUE</code>.</p></dd>
+<dd><p>Logical; whether to allow candidate-grid evaluation in fresh
+PSOCK worker processes. Parallel evaluation also requires an explicit
+<code>cores</code> value.</p></dd>
 
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
 <dd><p>Number of cores used when <code>parallel = TRUE</code>. Default <code>NULL</code>
-uses <code>max(1, parallel::detectCores() - 1)</code> cores.</p></dd>
+keeps candidate-grid evaluation serial; supply a positive integer to use
+process-level workers.</p></dd>
 
 
 <dt id="arg-seed">seed<a class="anchor" aria-label="anchor" href="#arg-seed"></a></dt>
@@ -139,12 +142,23 @@ uses <code>max(1, parallel::detectCores() - 1)</code> cores.</p></dd>
 
 
 <dt id="arg-object">object<a class="anchor" aria-label="anchor" href="#arg-object"></a></dt>
-<dd><p>Objective used to choose <code>fused_top_v</code>
-(<code>"entropy_elbow"</code> (default), <code>"diss"</code>, <code>"silhouette"</code>, or <code>"eigen"</code>).
-For <code>"entropy_elbow"</code>, the elbow is selected among interior grid points,
-so the smallest grid candidate and the no-truncation baseline cannot be
+<dd><p>Objective used to choose <code>fused_top_v</code>:
+<code>"saturation"</code> (default), <code>"entropy_elbow"</code>, <code>"diss"</code>, <code>"silhouette"</code>, or
+<code>"eigen"</code>. For the two entropy objectives the entropy of every truncation
+level is obtained in closed form from the sorted fused weights (see
+<code><a href="fused_entropy_curve.html">fused_entropy_curve()</a></code>), so no candidate matrices are rebuilt.
+<code>"saturation"</code> evaluates every integer <code>v</code> in <code>[vmin, vmax]</code> and selects
+the smallest one whose entropy reaches <code>tau</code> times the no-truncation
+entropy. <code>"entropy_elbow"</code> keeps the previous small-gain elbow heuristic on
+the candidate grid; its elbow is selected among interior grid points, so
+the smallest grid candidate and the no-truncation baseline cannot be
 selected directly (no truncation is recovered separately via the
 <code>v &gt;= 0.8 * n</code> rule in the workflow).</p></dd>
+
+
+<dt id="arg-tau">tau<a class="anchor" aria-label="anchor" href="#arg-tau"></a></dt>
+<dd><p>Saturation fraction in (0, 1) used by <code>object = "saturation"</code>.
+Default <code>0.9</code>.</p></dd>
 
 
 <dt id="arg-early-stop">early_stop<a class="anchor" aria-label="anchor" href="#arg-early-stop"></a></dt>

@@ -145,8 +145,8 @@ fit_full <- mrf3(
 
 Variable selection uses raw forest IMD values on `[0, 1]`:
 
-- `filter` tunes an IMD cutoff of `tau * sd(IMD)` using OOB normalized
-  MSE and retains features above the selected cutoff.
+- `filter` uses OOB normalized MSE to tune the shared-IMD cutoff and a
+  permutation-null cutoff for residual-specific IMD.
 - `mixture` models the IMD distribution with a point mass at zero and
   retains features assigned to the nonzero signal component.
 - `transformation` standardizes each feature’s IMD relative to the

@@ -13,7 +13,7 @@ resulting n x n matrices are averaged across replicates."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">multiRF</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.3</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -168,17 +168,18 @@ Default <code>FALSE</code> because the extra computation is non-trivial.</p></dd
 
 
 <dt id="arg-parallel">parallel<a class="anchor" aria-label="anchor" href="#arg-parallel"></a></dt>
-<dd><p>Logical; if <code>TRUE</code>, use <code><a href="https://rdrr.io/r/parallel/mclapply.html" class="external-link">parallel::mclapply()</a></code>.</p></dd>
+<dd><p>Logical; if <code>TRUE</code>, fit replicates in fresh PSOCK worker
+processes.</p></dd>
 
 
 <dt id="arg-cores">cores<a class="anchor" aria-label="anchor" href="#arg-cores"></a></dt>
-<dd><p>Number of cores when <code>parallel = TRUE</code>; <code>NULL</code> (default)
-uses <code>parallel::detectCores() - 1</code>.</p></dd>
+<dd><p>Number of cores used for within-connection parallelism.
+The default for this wrapper is <code>2L</code>.</p></dd>
 
 
 <dt id="arg-parallel-connections">parallel_connections<a class="anchor" aria-label="anchor" href="#arg-parallel-connections"></a></dt>
 <dd><p>Logical; whether distinct directed connections
-may be fitted in parallel.</p></dd>
+may be fitted in fresh PSOCK worker processes.</p></dd>
 
 
 <dt id="arg-cores-connections">cores_connections<a class="anchor" aria-label="anchor" href="#arg-cores-connections"></a></dt>

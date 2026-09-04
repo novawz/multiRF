@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">multiRF</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.3</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,13 @@
 
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.3.0" id="multirf-030">multiRF 0.3.0<a class="anchor" aria-label="anchor" href="#multirf-030"></a></h2>
+<ul><li>Added permutation-null filtering for residual-specific IMD; shared filtering continues to tune its cutoff with OOB error.</li>
+<li>Made saturation-based entropy selection the default for model and fused top-v, with closed-form fused entropy and the earlier methods retained.</li>
+<li>Replaced fork-based parallel paths with PSOCK workers and safer serial defaults for tuning grids.</li>
+<li>Reconstructed missing ordinary proximity from tree membership and improved related validation, tests, and documentation.</li>
+</ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.3" id="multirf-023">multiRF 0.2.3<a class="anchor" aria-label="anchor" href="#multirf-023"></a></h2>
 <ul><li>Added the unified <code>plot(fit, type = ...)</code> interface and pkgdown site.</li>
