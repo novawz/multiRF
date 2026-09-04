@@ -14,11 +14,12 @@ print(x, ...)
 - x:
 
   An object with class `c("mrf3", "vs")` returned by
-  [`mrf3_vs()`](mrf3_vs.md).
+  [`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md).
 
 - ...:
 
-  Additional arguments passed to [`print.mrf3()`](print.mrf3.md).
+  Additional arguments passed to
+  [`print.mrf3()`](https://novawz.github.io/multiRF/reference/print.mrf3.md).
 
 ## Value
 

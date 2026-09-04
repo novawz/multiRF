@@ -1,9 +1,10 @@
 # Simplified mrf3 Entry Point
 
-A compact wrapper around [`mrf3_fit()`](mrf3_fit.md) for common use
-cases. It keeps only the most frequently used parameters and forwards
-advanced options through `...`. By default, this wrapper runs
-shared/specific weighting and specific clustering branches.
+A compact wrapper around
+[`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md)
+for common use cases. It keeps only the most frequently used parameters
+and forwards advanced options through `...`. By default, this wrapper
+runs shared/specific weighting and specific clustering branches.
 
 ## Usage
 
@@ -43,7 +44,8 @@ mrf3(
 
 - samptype:
 
-  Sampling scheme passed through to [`mrf3_fit()`](mrf3_fit.md).
+  Sampling scheme passed through to
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md).
 
 - main_clustering:
 
@@ -53,7 +55,8 @@ mrf3(
 
 - filter_mode:
 
-  Filtering mode passed to [`mrf3_fit()`](mrf3_fit.md).
+  Filtering mode passed to
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md).
 
 - seed:
 
@@ -61,9 +64,10 @@ mrf3(
 
 - ...:
 
-  Advanced options passed to [`mrf3_fit()`](mrf3_fit.md), e.g.
-  `model_top_v_tune_args`, `fused_top_v_tune_args`, `clustering_args`,
-  `run_imd`, `imd_args`, `run_variable_selection`,
+  Advanced options passed to
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md),
+  e.g. `model_top_v_tune_args`, `fused_top_v_tune_args`,
+  `clustering_args`, `run_imd`, `imd_args`, `run_variable_selection`,
   `variable_selection_args`, `cluster_imd_args`,
   `run_robust_clustering`, `compact_output`.
 

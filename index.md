@@ -1,6 +1,6 @@
 # multiRF
 
-**Fast multivariate random forests for multi-omics integration**
+**Multivariate random forests for multi-omics integration**
 
 `multiRF` is an R package for integrating matched multi-omics datasets
 with multivariate random forests (MRF). It fits directed forest models
@@ -9,14 +9,13 @@ terminal-node structure, and decomposes the result into shared and
 omics-specific components for clustering, variable selection, and
 visualization.
 
-The package uses a C++ forest engine for multivariate regression,
-unsupervised forests, forest weights, proximity matrices, and enhanced
-proximity with sibling-leaf corrections. In practice, this gives a
-simpler installation path and a faster MRF than the
-`randomForestSRC`-based MRF while keeping the same overall modeling
-logic. Parts of the multiRF forest engine, including its sampling and
-random-number-generation routines, are adapted from `randomForestSRC`
-under GPL (\>= 3), which is also available as an optional fallback.
+`multiRF` directly supports multivariate regression and unsupervised
+random forests, including forest weights, proximity matrices, enhanced
+proximity with sibling-leaf corrections, and forest IMD. The standard
+workflow does not require `randomForestSRC`, which remains available as
+an optional fallback. Parts of the implementation, including sampling
+and random-number-generation routines, are adapted from
+`randomForestSRC` under GPL (\>= 3).
 
 Project website: <https://novawz.github.io/multiRF/>
 
@@ -60,9 +59,10 @@ table(get_clusters(fit))
 get_top_vars(fit, n = 10)
 ```
 
-[`mrf3()`](reference/mrf3.md) is the main user-facing entry point. It
-wraps the staged workflow in [`mrf3_fit()`](reference/mrf3_fit.md) and
-forwards advanced arguments through `...`. Both entry points use
+[`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md) is the
+main user-facing entry point. It wraps the staged workflow in
+[`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md)
+and forwards advanced arguments through `...`. Both entry points use
 automatic feature filtering by default; set `filter_mode = "none"` when
 working with an already curated feature set, as in the example above.
 
@@ -76,25 +76,25 @@ clustering by default.
 
 ## What it provides
 
-- [`mrf3()`](reference/mrf3.md): end-to-end workflow for fitting,
-  reconstruction, and clustering
-- [`mrf3_fit()`](reference/mrf3_fit.md): staged workflow with the full
-  parameter surface exposed
-- [`mrf3_vs()`](reference/mrf3_vs.md): variable selection from IMD
-  weights
-- [`mrf3_stability()`](reference/mrf3_stability.md): resampling-based
-  cluster stability assessment
-- [`pairwise_imd()`](reference/pairwise_imd.md): variable-level
-  co-occurrence network analysis
-- [`plot_weights()`](reference/plot_tsne.md),
-  [`plot_cluster_composition()`](reference/plot_cluster_composition.md),
-  [`plot_tsne()`](reference/plot_tsne.md),
-  [`plot_umap()`](reference/plot_tsne.md),
-  [`plot_network()`](reference/plot_tsne.md): consistent,
-  publication-oriented result visualizations
-- [`plot_km()`](reference/plot_km.md),
-  [`plot_circos()`](reference/plot_tsne.md): optional clinical and
-  circular-network visualizations
+- [`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md):
+  end-to-end workflow for fitting, reconstruction, and clustering
+- [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md):
+  staged workflow with the full parameter surface exposed
+- [`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md):
+  variable selection from IMD weights
+- [`mrf3_stability()`](https://novawz.github.io/multiRF/reference/mrf3_stability.md):
+  resampling-based cluster stability assessment
+- [`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md):
+  variable-level co-occurrence network analysis
+- [`plot_weights()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+  [`plot_cluster_composition()`](https://novawz.github.io/multiRF/reference/plot_cluster_composition.md),
+  [`plot_tsne()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+  [`plot_umap()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+  [`plot_network()`](https://novawz.github.io/multiRF/reference/plot_tsne.md):
+  consistent, publication-oriented result visualizations
+- [`plot_km()`](https://novawz.github.io/multiRF/reference/plot_km.md),
+  [`plot_circos()`](https://novawz.github.io/multiRF/reference/plot_tsne.md):
+  optional clinical and circular-network visualizations
 
 ## Clustering modes
 
@@ -175,8 +175,8 @@ If you use `multiRF` in your research, please cite:
 > framework for robust biomarker discovery. *GigaScience*, 14, giaf148.
 > [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
-The multiRF forest engine and optional fallback build on
-`randomForestSRC`; please also cite:
+`multiRF` adapts parts of `randomForestSRC` and also supports it as an
+optional fallback; please also cite:
 
 > Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast
 > Unified Random Forests for Survival, Regression, and Classification

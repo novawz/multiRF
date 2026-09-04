@@ -13,7 +13,8 @@ print(x, ...)
 
 - x:
 
-  Output from [`cluster_imd()`](cluster_imd.md).
+  Output from
+  [`cluster_imd()`](https://novawz.github.io/multiRF/reference/cluster_imd.md).
 
 - ...:
 

@@ -3,11 +3,14 @@
 Unified plotting entry point for fitted multiRF pipelines. The method
 extracts the components each display needs from the fit (the learned
 sample similarity, cluster labels via
-[`get_clusters()`](get_clusters.md), IMD weights via
-[`get_weights()`](get_weights.md), pairwise feature adjacency via
-[`pairwise_imd()`](pairwise_imd.md)) and forwards them, together with
-`...`, to the corresponding exported plot function, so every option of
-the underlying function stays reachable.
+[`get_clusters()`](https://novawz.github.io/multiRF/reference/get_clusters.md),
+IMD weights via
+[`get_weights()`](https://novawz.github.io/multiRF/reference/get_weights.md),
+pairwise feature adjacency via
+[`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md))
+and forwards them, together with `...`, to the corresponding exported
+plot function, so every option of the underlying function stays
+reachable.
 
 ## Usage
 
@@ -28,8 +31,9 @@ plot(
 
 - x:
 
-  An `mrf3_fit` object returned by [`mrf3_fit()`](mrf3_fit.md) (or
-  [`mrf3()`](mrf3.md)).
+  An `mrf3_fit` object returned by
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md)
+  (or [`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md)).
 
 - type:
 
@@ -42,9 +46,10 @@ plot(
   Additional arguments forwarded to the target plot function (e.g.
   `seed`, `perplexity`, `cutoff`, `top`, `source`, `omics`, `group`,
   `cut.off`, `risk.table`). For `type = "circos"`, `feature_source` and
-  `normalized` are forwarded to [`pairwise_imd()`](pairwise_imd.md). For
-  `type = "embed"`, `embed_dims` sets the number of principal components
-  displayed.
+  `normalized` are forwarded to
+  [`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md).
+  For `type = "embed"`, `embed_dims` sets the number of principal
+  components displayed.
 
 - annotation:
 
@@ -80,36 +85,45 @@ chord-diagram data for `"circos"`, and `NULL` for `"embed"`.
 
 Supported `type` values and their targets:
 
-- `"tsne"` (default): [`plot_tsne()`](plot_tsne.md) on the fitted
-  similarity matrix (t-SNE), coloured by shared cluster.
+- `"tsne"` (default):
+  [`plot_tsne()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  on the fitted similarity matrix (t-SNE), coloured by shared cluster.
 
-- `"umap"`: [`plot_umap()`](plot_tsne.md) on the fitted similarity
-  matrix.
+- `"umap"`:
+  [`plot_umap()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  on the fitted similarity matrix.
 
 - `"embed"`: deprecated pairs display via
-  [`plot_embed()`](plot_tsne.md), drawn on the top principal components
-  of the fitted similarity matrix (control the number of components with
-  `embed_dims`, default 3).
+  [`plot_embed()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+  drawn on the top principal components of the fitted similarity matrix
+  (control the number of components with `embed_dims`, default 3).
 
-- `"network"`: [`plot_network()`](plot_tsne.md) sample network from the
-  fitted similarity matrix, vertices coloured by shared cluster.
+- `"network"`:
+  [`plot_network()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  sample network from the fitted similarity matrix, vertices coloured by
+  shared cluster.
 
-- `"circos"`: [`pairwise_imd()`](pairwise_imd.md) on the fit, then
-  [`plot_circos()`](plot_tsne.md) of the feature-level adjacency
-  (`source = "adj_var"` by default). Requires IMD (`run_imd = TRUE`) and
-  retained models (`compact_output = FALSE`).
+- `"circos"`:
+  [`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md)
+  on the fit, then
+  [`plot_circos()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  of the feature-level adjacency (`source = "adj_var"` by default).
+  Requires IMD (`run_imd = TRUE`) and retained models
+  (`compact_output = FALSE`).
 
 - `"composition"`:
-  [`plot_cluster_composition()`](plot_cluster_composition.md) of shared
-  clusters against a user-supplied `annotation` vector.
+  [`plot_cluster_composition()`](https://novawz.github.io/multiRF/reference/plot_cluster_composition.md)
+  of shared clusters against a user-supplied `annotation` vector.
 
-- `"km"`: [`plot_km()`](plot_km.md) Kaplan–Meier curves of the shared
-  clusters; the fit holds no survival data, so `time_var`, `event_var`,
-  and `pheno_mat` must be supplied.
+- `"km"`:
+  [`plot_km()`](https://novawz.github.io/multiRF/reference/plot_km.md)
+  Kaplan–Meier curves of the shared clusters; the fit holds no survival
+  data, so `time_var`, `event_var`, and `pheno_mat` must be supplied.
 
-- `"weights"`: [`plot_weights()`](plot_tsne.md) of the per-block IMD
-  weights. Requires `run_imd = TRUE` (or cluster-level IMD via
-  `run_cluster_imd = TRUE`).
+- `"weights"`:
+  [`plot_weights()`](https://novawz.github.io/multiRF/reference/plot_tsne.md)
+  of the per-block IMD weights. Requires `run_imd = TRUE` (or
+  cluster-level IMD via `run_cluster_imd = TRUE`).
 
 For every type the default sample grouping is `get_clusters(x)`; pass
 `group` through `...` to override it (for `"tsne"`, `"umap"`, `"embed"`,
@@ -129,11 +143,15 @@ returned ggplot objects accept a replacement `scale_fill_manual()` /
 
 ## See also
 
-[`plot_tsne()`](plot_tsne.md), [`plot_umap()`](plot_tsne.md),
-[`plot_network()`](plot_tsne.md), [`plot_circos()`](plot_tsne.md),
-[`plot_cluster_composition()`](plot_cluster_composition.md),
-[`plot_km()`](plot_km.md), [`plot_weights()`](plot_tsne.md),
-[`get_clusters()`](get_clusters.md), [`pairwise_imd()`](pairwise_imd.md)
+[`plot_tsne()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+[`plot_umap()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+[`plot_network()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+[`plot_circos()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+[`plot_cluster_composition()`](https://novawz.github.io/multiRF/reference/plot_cluster_composition.md),
+[`plot_km()`](https://novawz.github.io/multiRF/reference/plot_km.md),
+[`plot_weights()`](https://novawz.github.io/multiRF/reference/plot_tsne.md),
+[`get_clusters()`](https://novawz.github.io/multiRF/reference/get_clusters.md),
+[`pairwise_imd()`](https://novawz.github.io/multiRF/reference/pairwise_imd.md)
 
 ## Examples
 
@@ -158,7 +176,7 @@ fit <- mrf3_fit(
 )
 #> Auto model_top_v `tmax` = 80 (n = 80).
 #> Auto fused_top_v `vmax` = 80 (n = 80).
-#>   Using pre-computed IMD weights from the multiRF engine (zero extra cost).
+#>   Using IMD weights stored during fitting.
 
 ## Embeddings and networks of the learned similarity
 plot(fit, type = "tsne", seed = 529)

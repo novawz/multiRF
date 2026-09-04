@@ -13,7 +13,8 @@ print(x, digits = 3, max_shared_frac_rows = 8L, ...)
 
 - x:
 
-  Summary object from [`summary.mrf3_fit()`](summary.mrf3_fit.md).
+  Summary object from
+  [`summary.mrf3_fit()`](https://novawz.github.io/multiRF/reference/summary.mrf3_fit.md).
 
 - digits:
 

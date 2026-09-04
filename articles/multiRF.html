@@ -37,6 +37,7 @@
 <li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json">
 </form></li>
+<li class="nav-item"><a class="external-link nav-link" href="https://github.com/novawz/multiRF/" aria-label="GitHub"><span class="fa fab fa-github fa-lg"></span></a></li>
       </ul>
 </div>
 
@@ -54,7 +55,7 @@
                         <h4 data-toc-skip class="author">Wei Zhang</h4>
             
       
-
+      <small class="dont-index">Source: <a href="https://github.com/novawz/multiRF/blob/main/vignettes/multiRF.Rmd" class="external-link"><code>vignettes/multiRF.Rmd</code></a></small>
       <div class="d-none name"><code>multiRF.Rmd</code></div>
     </div>
 
@@ -117,12 +118,11 @@ components;</li>
 <li>optionally calculate inverse minimal depth (IMD), select variables,
 and refit a robust model.</li>
 </ol>
-<p>The multiRF C++ forest engine is the default. It implements
-multivariate regression, unsupervised residual forests, all-sample and
-out-of-bag forest weights, ordinary and enhanced proximity, weighted
-candidate-variable sampling, and depth-based forest IMD. Parts of the
-multiRF forest engine, including its sampling and
-random-number-generation routines, are adapted from
+<p><code>multiRF</code> directly supports multivariate regression,
+unsupervised residual forests, all-sample and out-of-bag forest weights,
+ordinary and enhanced proximity, weighted candidate-variable sampling,
+and depth-based forest IMD. Parts of the implementation, including
+sampling and random-number-generation routines, are adapted from
 <code>randomForestSRC</code> under GPL (&gt;= 3). RF-SRC is also
 available as an optional fallback rather than a requirement for the
 standard workflow.</p>
@@ -145,8 +145,8 @@ have:</p>
 </ul>
 <p>Do not pass unordered blocks and rely on their row positions. Align
 them by sample identifier before fitting. Missing values and categorical
-predictors should be imputed or encoded explicitly before using the
-multiRF numeric forest engine.</p>
+predictors should be imputed or encoded explicitly before fitting with
+<code>multiRF</code>.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">full_dimensions</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
 <span>  block <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">tcga_brca</span><span class="op">)</span>,</span>
@@ -943,7 +943,7 @@ multiRF fit; 529 is the package default. A negative seed deliberately
 requests system entropy. Reproducible seeds give the same result across
 thread counts.</li>
 <li>Set <code>options(multiRF.nthread = n)</code> or pass
-<code>nthread = n</code> to control C++ forest parallelism.</li>
+<code>nthread = n</code> to control parallel tree construction.</li>
 <li>Keep <code>samptype = "swor"</code> for the default workflow.
 Sampling with replacement is supported when it is scientifically
 intended.</li>
@@ -1019,8 +1019,8 @@ Multivariate Random Forests for Cross-Modal Multi-Omics Integration.
 framework for robust biomarker discovery. <em>GigaScience</em>, 14,
 giaf148. <a href="https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728" class="external-link">doi:10.1093/gigascience/giaf148</a></p>
 </blockquote>
-<p>The multiRF forest engine and optional fallback build on
-<code>randomForestSRC</code>; please also cite:</p>
+<p><code>multiRF</code> adapts parts of <code>randomForestSRC</code> and
+also supports it as an optional fallback; please also cite:</p>
 <blockquote>
 <p>Ishwaran, H., and Kogalur, U. B. (2026). <em>randomForestSRC: Fast
 Unified Random Forests for Survival, Regression, and Classification

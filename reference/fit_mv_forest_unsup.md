@@ -1,4 +1,4 @@
-# Fit an unsupervised random forest with the multiRF C++ engine
+# Fit an unsupervised random forest
 
 Emulates rfsrc unsupervised mode: at each tree, randomly partition the
 columns of `X` into pseudo-predictor and pseudo-response halves, then
@@ -73,7 +73,7 @@ fit_mv_forest_unsup(
 
 - nthread:
 
-  Number of OpenMP threads used by the multiRF forest engine.
+  Number of threads used for fitting.
 
 - enhanced_prox:
 

@@ -110,15 +110,15 @@ tune_fused_top_v(
   `"entropy_elbow"`, `"diss"`, `"silhouette"`, or `"eigen"`. For the two
   entropy objectives the entropy of every truncation level is obtained
   in closed form from the sorted fused weights (see
-  [`fused_entropy_curve()`](fused_entropy_curve.md)), so no candidate
-  matrices are rebuilt. `"saturation"` evaluates every integer `v` in
-  `[vmin, vmax]` and selects the smallest one whose entropy reaches
-  `tau` times the no-truncation entropy. `"entropy_elbow"` keeps the
-  previous small-gain elbow heuristic on the candidate grid; its elbow
-  is selected among interior grid points, so the smallest grid candidate
-  and the no-truncation baseline cannot be selected directly (no
-  truncation is recovered separately via the `v >= 0.8 * n` rule in the
-  workflow).
+  [`fused_entropy_curve()`](https://novawz.github.io/multiRF/reference/fused_entropy_curve.md)),
+  so no candidate matrices are rebuilt. `"saturation"` evaluates every
+  integer `v` in `[vmin, vmax]` and selects the smallest one whose
+  entropy reaches `tau` times the no-truncation entropy.
+  `"entropy_elbow"` keeps the previous small-gain elbow heuristic on the
+  candidate grid; its elbow is selected among interior grid points, so
+  the smallest grid candidate and the no-truncation baseline cannot be
+  selected directly (no truncation is recovered separately via the
+  `v >= 0.8 * n` rule in the workflow).
 
 - tau:
 

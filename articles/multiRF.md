@@ -13,14 +13,13 @@ random forests. The current workflow has four main stages:
 4.  optionally calculate inverse minimal depth (IMD), select variables,
     and refit a robust model.
 
-The multiRF C++ forest engine is the default. It implements multivariate
-regression, unsupervised residual forests, all-sample and out-of-bag
-forest weights, ordinary and enhanced proximity, weighted
-candidate-variable sampling, and depth-based forest IMD. Parts of the
-multiRF forest engine, including its sampling and
-random-number-generation routines, are adapted from `randomForestSRC`
-under GPL (\>= 3). RF-SRC is also available as an optional fallback
-rather than a requirement for the standard workflow.
+`multiRF` directly supports multivariate regression, unsupervised
+residual forests, all-sample and out-of-bag forest weights, ordinary and
+enhanced proximity, weighted candidate-variable sampling, and
+depth-based forest IMD. Parts of the implementation, including sampling
+and random-number-generation routines, are adapted from
+`randomForestSRC` under GPL (\>= 3). RF-SRC is also available as an
+optional fallback rather than a requirement for the standard workflow.
 
 This vignette uses a small deterministic subset of the bundled TCGA BRCA
 data so that every evaluated chunk runs quickly. For an analysis, use
@@ -39,8 +38,8 @@ Samples are rows and features are columns. Every block must have:
 
 Do not pass unordered blocks and rely on their row positions. Align them
 by sample identifier before fitting. Missing values and categorical
-predictors should be imputed or encoded explicitly before using the
-multiRF numeric forest engine.
+predictors should be imputed or encoded explicitly before fitting with
+`multiRF`.
 
 ``` r
 
@@ -98,10 +97,10 @@ from IMD-based variable selection later in the workflow.
 
 ## A complete, fast example
 
-[`mrf3()`](../reference/mrf3.md) is the compact user-facing entry point.
-In this example it fits all directed forests, constructs the shared and
-specific components, calculates raw IMD, and applies the mixture
-selector without a second forest fit.
+[`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md) is the
+compact user-facing entry point. In this example it fits all directed
+forests, constructs the shared and specific components, calculates raw
+IMD, and applies the mixture selector without a second forest fit.
 
 ``` r
 
@@ -235,13 +234,15 @@ get_vs_summary(fit)
 ```
 
 Other commonly used accessors are
-[`get_models()`](../reference/get_models.md),
-[`get_connection()`](../reference/get_connection.md),
-[`get_weights()`](../reference/get_weights.md),
-[`get_selected_vars()`](../reference/get_selected_vars.md), and
-[`get_data()`](../reference/get_data.md). Use
-`get_clusters(fit, block = "gene")` for a block-specific partition and
-`get_clusters(fit, which = "robust")` after running the robust branch.
+[`get_models()`](https://novawz.github.io/multiRF/reference/get_models.md),
+[`get_connection()`](https://novawz.github.io/multiRF/reference/get_connection.md),
+[`get_weights()`](https://novawz.github.io/multiRF/reference/get_weights.md),
+[`get_selected_vars()`](https://novawz.github.io/multiRF/reference/get_selected_vars.md),
+and
+[`get_data()`](https://novawz.github.io/multiRF/reference/get_data.md).
+Use `get_clusters(fit, block = "gene")` for a block-specific partition
+and `get_clusters(fit, which = "robust")` after running the robust
+branch.
 
 ## Directed forests and connections
 
@@ -278,7 +279,7 @@ defaults are:
 
 | Setting | Default | Meaning |
 |:---|:---|:---|
-| `ntree` | 500 in [`mrf3()`](../reference/mrf3.md) | Trees per directed forest |
+| `ntree` | 500 in [`mrf3()`](https://novawz.github.io/multiRF/reference/mrf3.md) | Trees per directed forest |
 | `samptype` | `"swor"` | Approximately 63.2% of samples without replacement |
 | `mtry` | `ceiling(p / 3)` | Candidate predictor variables per split |
 | `ytry` | `ceiling(q / 3)` | Candidate response variables per split |
@@ -484,10 +485,10 @@ residual-specific IMD uses the `perm_quantile` of pooled IMD values from
 `perm_B` column-wise permutation refits. With `signal = "all"`, the
 workflow returns the union of these selections. The specific filter
 requires the residual matrices retained by
-[`mrf3_fit()`](../reference/mrf3_fit.md); if they are unavailable, it
-warns and uses the fixed cutoff. The transformation and mixture methods
-can be applied directly to `signal = "shared"`, `"specific"`, or
-`"all"`.
+[`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md);
+if they are unavailable, it warns and uses the fixed cutoff. The
+transformation and mixture methods can be applied directly to
+`signal = "shared"`, `"specific"`, or `"all"`.
 
 ``` r
 
@@ -502,10 +503,11 @@ vs_union <- mrf3_vs(
 )
 ```
 
-Standalone [`mrf3_vs()`](../reference/mrf3_vs.md) defaults to
-`re_fit = TRUE`. The staged workflow does not refit unless requested,
-except that `run_robust_clustering = TRUE` must and therefore does force
-a final refit.
+Standalone
+[`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md)
+defaults to `re_fit = TRUE`. The staged workflow does not refit unless
+requested, except that `run_robust_clustering = TRUE` must and therefore
+does force a final refit.
 
 ## Clustering modes and PAM50 annotation
 
@@ -615,9 +617,9 @@ fit_enhanced <- mrf3(
 If `k = NULL`, cluster number is tuned in the downstream clustering
 stage, as in the evaluated fit. For a fixed biological hypothesis,
 supply `k` explicitly.
-[`tune_k_clusters()`](../reference/tune_k_clusters.md) draws its
-diagnostic on the active graphics device and restores the prior
-base-graphics settings afterward.
+[`tune_k_clusters()`](https://novawz.github.io/multiRF/reference/tune_k_clusters.md)
+draws its diagnostic on the active graphics device and restores the
+prior base-graphics settings afterward.
 
 The ggplot objects returned by the unified interface can be composed or
 exported at final figure size. For example,
@@ -673,7 +675,7 @@ get_weights(fit_cluster_imd$cluster_imd, cluster = 1)
   is the package default. A negative seed deliberately requests system
   entropy. Reproducible seeds give the same result across thread counts.
 - Set `options(multiRF.nthread = n)` or pass `nthread = n` to control
-  C++ forest parallelism.
+  parallel tree construction.
 - Keep `samptype = "swor"` for the default workflow. Sampling with
   replacement is supported when it is scientifically intended.
 - Forest weights and proximity matrices are `n` by `n`. For large
@@ -723,8 +725,9 @@ explicitly.
 and non-finite columns before fitting, or use an appropriate filtering
 mode.
 
-**[`mrf3_vs()`](../reference/mrf3_vs.md) cannot find data.** Supply
-`dat.list` directly or fit with `return_data = TRUE`.
+**[`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md)
+cannot find data.** Supply `dat.list` directly or fit with
+`return_data = TRUE`.
 
 **A response block is absent from reconstruction.** Per-response fusion
 requires at least one fitted response-side connection for every input
@@ -733,7 +736,7 @@ block; the workflow now stops rather than substituting a global matrix.
 **Block names contain underscores.** Current fits retain explicit
 response and predictor metadata, so underscores are supported. Avoid
 parsing model display names in downstream code; use
-[`get_connection()`](../reference/get_connection.md).
+[`get_connection()`](https://novawz.github.io/multiRF/reference/get_connection.md).
 
 ## Citation
 
@@ -748,8 +751,8 @@ If you use `multiRF`, please cite the method relevant to your analysis:
 > framework for robust biomarker discovery. *GigaScience*, 14, giaf148.
 > [doi:10.1093/gigascience/giaf148](https://academic.oup.com/gigascience/article/doi/10.1093/gigascience/giaf148/8374728)
 
-The multiRF forest engine and optional fallback build on
-`randomForestSRC`; please also cite:
+`multiRF` adapts parts of `randomForestSRC` and also supports it as an
+optional fallback; please also cite:
 
 > Ishwaran, H., and Kogalur, U. B. (2026). *randomForestSRC: Fast
 > Unified Random Forests for Survival, Regression, and Classification

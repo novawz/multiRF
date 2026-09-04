@@ -19,12 +19,12 @@ run_cluster_pipeline(
 - recon:
 
   Reconstruction object from
-  [`get_reconstr_matrix()`](mrf3_reconstr.md).
+  [`get_reconstr_matrix()`](https://novawz.github.io/multiRF/reference/mrf3_reconstr.md).
 
 - shared_specific:
 
   Shared/specific weight object from
-  [`get_shared_specific_weights()`](get_shared_specific_weights.md).
+  [`get_shared_specific_weights()`](https://novawz.github.io/multiRF/reference/get_shared_specific_weights.md).
 
 - mod_for_shared:
 

@@ -65,21 +65,25 @@ cluster_imd(
 
 - imd_normalized_weights:
 
-  Logical; passed to [`get_multi_weights()`](get_multi_weights.md) as
-  `normalized`. The default is `FALSE` so cluster-level variable
+  Logical; passed to
+  [`get_multi_weights()`](https://novawz.github.io/multiRF/reference/get_multi_weights.md)
+  as `normalized`. The default is `FALSE` so cluster-level variable
   selection receives raw forest IMD on its 0-to-1 scale.
 
 - run_vs:
 
-  Logical; whether to run [`mrf3_vs()`](mrf3_vs.md) variable selection
-  on each cluster after IMD. `run_vs = TRUE` forces the depth-based
-  path, which builds the per-cluster subset models that
-  [`mrf3_vs()`](mrf3_vs.md) requires.
+  Logical; whether to run
+  [`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md)
+  variable selection on each cluster after IMD. `run_vs = TRUE` forces
+  the depth-based path, which builds the per-cluster subset models that
+  [`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md)
+  requires.
 
 - vs_args:
 
   A named list of additional arguments passed to
-  [`mrf3_vs()`](mrf3_vs.md) for each cluster.
+  [`mrf3_vs()`](https://novawz.github.io/multiRF/reference/mrf3_vs.md)
+  for each cluster.
 
 - fit_args:
 
@@ -88,19 +92,21 @@ cluster_imd(
 - imd_args:
 
   Optional named list merged into each per-cluster
-  [`get_multi_weights()`](get_multi_weights.md) call. Supplying any
-  `imd_args` forces the depth-based path, because the node-score fast
-  path cannot honor [`get_multi_weights()`](get_multi_weights.md)
+  [`get_multi_weights()`](https://novawz.github.io/multiRF/reference/get_multi_weights.md)
+  call. Supplying any `imd_args` forces the depth-based path, because
+  the node-score fast path cannot honor
+  [`get_multi_weights()`](https://novawz.github.io/multiRF/reference/get_multi_weights.md)
   options.
 
 - use_node_imd:
 
   Controls the estimator used for the per-cluster weights. `FALSE` (the
   default) computes Eq. 6-8 inverse minimal depth via the per-tree
-  network traversal of [`get_multi_weights()`](get_multi_weights.md) on
-  each cluster's subset model. `TRUE` uses the node-score fast path
-  ([`cluster_weighted_imd()`](cluster_weighted_imd.md)): the per-node
-  split statistics stored by the multiRF forest engine are averaged per
+  network traversal of
+  [`get_multi_weights()`](https://novawz.github.io/multiRF/reference/get_multi_weights.md)
+  on each cluster's subset model. `TRUE` uses the node-score fast path
+  ([`cluster_weighted_imd()`](https://novawz.github.io/multiRF/reference/cluster_weighted_imd.md)):
+  the per-node split statistics stored during fitting are averaged per
   variable, weighted by the fraction of the cluster's samples whose
   root-to-leaf paths visit each node. The fast path is deterministic and
   typically 100-900x faster, but it is a *different,
@@ -110,11 +116,11 @@ cluster_imd(
   with the depth-based weights at Spearman ~0.4-0.6 (top-20 overlap
   ~50-75%). Use it as a quick descriptive screen, not as a substitute
   for the depth-based cluster IMD (see
-  [`cluster_weighted_imd()`](cluster_weighted_imd.md) for the
-  definition). `NULL` selects the fast path automatically whenever the
-  models carry the required `tree_info` statistics and no blocking
-  option (`imd_args`, `run_vs`) is requested, falling back to the
-  depth-based path otherwise.
+  [`cluster_weighted_imd()`](https://novawz.github.io/multiRF/reference/cluster_weighted_imd.md)
+  for the definition). `NULL` selects the fast path automatically
+  whenever the models carry the required `tree_info` statistics and no
+  blocking option (`imd_args`, `run_vs`) is requested, falling back to
+  the depth-based path otherwise.
 
 - keep_model:
 

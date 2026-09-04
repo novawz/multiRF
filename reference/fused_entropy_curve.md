@@ -23,7 +23,8 @@ fused_entropy_curve(W, keep_ties = TRUE, eps = 1e-12)
 - keep_ties:
 
   Logical; whether truncation keeps ties at the cutoff, as
-  [`truncate_top_v_rows()`](prepare_weight_matrix.md) does by default.
+  [`truncate_top_v_rows()`](https://novawz.github.io/multiRF/reference/prepare_weight_matrix.md)
+  does by default.
 
 - eps:
 

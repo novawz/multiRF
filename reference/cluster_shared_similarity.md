@@ -31,7 +31,7 @@ cluster_shared_similarity(
 - recon:
 
   Reconstruction output from
-  [`get_reconstr_matrix()`](mrf3_reconstr.md).
+  [`get_reconstr_matrix()`](https://novawz.github.io/multiRF/reference/mrf3_reconstr.md).
 
 - mode:
 

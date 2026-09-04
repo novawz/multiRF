@@ -60,8 +60,8 @@ mrf3_vs(
   structure (an OOB search is not used for the specific signal because
   the OOB error of a residual block barely changes with the cutoff). The
   specific branch requires the residual matrices kept by
-  [`mrf3_fit()`](mrf3_fit.md); `"mixture"` fits a
-  point-mass/two-component model; and `"test"` (alias
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md);
+  `"mixture"` fits a point-mass/two-component model; and `"test"` (alias
   `"transformation"`) selects by a forest-level t-score: each feature's
   forest IMD is standardized against the mean forest IMD of all features
   in the block, using the feature's across-tree standard error, and

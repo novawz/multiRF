@@ -28,7 +28,8 @@ mrf3_stability(
 
 - x:
 
-  An object from [`mrf3_fit()`](mrf3_fit.md).
+  An object from
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md).
 
 - branches:
 

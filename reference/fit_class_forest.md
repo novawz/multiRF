@@ -1,4 +1,4 @@
-# Fit a classification forest with the multiRF engine
+# Fit a classification forest
 
 Uses the multiRF multivariate regression forest on a one-hot encoded
 response, then reconstructs training-set class probabilities and labels.

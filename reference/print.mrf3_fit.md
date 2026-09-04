@@ -13,12 +13,13 @@ print(x, ...)
 
 - x:
 
-  Output from [`mrf3_fit()`](mrf3_fit.md).
+  Output from
+  [`mrf3_fit()`](https://novawz.github.io/multiRF/reference/mrf3_fit.md).
 
 - ...:
 
   Additional arguments passed to
-  [`print.summary.mrf3_fit()`](print.summary.mrf3_fit.md).
+  [`print.summary.mrf3_fit()`](https://novawz.github.io/multiRF/reference/print.summary.mrf3_fit.md).
 
 ## Value
 

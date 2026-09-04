@@ -1,7 +1,8 @@
-# Fit a multivariate regression forest with the multiRF C++ engine
+# Fit a multivariate regression forest
 
-Drop-in replacement for [`fit_forest()`](fit_forest.md) when
-`type = "regression"`. Returns an object with the same interface
+Drop-in replacement for
+[`fit_forest()`](https://novawz.github.io/multiRF/reference/fit_forest.md)
+when `type = "regression"`. Returns an object with the same interface
 (`$forest.wt`, `$proximity`, `$membership`, `$xvar`, `$yvar`, `$ntree`,
 `$xvar.names`) so downstream code in multiRF works without changes.
 
@@ -87,7 +88,7 @@ fit_mv_forest(
 
 - nthread:
 
-  Number of OpenMP threads used by the multiRF forest engine.
+  Number of threads used for fitting.
 
 - xvar.wt:
 

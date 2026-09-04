@@ -22,7 +22,7 @@ cluster_specific_similarity(
 - shared_specific:
 
   Output from
-  [`get_shared_specific_weights()`](get_shared_specific_weights.md).
+  [`get_shared_specific_weights()`](https://novawz.github.io/multiRF/reference/get_shared_specific_weights.md).
 
 - k:
 

@@ -20,6 +20,7 @@
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
+<li class="nav-item"><a class="external-link nav-link" href="https://github.com/novawz/multiRF/" aria-label="GitHub"><span class="fa fab fa-github fa-lg"></span></a></li>
       </ul></div>
 
 
@@ -29,7 +30,7 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Compute Cluster-Specific IMD Without Pairwise IMD</h1>
-
+      <small class="dont-index">Source: <a href="https://github.com/novawz/multiRF/blob/main/R/cluster_imd.R" class="external-link"><code>R/cluster_imd.R</code></a></small>
       <div class="d-none name"><code>cluster_imd.Rd</code></div>
     </div>
 
@@ -131,8 +132,8 @@ node-score fast path cannot honor <code><a href="get_multi_weights.html">get_mul
 <code>FALSE</code> (the default) computes Eq. 6-8 inverse minimal depth via the
 per-tree network traversal of <code><a href="get_multi_weights.html">get_multi_weights()</a></code> on each cluster's
 subset model. <code>TRUE</code> uses the node-score fast path
-(<code><a href="cluster_weighted_imd.html">cluster_weighted_imd()</a></code>): the per-node split statistics stored by the
-multiRF forest engine are averaged per variable, weighted by the fraction of the
+(<code><a href="cluster_weighted_imd.html">cluster_weighted_imd()</a></code>): the per-node split statistics stored during
+fitting are averaged per variable, weighted by the fraction of the
 cluster's samples whose root-to-leaf paths visit each node. The fast
 path is deterministic and typically 100-900x faster, but it is a
 <em>different, split-score-weighted</em> estimator whose weights stay close to
