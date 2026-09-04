@@ -381,13 +381,107 @@ test_that("signal all keeps adaptive filtering for the shared component", {
     .package = "multiRF"
   )
 
+  # Without residual matrices the specific component cannot be refitted, so
+  # it falls back to the fixed cutoff with a warning.
   expect_warning(
     out <- mrf3_vs(wf, method = "filter", signal = "all", re_fit = FALSE),
-    "shared component will use adaptive OOB filtering"
+    "needs the residual matrices"
   )
   expect_equal(c(adaptive = calls$adaptive, fixed = calls$fixed),
                c(adaptive = 1L, fixed = 1L))
   expect_identical(out$selection_method, "filter")
+})
+
+test_that("signal all applies the permutation null to the specific signal", {
+  dat <- list(
+    A = data.frame(a = 1:8, b = 8:1),
+    B = data.frame(x = rep(1:4, each = 2), y = rep(4:1, each = 2))
+  )
+  residual <- lapply(dat, function(d) as.matrix(d) - colMeans(d)[col(d)])
+  wf <- structure(
+    list(
+      data = dat,
+      imd = list(A = c(a = 0.2, b = 0.8), B = c(x = 0.3, y = 0.9)),
+      imd_init = NULL,
+      connection = list(c("B", "A")),
+      config = list(ntree = 3L, ytry = 1L), type = "regression",
+      oob_err = NULL, models = list(),
+      specific = list(
+        imd = list(A = c(a = 0.3, b = 0.7), B = c(x = 0.4, y = 0.6)),
+        imd_per_tree = NULL,
+        weights = list(residual = residual, residual_mod = NULL)
+      )
+    ),
+    class = c("mrf3_fit", "list")
+  )
+
+  seen <- list()
+  testthat::local_mocked_bindings(
+    choose_thres2 = function(weights, connection, new_dat, type, ...) {
+      seen[[length(seen) + 1L]] <<- list(what = "shared", type = type)
+      out <- stats::setNames(rep(-1, length(weights)), names(weights))
+      attr(out, "tau") <- 1.5
+      out
+    },
+    choose_thres_permutation = function(weights, residual, B, null_quantile, ...) {
+      seen[[length(seen) + 1L]] <<- list(
+        what = "specific", blocks = names(weights),
+        residual_cols = lapply(residual, colnames), B = B, q = null_quantile
+      )
+      out <- stats::setNames(c(A = 0.5, B = 0.5), names(weights))
+      attr(out, "rule") <- "permutation"
+      out
+    },
+    .package = "multiRF"
+  )
+
+  expect_no_warning(
+    out <- mrf3_vs(wf, method = "filter", signal = "all", re_fit = FALSE,
+                   perm_B = 7L, perm_quantile = 0.9)
+  )
+  expect_length(seen, 2L)
+  expect_identical(seen[[1]]$what, "shared")
+  expect_identical(seen[[1]]$type, "regression")
+  expect_identical(seen[[2]]$blocks, c("A", "B"))
+  expect_identical(seen[[2]]$residual_cols$A, c("a", "b"))
+  expect_equal(seen[[2]]$B, 7L)
+  expect_equal(seen[[2]]$q, 0.9)
+  spec <- out$signal_results$specific
+  expect_identical(spec$selection_method, "filter")
+  expect_identical(attr(spec$thres, "rule"), "permutation")
+  expect_equal(spec$selected_vars$A, "b")
+  expect_equal(spec$selected_vars$B, "y")
+})
+
+test_that("specific permutation filtering preserves the caller RNG state", {
+  residual <- list(
+    A = matrix(
+      seq_len(24L), nrow = 8L,
+      dimnames = list(NULL, c("a", "b", "c"))
+    )
+  )
+  weights <- list(A = c(a = 0.2, b = 0.5, c = 0.8))
+
+  testthat::local_mocked_bindings(
+    fit_forest = function(X, ...) {
+      list(imd_weights = list(
+        X = stats::setNames(seq_len(ncol(X)) / (ncol(X) + 1), colnames(X))
+      ))
+    },
+    .package = "multiRF"
+  )
+
+  set.seed(99)
+  before <- .Random.seed
+  multiRF:::choose_thres_permutation(
+    weights = weights,
+    residual = residual,
+    ntree = 3L,
+    B = 2L,
+    null_quantile = 0.9,
+    seed = 5L
+  )
+  expect_identical(.Random.seed, before)
 })
 
 test_that("specific selection preserves consensus mean instead of last-run mean", {
@@ -464,4 +558,79 @@ test_that("workflow honors explicit final refit outside robust mode", {
     workflow_body,
     fixed = FALSE
   ))
+})
+
+test_that("permutation null cutoff uses column-permuted residual refits", {
+  set.seed(7)
+  vars <- paste0("v", 1:6)
+  R <- matrix(rnorm(120), 20, 6, dimnames = list(paste0("s", 1:20), vars))
+  weights <- list(A = stats::setNames(c(0.5, 0.4, 0.05, 0.04, 0.03, 0.02), vars))
+  seen <- list()
+  testthat::local_mocked_bindings(
+    fit_forest = function(X, Y = NULL, type, seed, ...) {
+      seen[[length(seen) + 1L]] <<- list(X = X, type = type, seed = seed, dots = list(...))
+      # null IMD: every column of the permuted block shares one marginal
+      list(imd_weights = list(X = stats::setNames(rep(0.1, ncol(X)) + seed * 1e-4, colnames(X))))
+    },
+    .package = "multiRF"
+  )
+  out <- multiRF:::choose_thres_permutation(
+    weights, residual = list(A = R),
+    residual_mod = list(A = list(ntree = 7L, ytry = 2L, nodesize = 5L, nsplit = 10L, samptype = "swor")),
+    ntree = 50L, B = 5L, null_quantile = 0.95, seed = 100L
+  )
+  expect_length(seen, 5L)
+  expect_identical(seen[[1]]$type, "unsupervised")
+  expect_equal(seen[[1]]$dots$ntree, 7L)
+  expect_equal(seen[[1]]$dots$ytry, 2L)
+  expect_identical(seen[[1]]$dots$forest.wt, "inbag")
+  # column-wise permutation keeps each column's values (marginals) intact
+  Xp <- as.matrix(seen[[1]]$X)
+  expect_equal(unname(apply(Xp, 2, sort)), unname(apply(R, 2, sort)))
+  expect_false(isTRUE(all.equal(unname(Xp), unname(R))))
+  expect_identical(attr(out, "rule"), "permutation")
+  expect_equal(attr(out, "B"), 5L)
+  cutoff <- unname(out[["A"]])
+  # null IMD = 0.1 + seed * 1e-4 with seeds 101..105 (six columns each);
+  # the 95% quantile of the 30 pooled values is the largest level
+  expect_equal(cutoff, 0.1105)
+  expect_equal(attr(out, "null_summary")$A$n_selected, 2L)
+})
+
+test_that("mrf3_vs filter uses the permutation rule for the specific signal", {
+  dat <- list(
+    A = data.frame(a = 1:8, b = 8:1),
+    B = data.frame(x = rep(1:4, each = 2), y = rep(4:1, each = 2))
+  )
+  residual <- lapply(dat, function(d) as.matrix(d) - colMeans(d)[col(d)])
+  wf <- structure(
+    list(
+      data = dat,
+      imd = list(A = c(a = 0.2, b = 0.8), B = c(x = 0.3, y = 0.9)),
+      imd_init = NULL,
+      connection = list(c("B", "A")),
+      config = list(ntree = 3L, ytry = 1L), type = "regression",
+      oob_err = NULL, models = list(),
+      specific = list(
+        imd = list(A = c(a = 0.3, b = 0.7), B = c(x = 0.4, y = 0.6)),
+        imd_per_tree = NULL,
+        weights = list(residual = residual, residual_mod = NULL)
+      )
+    ),
+    class = c("mrf3_fit", "list")
+  )
+  calls <- new.env(parent = emptyenv()); calls$perm <- 0L
+  testthat::local_mocked_bindings(
+    choose_thres_permutation = function(weights, ...) {
+      calls$perm <- calls$perm + 1L
+      out <- stats::setNames(rep(0.5, length(weights)), names(weights))
+      attr(out, "rule") <- "permutation"
+      out
+    },
+    .package = "multiRF"
+  )
+  out <- mrf3_vs(wf, method = "filter", signal = "specific", re_fit = FALSE)
+  expect_equal(calls$perm, 1L)
+  expect_equal(out$selected_vars$A, "b")
+  expect_equal(out$selected_vars$B, "y")
 })

@@ -37,7 +37,8 @@ mrf3_fit(
   fused_top_v = NULL,
   fused_row_normalize = TRUE,
   fused_keep_ties = TRUE,
-  top_v_method = c("entropy_elbow", "neff"),
+  top_v_method = c("saturation", "entropy_elbow", "neff"),
+  top_v_tau = 0.9,
   neff_quantile = 0.5,
   model_top_v_tune_args = list(),
   fused_top_v_tune_args = list(),
@@ -154,18 +155,26 @@ fused top-v tuning.}
 \item{fused_keep_ties}{Logical; whether fused top-v truncation keeps ties at cutoff.}
 
 \item{top_v_method}{Strategy used when auto-selecting \code{top_v}:
-\code{"entropy_elbow"} (default workflow) or \code{"neff"}.}
+\code{"saturation"} (default), \code{"entropy_elbow"}, or \code{"neff"}. \code{"saturation"}
+keeps the smallest number of neighbours whose fused-weight row entropy
+reaches \code{top_v_tau} times the no-truncation entropy; it is independent of
+the candidate grid and has a single interpretable parameter.
+\code{"entropy_elbow"} is the previous small-gain elbow heuristic and \code{"neff"}
+uses the effective neighbourhood size without any grid search.}
+
+\item{top_v_tau}{Saturation fraction in (0, 1) used by
+\code{top_v_method = "saturation"}. Default \code{0.9}.}
 
 \item{neff_quantile}{Quantile of effective neighborhood size used by the
 \code{"neff"} top-v rule.}
 
 \item{model_top_v_tune_args}{A named list of additional arguments passed to
-\code{tune_model_top_v()} (e.g., \code{tmin}, \code{by}, \code{k}).
-Workflow always uses \code{object = "entropy_elbow"}.}
+\code{tune_model_top_v()} (e.g., \code{tmin}, \code{by}, \code{k}, \code{max_candidates}).
+The objective always follows \code{top_v_method}.}
 
 \item{fused_top_v_tune_args}{A named list of additional arguments passed to
 \code{tune_fused_top_v()} (e.g., \code{vmin}, \code{by}, \code{vmax}, \code{k}).
-Workflow always uses \code{object = "entropy_elbow"}.}
+The objective always follows \code{top_v_method}.}
 
 \item{select_connection}{Logical; whether to opt into the legacy
 quality-based direction-selection step. The default \code{FALSE} preserves all

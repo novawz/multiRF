@@ -552,25 +552,28 @@ cl_forest <- function(mod,
                       cores = NULL,
                       sample_embed_list = NULL,
                       ...) {
+  # PSOCK workers return Matrix S4 objects. Load their class definitions in
+  # the main process before those objects are unserialized and reduced; lazy
+  # loading after receipt can recurse through S4 dispatch and exhaust the C
+  # stack in a fresh R session.
+  if (!requireNamespace("Matrix", quietly = TRUE)) {
+    stop("Package `Matrix` is required for enhanced-proximity calculation.")
+  }
+
   merge_mode <- match.arg(merge_mode)
   sibling_fun <- match.arg(sibling_fun)
   hard_prox_mode <- match.arg(hard_prox_mode)
+  # Materialize values captured by the per-tree closure before PSOCK
+  # serialization. This matters when callers supplied symbols lazily.
+  force(size_min)
+  force(use)
+  force(symm)
+  force(leaf_embed_dim)
+  force(merge_quantile)
+  force(sibling_gamma)
+  force(sibling_cap)
   nt <- mod$ntree
 
-  if (parallel) {
-    if (is.null(cores)) {
-      cores <- max(1L, parallel::detectCores() - 1L)
-    }
-    cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
-    if (Sys.info()["sysname"] == "Windows") {
-      cluster <- parallel::makeCluster(cores)
-      doParallel::registerDoParallel(cluster)
-      on.exit(parallel::stopCluster(cluster), add = TRUE)
-    } else {
-      doParallel::registerDoParallel(cores)
-    }
-  }
-  `%myinfix%` <- ifelse(parallel, `%dopar%`, `%do%`)
   if (is.null(sample_embed_list)) {
     sample_embed_list <- build_embedding_list(
       mod = mod,
@@ -586,30 +589,63 @@ cl_forest <- function(mod,
     lhs
   }
 
-  forest_stat <- foreach(
-    t = seq_len(nt),
-    .errorhandling = "remove",
-    .combine = combine_tree_stats
-  ) %myinfix% {
-    one_tree <- update_iter_cl(
-      mod,
-      tree.id = t,
-      size_min = size_min,
-      use = use,
-      symm = symm,
-      leaf_embed_dim = leaf_embed_dim,
-      sample_embed_list = sample_embed_list,
-      merge_quantile = merge_quantile,
-      merge_mode = merge_mode,
-      sibling_gamma = sibling_gamma,
-      sibling_fun = sibling_fun,
-      sibling_cap = sibling_cap,
-      hard_prox_mode = hard_prox_mode
+  eval_tree <- function(t) {
+    one_tree <- tryCatch(
+      update_iter_cl(
+        mod,
+        tree.id = t,
+        size_min = size_min,
+        use = use,
+        symm = symm,
+        leaf_embed_dim = leaf_embed_dim,
+        sample_embed_list = sample_embed_list,
+        merge_quantile = merge_quantile,
+        merge_mode = merge_mode,
+        sibling_gamma = sibling_gamma,
+        sibling_fun = sibling_fun,
+        sibling_cap = sibling_cap,
+        hard_prox_mode = hard_prox_mode
+      ),
+      error = function(e) {
+        stop(
+          "Enhanced-proximity calculation failed at tree ", t, ": ",
+          conditionMessage(e),
+          call. = FALSE
+        )
+      }
     )
     list(
       prox = one_tree$prox,
       n_trees = 1L
     )
+  }
+
+  tree_ids <- seq_len(nt)
+  reduce_trees <- function(ids) {
+    out <- NULL
+    for (tree_id in ids) {
+      current <- eval_tree(tree_id)
+      out <- if (is.null(out)) current else combine_tree_stats(out, current)
+    }
+    out
+  }
+
+  if (isTRUE(parallel) && length(tree_ids) > 1L && !is.null(cores)) {
+    worker_count <- cores
+    worker_count <- min(
+      sanitize_mc_cores(worker_count, fallback = 1L),
+      length(tree_ids)
+    )
+    chunk_id <- ceiling(seq_along(tree_ids) * worker_count / length(tree_ids))
+    tree_chunks <- split(tree_ids, chunk_id)
+    chunk_stats <- parallel_lapply_psock(
+      tree_chunks,
+      reduce_trees,
+      cores = worker_count
+    )
+    forest_stat <- Reduce(combine_tree_stats, chunk_stats)
+  } else {
+    forest_stat <- reduce_trees(tree_ids)
   }
 
   if (is.null(forest_stat) || is.null(forest_stat$n_trees) || forest_stat$n_trees < 1L) {

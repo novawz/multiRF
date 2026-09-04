@@ -22,7 +22,8 @@ get_imp_forest(
 \item{mod}{A fitted forest model from the multiRF engine or the
 optional \code{randomForestSRC} fallback.}
 
-\item{parallel}{Logical; whether to parallelize across trees.}
+\item{parallel}{Logical; whether to parallelize across trees in fresh PSOCK
+worker processes.}
 
 \item{robust}{Logical; whether to use robust matrix-based aggregation.
 Requires \code{calc = "Both"}.}

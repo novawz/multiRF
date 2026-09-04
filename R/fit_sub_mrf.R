@@ -53,20 +53,6 @@ compute_oob_fw <- function(mod) {
   fw_oob
 }
 
-## Fork-based mclapply does not support mc.cores > 1 on Windows; cap the
-## core budget there with a warning so parallel options stay portable.
-.portable_mc_cores <- function(cores) {
-  if (.Platform$OS.type == "windows" && cores > 1L) {
-    warning(
-      "Fork-based parallelism (`parallel::mclapply`) is not supported on ",
-      "Windows; falling back to a single core.",
-      call. = FALSE
-    )
-    cores <- 1L
-  }
-  cores
-}
-
 .average_sub_mrf_imd <- function(imd_sum, n_sub) {
   if (!is.numeric(n_sub) || length(n_sub) != 1L ||
       !is.finite(n_sub) || n_sub < 1L) {
@@ -80,7 +66,7 @@ compute_oob_fw <- function(mod) {
 #' @rdname fit_forest
 #' @name fit_forest
 #' @param parallel_connections Logical; whether directed connections are fitted
-#'   in parallel.
+#'   in fresh PSOCK worker processes.
 #' @param cores_connections Optional core budget for connection-level
 #'   parallelism.
 NULL
@@ -124,7 +110,8 @@ NULL
 #' @param imd_args Named list of arguments passed to `get_imp_forest()` when
 #'   `compute_imd = TRUE`.
 #' @param seed  Base random seed.
-#' @param parallel  Logical; if `TRUE`, use [parallel::mclapply()].
+#' @param parallel Logical; if `TRUE`, fit replicates in fresh PSOCK worker
+#'   processes.
 #' @param cores  Number of cores when `parallel = TRUE`; `NULL` (default)
 #'   uses `parallel::detectCores() - 1`.
 #' @param verbose  Logical; print progress messages.
@@ -168,6 +155,14 @@ fit_sub_mrf <- function(X, Y,
                         cores = NULL,
                         verbose = TRUE,
                         ...) {
+
+  force(mtry)
+  force(ytry)
+  force(ntree_per_sub)
+  force(compute_imd)
+  force(imd_args)
+  force(seed)
+  dots <- list(...)
 
   ## ---- input checks --------------------------------------------------------
   X <- as.data.frame(X)
@@ -225,16 +220,21 @@ fit_sub_mrf <- function(X, Y,
     x_idx <- sort(sample.int(pX, size = n_pred))
     X_sub <- X[, x_idx, drop = FALSE]
 
-    mod <- fit_forest(
-      X = X_sub,
-      Y = Y_sub,
-      ntree = ntree_per_sub,
-      forest.wt = "all",
-      proximity = "all",
-      mtry = mtry,
-      ytry = ytry,
-      seed = seed + b,
-      ...
+    mod <- do.call(
+      fit_forest,
+      c(
+        list(
+          X = X_sub,
+          Y = Y_sub,
+          ntree = ntree_per_sub,
+          forest.wt = "all",
+          proximity = "all",
+          mtry = mtry,
+          ytry = ytry,
+          seed = seed + b
+        ),
+        dots
+      )
     )
 
     ## Compute OOB forest weights from membership
@@ -318,25 +318,26 @@ fit_sub_mrf <- function(X, Y,
     cores <- max(1L, parallel::detectCores() - 1L)
   }
   cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
-  cores <- .portable_mc_cores(cores)
 
   if (parallel && cores > 1L) {
-    ## One parallel layer at a time: forked children run their forests
-    ## single-threaded unless the user set multiRF.nthread explicitly.
-    ## This avoids core oversubscription and, on Linux/libgomp, the
-    ## fork-after-OpenMP hazard (libgomp is not fork-safe). nthread does
-    ## not affect results (thread-count invariant by design).
-    results <- parallel::mclapply(
+    ## One parallel layer at a time: each PSOCK worker runs its forest
+    ## single-threaded unless the user set multiRF.nthread explicitly. This
+    ## avoids core oversubscription; nthread does not affect results.
+    results <- parallel_lapply_psock(
       seq_len(n_sub),
       function(b) {
-        if (is.null(getOption("multiRF.nthread"))) {
-          old <- options(multiRF.nthread = 1L)
-          on.exit(options(old), add = TRUE)
-        }
-        fit_one(b)
+        tryCatch(
+          {
+            if (is.null(getOption("multiRF.nthread"))) {
+              old <- options(multiRF.nthread = 1L)
+              on.exit(options(old), add = TRUE)
+            }
+            fit_one(b)
+          },
+          error = identity
+        )
       },
-      mc.cores = cores,
-      mc.set.seed = FALSE
+      cores = cores
     )
   } else {
     results <- lapply(seq_len(n_sub), function(b) {
@@ -345,8 +346,7 @@ fit_sub_mrf <- function(X, Y,
     })
   }
 
-  ## Guard against silently failed workers: mclapply returns NULL for a
-  ## killed fork and a "try-error" object for an R-level error.
+  ## Guard against malformed worker results before aggregation.
   failed <- vapply(
     results,
     function(r) !is.list(r) || inherits(r, "try-error") || inherits(r, "condition"),
@@ -361,7 +361,7 @@ fit_sub_mrf <- function(X, Y,
     } else if (inherits(r_fail, "condition")) {
       conditionMessage(r_fail)
     } else {
-      "worker returned no result (e.g. a killed fork)"
+      "worker returned no result"
     }
     stop(sprintf(
       "%d of %d sub-MRF replicate(s) failed; first failure (replicate %d): %s",
@@ -488,8 +488,10 @@ fit_sub_mrf <- function(X, Y,
 #'   predictor features are used instead of sub-sampling.
 #' @param ntree_full Number of trees used when both blocks are below their
 #'   sub-sampling thresholds and a full forest is fitted instead.
+#' @param cores Number of cores used for within-connection parallelism.
+#'   The default for this wrapper is `2L`.
 #' @param parallel_connections Logical; whether distinct directed connections
-#'   may be fitted in parallel.
+#'   may be fitted in fresh PSOCK worker processes.
 #' @param cores_connections Optional total core budget for connection-level
 #'   parallelism.
 #' @inheritParams fit_sub_mrf
@@ -526,6 +528,32 @@ fit_sub_multi_rfsrc <- function(dat.list,
                                 cores_connections = NULL,
                                 verbose = TRUE,
                                 ...) {
+
+  # Force every value captured by fit_one_connection() before that closure is
+  # sent to a fresh R process.
+  force(dat.list)
+  force(connect_list)
+  force(n_sub)
+  force(frac_response)
+  force(frac_predictor)
+  force(ntree_per_sub)
+  force(mtry)
+  force(ytry)
+  force(min_response)
+  force(min_predictor)
+  force(min_response_for_sub)
+  force(min_predictor_for_sub)
+  force(ntree_full)
+  force(enhanced)
+  force(compute_imd)
+  force(imd_args)
+  force(seed)
+  force(parallel)
+  force(cores)
+  force(parallel_connections)
+  force(cores_connections)
+  force(verbose)
+  dots <- list(...)
 
   ## ── Cross-connection parallelism ─────────────────────────────
 
@@ -592,9 +620,17 @@ fit_sub_multi_rfsrc <- function(dat.list,
         if (verbose) message(sprintf(
           "  resp (%d) and pred (%d) both small -> using full forest", ncol(Y), ncol(X)
         ))
-        mod <- fit_forest(X, Y, mtry = mtry, ytry = ytry, ntree = ntree_full,
-                         seed = seed, forest.wt = "all",
-                         enhanced_prox = isTRUE(enhanced), ...)
+        mod <- do.call(
+          fit_forest,
+          c(
+            list(
+              X = X, Y = Y, mtry = mtry, ytry = ytry,
+              ntree = ntree_full, seed = seed, forest.wt = "all",
+              enhanced_prox = isTRUE(enhanced)
+            ),
+            dots
+          )
+        )
         ## Match the interface of sub-sampled connections, which always
         ## carry an OOB forest-weight matrix.
         if (is.null(mod$forest.wt.oob) &&
@@ -611,34 +647,38 @@ fit_sub_multi_rfsrc <- function(dat.list,
         if (verbose) message("  ", paste(reasons, collapse = "; "))
       }
 
-      fit_sub_mrf(
-        X = X, Y = Y,
-        n_sub = n_sub,
-        frac_response = frac_resp_use,
-        frac_predictor = frac_pred_use,
-        ntree_per_sub = ntree_per_sub,
-        mtry = mtry,
-        ytry = ytry,
-        min_response = min_response,
-        min_predictor = min_predictor,
-        enhanced = enhanced,
-        compute_imd = compute_imd,
-        imd_args = imd_args,
-        seed = seed,
-        parallel = parallel_inner,
-        cores = cores_per,
-        verbose = verbose,
-        ...
+      do.call(
+        fit_sub_mrf,
+        c(
+          list(
+            X = X, Y = Y,
+            n_sub = n_sub,
+            frac_response = frac_resp_use,
+            frac_predictor = frac_pred_use,
+            ntree_per_sub = ntree_per_sub,
+            mtry = mtry,
+            ytry = ytry,
+            min_response = min_response,
+            min_predictor = min_predictor,
+            enhanced = enhanced,
+            compute_imd = compute_imd,
+            imd_args = imd_args,
+            seed = seed,
+            parallel = parallel_inner,
+            cores = cores_per,
+            verbose = verbose
+          ),
+          dots
+        )
       )
     }
 
   ## ── Dispatch: parallel or sequential ───────────────────────
-  n_par_conn <- .portable_mc_cores(n_par_conn)
   if (n_par_conn > 1L) {
-    mod_l <- parallel::mclapply(
+    mod_l <- parallel_lapply_psock(
       connect_list,
       fit_one_connection,
-      mc.cores = n_par_conn
+      cores = n_par_conn
     )
   } else {
     mod_l <- lapply(connect_list, fit_one_connection)

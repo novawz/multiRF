@@ -28,12 +28,12 @@ mrf3_cl_prox(
 )
 }
 \arguments{
-\item{rfit}{A model list of random forest models}
+\item{rfit}{A model list of random forest models.}
 
-\item{k}{Pre-defined number of clusters. The default is selecting the optimal k by tuning method}
+\item{k}{Pre-defined number of clusters. By default, the optimal value is
+selected by the requested tuning method.}
 
-\item{enhanced}{A logical parameter that determines whether enhanced proximity is calculated when selecting Proximity as clustering method.
-The default is True.}
+\item{enhanced}{Logical; whether to calculate enhanced proximity.}
 
 \item{size_min}{Minimum terminal-node size when computing enhanced proximity.}
 
@@ -43,27 +43,29 @@ The default is True.}
 
 \item{leaf_embed_dim}{Dimension used for low-dimensional leaf embedding.}
 
-\item{merge_quantile}{Quantile threshold for sibling-pair merges in enhanced mode.
-\code{0.9} means keep top 10\\% highest sibling correlations each iteration.
-Used only when \code{merge_mode = "hard"}.}
+\item{merge_quantile}{Quantile threshold for sibling-pair merges in enhanced
+mode. \code{0.9} keeps the top 10\\% highest sibling correlations at each
+iteration. Used only when \code{merge_mode = "hard"}.}
 
-\item{merge_mode}{Enhanced-proximity merge mode: \code{"soft"} (default) or \code{"hard"}.
-\code{"hard"} performs iterative sibling merges; \code{"soft"} directly builds per-tree
-similarity with same-leaf = 1 and sibling-leaf = \code{sibling_gamma * f(corr)}.
-In practice, \code{"soft"} is generally more stable.}
+\item{merge_mode}{Enhanced-proximity merge mode: \code{"soft"} (default) or
+\code{"hard"}. \code{"hard"} performs iterative sibling merges; \code{"soft"} directly
+builds per-tree similarity with same-leaf = 1 and sibling-leaf =
+\code{sibling_gamma * f(corr)}. \code{"soft"} is generally more stable.}
 
 \item{sibling_gamma}{Multiplicative weight \code{gamma} used in soft merge mode.}
 
 \item{sibling_fun}{Correlation transform \code{f(corr)} used in soft merge mode.
-One of \code{"constant"}, \code{"positive"}, \code{"shift01"}, \code{"abs"}, \code{"identity"}.}
+One of \code{"constant"}, \code{"positive"}, \code{"shift01"}, \code{"abs"}, or \code{"identity"}.}
 
 \item{sibling_cap}{Logical; whether to cap soft sibling similarities at 1.}
 
 \item{hard_prox_mode}{Proximity construction used after hard merge:
-\code{"soft_enhanced"} uses same-enhanced-leaf = 1 and sibling-enhanced-leaf
-= \code{sibling_gamma * f(corr)}, while \code{"binary"} uses same-enhanced-leaf only.}
+\code{"soft_enhanced"} uses same-enhanced-leaf = 1 and sibling-enhanced-leaf =
+\code{sibling_gamma * f(corr)}, while \code{"binary"} uses same-enhanced-leaf only.}
 
-\item{parallel}{Logical; whether to parallelize forest-level computation.}
+\item{parallel}{Logical; whether to allow forest-level computation in fresh
+PSOCK worker processes. Parallel execution also requires an explicit
+\code{cores} value.}
 
 \item{sparse}{Logical; whether to sparsify the enhanced proximity matrix.}
 
@@ -75,12 +77,13 @@ One of \code{"constant"}, \code{"positive"}, \code{"shift01"}, \code{"abs"}, \co
 \item{gap_w}{Weighting scheme for spectral eigengap when \code{k} is \code{NULL}
 (\code{"uniform"} or \code{"log"}).}
 
-\item{cores}{Number of CPU cores used by parallel steps.}
+\item{cores}{Number of CPU cores used by parallel steps. Default \code{NULL}
+keeps matrix-heavy forest reductions serial to limit peak memory.}
 
 \item{...}{Additional arguments passed to downstream clustering helpers.}
 }
 \value{
-mrf3 clustering object
+An \code{mrf3} clustering object.
 }
 \description{
 MRF unsupervised clustering -- Proximity method

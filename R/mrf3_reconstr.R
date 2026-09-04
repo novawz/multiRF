@@ -678,6 +678,24 @@ ao_fuse_similarity <- function(W_models, k, gamma = 0.1, alpha_init = NULL,
   list(S_fused = S_fused, alpha = alpha, U = U, obj_path = obj_path)
 }
 
+# One-line description of how a tuned top-v row was chosen, for messages.
+.describe_top_v_selection <- function(tb) {
+  if (!is.data.frame(tb) || nrow(tb) == 0L) return("")
+  if (!is.null(tb$saturation_rule)) {
+    frac <- tb$entropy_frac[1L]
+    return(sprintf(
+      " (saturation: tau = %.2f, reached %s%s)",
+      tb$saturation_tau[1L],
+      if (is.finite(frac)) sprintf("%.3f", frac) else "NA",
+      if (isTRUE(tb$saturation_interpolated[1L])) ", interpolated" else ""
+    ))
+  }
+  if (!is.null(tb$elbow_rule)) {
+    return(sprintf(" (entropy elbow: %s)", tb$elbow_rule[1L]))
+  }
+  ""
+}
+
 resolve_top_v_values <- function(dat_input,
                                  mod_input,
                                  connection_input,
@@ -690,7 +708,8 @@ resolve_top_v_values <- function(dat_input,
                                  fused_top_v_input,
                                  disable_fused_top_v = FALSE,
                                  shared_k_for_tune = NULL,
-                                 top_v_method = c("entropy_elbow", "neff"),
+                                 top_v_method = c("saturation", "entropy_elbow", "neff"),
+                                 top_v_tau = 0.9,
                                  neff_quantile = 0.5,
                                  model_top_v_tune_args = list(),
                                  fused_top_v_tune_args = list(),
@@ -749,18 +768,21 @@ resolve_top_v_values <- function(dat_input,
         }
       }
     } else {
-      if (verbose) message("Tuning model_top_v..")
+      if (verbose) message("Tuning model_top_v (", top_v_method, ")..")
       tune_defaults <- list(
         dat.list = dat_input,
         mod = tune_mod,
         tmin = max(10L, as.integer(ceiling(0.08 * nrow(dat_input[[1]])))),
-        object = "entropy_elbow"
+        object = top_v_method,
+        tau = top_v_tau
       )
       if (is.null(model_top_v_tune_args$k) && !is.null(shared_k_for_tune)) {
         tune_defaults$k <- shared_k_for_tune
       }
       final_tune_args <- utils::modifyList(tune_defaults, model_top_v_tune_args)
-      final_tune_args$object <- "entropy_elbow"
+      # The workflow-level method decides the objective; per-call overrides
+      # of `object` would silently desynchronize the reported method.
+      final_tune_args$object <- top_v_method
       tuning$model_top_v <- do.call(tune_model_top_v, final_tune_args)
       model_use <- pick_tuned_value(
         tb = tuning$model_top_v$tmax_tb,
@@ -772,7 +794,8 @@ resolve_top_v_values <- function(dat_input,
         model_use <- as.integer(n_samples)
         if (verbose) message("  model_top_v: no truncation (selected v >= 80% of n).")
       } else if (verbose) {
-        message("  model_top_v = ", model_use)
+        message("  model_top_v = ", model_use,
+                .describe_top_v_selection(tuning$model_top_v$tmax_tb))
       }
     }
   } else {
@@ -819,19 +842,20 @@ resolve_top_v_values <- function(dat_input,
         if (verbose) message("  fused_top_v = ", fused_use, " (neff method)")
       }
     } else {
-      if (verbose) message("Tuning fused_top_v..")
+      if (verbose) message("Tuning fused_top_v (", top_v_method, ")..")
       tune_defaults <- list(
         dat.list = dat_input,
         mod = tune_mod,
         model_top_v = model_use,
         vmin = min(10L, nrow(dat_input[[1]])),
-        object = "entropy_elbow"
+        object = top_v_method,
+        tau = top_v_tau
       )
       if (is.null(fused_top_v_tune_args$k) && !is.null(shared_k_for_tune)) {
         tune_defaults$k <- shared_k_for_tune
       }
       final_tune_args <- utils::modifyList(tune_defaults, fused_top_v_tune_args)
-      final_tune_args$object <- "entropy_elbow"
+      final_tune_args$object <- top_v_method
       tuning$fused_top_v <- do.call(tune_fused_top_v, final_tune_args)
       fused_use <- pick_tuned_value(
         tb = tuning$fused_top_v$vtop_tb,
@@ -844,7 +868,10 @@ resolve_top_v_values <- function(dat_input,
       } else if (is.null(fused_use)) {
         if (verbose) message("  fused_top_v: no truncation.")
       } else {
-        if (verbose) message("  fused_top_v = ", fused_use)
+        if (verbose) {
+          message("  fused_top_v = ", fused_use,
+                  .describe_top_v_selection(tuning$fused_top_v$vtop_tb))
+        }
       }
     }
   } else if (!is.null(fused_use)) {

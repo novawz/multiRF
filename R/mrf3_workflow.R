@@ -144,15 +144,22 @@
 #' @param fused_row_normalize Logical; whether to row-normalize fused weights after optional truncation.
 #' @param fused_keep_ties Logical; whether fused top-v truncation keeps ties at cutoff.
 #' @param top_v_method Strategy used when auto-selecting `top_v`:
-#' `"entropy_elbow"` (default workflow) or `"neff"`.
+#' `"saturation"` (default), `"entropy_elbow"`, or `"neff"`. `"saturation"`
+#' keeps the smallest number of neighbours whose fused-weight row entropy
+#' reaches `top_v_tau` times the no-truncation entropy; it is independent of
+#' the candidate grid and has a single interpretable parameter.
+#' `"entropy_elbow"` is the previous small-gain elbow heuristic and `"neff"`
+#' uses the effective neighbourhood size without any grid search.
+#' @param top_v_tau Saturation fraction in (0, 1) used by
+#'   `top_v_method = "saturation"`. Default `0.9`.
 #' @param neff_quantile Quantile of effective neighborhood size used by the
 #'   `"neff"` top-v rule.
 #' @param model_top_v_tune_args A named list of additional arguments passed to
-#' `tune_model_top_v()` (e.g., `tmin`, `by`, `k`).
-#' Workflow always uses `object = "entropy_elbow"`.
+#' `tune_model_top_v()` (e.g., `tmin`, `by`, `k`, `max_candidates`).
+#' The objective always follows `top_v_method`.
 #' @param fused_top_v_tune_args A named list of additional arguments passed to
 #' `tune_fused_top_v()` (e.g., `vmin`, `by`, `vmax`, `k`).
-#' Workflow always uses `object = "entropy_elbow"`.
+#' The objective always follows `top_v_method`.
 #' @param return_data Logical; whether to include filtered/scaled data in output objects.
 #' @param compact_output Logical; whether to drop heavy duplicated objects from
 #' output for lower memory usage (for example fitted model copies in robust
@@ -201,7 +208,8 @@ mrf3_fit <- function(dat.list,
                           fused_top_v = NULL,
                           fused_row_normalize = TRUE,
                           fused_keep_ties = TRUE,
-                          top_v_method = c("entropy_elbow", "neff"),
+                          top_v_method = c("saturation", "entropy_elbow", "neff"),
+                          top_v_tau = 0.9,
                           neff_quantile = 0.5,
                           model_top_v_tune_args = list(),
                           fused_top_v_tune_args = list(),
@@ -319,7 +327,7 @@ mrf3_fit <- function(dat.list,
 
   # When enhanced_proximity is requested and the multiRF engine is active,
   # compute enhanced proximity inside C++ during tree building.
-  # This avoids the slow R-level cl_forest() foreach loop.
+  # This avoids the slow R-level cl_forest() tree loop.
   if (identical(main_clustering, "enhanced_proximity") &&
       identical(getOption("multiRF.engine", "native"), "native")) {
     if (is.null(dots$enhanced_prox)) dots$enhanced_prox <- TRUE
@@ -453,6 +461,7 @@ mrf3_fit <- function(dat.list,
     disable_fused_top_v = disable_fused_top_v,
     shared_k_for_tune = shared_k_for_tune,
     top_v_method = top_v_method,
+    top_v_tau = top_v_tau,
     neff_quantile = neff_quantile,
     model_top_v_tune_args = model_top_v_tune_args,
     fused_top_v_tune_args = fused_top_v_tune_args,
@@ -809,6 +818,8 @@ mrf3_fit <- function(dat.list,
       compact_output = isTRUE(compact_output),
       recon_fusion = recon_fusion,
       global_fusion = global_fusion,
+      top_v_method = top_v_method,
+      top_v_tau = top_v_tau,
       score_power = score_power,
       score_floor = score_floor,
       fallback_uniform = fallback_uniform,

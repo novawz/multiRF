@@ -332,6 +332,18 @@ as no truncation. `model_top_v = Inf` and `fused_top_v = Inf` also request no
 truncation explicitly; without fused truncation, $\mathcal{T}_{v_f}$ in the
 across-response formula is the identity.
 
+When `model_top_v` or `fused_top_v` is left `NULL`, the workflow selects it
+from the mean normalized row entropy of the fused weight matrix, which rises
+monotonically with $v$ and saturates at the no-truncation value. The default
+`top_v_method = "saturation"` keeps the smallest $v$ whose entropy reaches
+`top_v_tau` (default 0.9) of that limit, interpolating linearly between
+candidates so the choice does not depend on the grid resolution;
+`model_top_v` is selected first and `fused_top_v` conditional on it, with the
+fused curve obtained in closed form for every integer $v$. The full
+entropy-versus-$v$ tables are stored in `fit$tuning_detail` for reporting.
+`top_v_method = "entropy_elbow"` (the earlier small-gain elbow heuristic) and
+`"neff"` (effective neighbourhood size, no grid) remain available.
+
 The shared and residual-specific affinities are constructed as
 `S = W %*% t(W)`, with the diagonal set to zero. Spectral clustering is the
 default similarity backend.
@@ -367,7 +379,7 @@ three IMD selection methods all operate on the unnormalized `[0, 1]` scale:
 
 | Method | Selection rule | When to use it |
 |:--|:--|:--|
-| `"filter"` | Select above `tau * sd(IMD)`; tune `tau` with true OOB normalized MSE across predictor and response coordinates | Adaptive OOB rule; most computationally intensive |
+| `"filter"` | For shared IMD, tune `tau * sd(IMD)` with true OOB normalized MSE; for residual-specific IMD, select above a permutation-null quantile | Adaptive forest-based screening; most computationally intensive |
 | `"transformation"` (`"test"`) | Standardize each feature's forest IMD relative to the block-wide IMD distribution; retain upper-tail features at the chosen `level`, combined by majority vote across connected forests | Distribution-normalized screening |
 | `"mixture"` | Explicit point mass at zero plus two components on positive IMD | Posterior noise-probability selection |
 
@@ -394,7 +406,7 @@ IMD values can be inspected independently of the selected set:
 plot(fit, type = "weights", weight_source = "imd", top = 8)
 ```
 
-For the adaptive OOB filter, use:
+For the shared-signal adaptive OOB filter, use:
 
 ```{r adaptive-filter, eval=FALSE}
 vs_filter <- mrf3_vs(
@@ -408,11 +420,13 @@ vs_filter <- mrf3_vs(
 get_selected_vars(vs_filter)
 ```
 
-The adaptive OOB filter is defined for shared IMD. With `signal = "all"`, the
-workflow uses adaptive filtering for shared IMD and the fixed cutoff for
-residual-specific IMD, then returns their union. The transformation and
-mixture methods can be applied directly to `signal = "shared"`,
-`"specific"`, or `"all"`.
+The filter is signal-specific: shared IMD uses the OOB search, while
+residual-specific IMD uses the `perm_quantile` of pooled IMD values from
+`perm_B` column-wise permutation refits. With `signal = "all"`, the workflow
+returns the union of these selections. The specific filter requires the
+residual matrices retained by `mrf3_fit()`; if they are unavailable, it warns
+and uses the fixed cutoff. The transformation and mixture methods can be
+applied directly to `signal = "shared"`, `"specific"`, or `"all"`.
 
 ```{r alternative-selectors, eval=FALSE}
 vs_transformation <- mrf3_vs(
@@ -765,7 +779,7 @@ fit_final <- mrf3_fit(
   filter_mode = "none",
   main_clustering = "similarity",
   clustering_args = list(shared_k = 4, specific_k = 2),
-  top_v_method = "entropy_elbow",
+  top_v_method = "saturation",
   select_connection = FALSE,
   run_imd = TRUE,
   run_variable_selection = TRUE,

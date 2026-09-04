@@ -18,7 +18,8 @@ tune_model_top_v(
   parallel = TRUE,
   cores = NULL,
   seed = 529,
-  object = "entropy_elbow"
+  object = "saturation",
+  tau = 0.9
 )
 }
 \arguments{
@@ -47,18 +48,27 @@ If exceeded, candidate spacing is expanded automatically. Default is \code{20}.}
 \item{reuse_tuned_k}{Logical; when \code{k} is \code{NULL}, tune \code{k} once on baseline and
 reuse it across all candidates for speed.}
 
-\item{parallel}{Logical; whether to evaluate candidate grid values in parallel
-(POSIX systems only). Default is \code{TRUE}.}
+\item{parallel}{Logical; whether to allow candidate-grid evaluation in fresh
+PSOCK worker processes. Parallel evaluation also requires an explicit
+\code{cores} value.}
 
 \item{cores}{Number of cores used when \code{parallel = TRUE}. Default \code{NULL}
-uses \code{max(1, parallel::detectCores() - 1)} cores.}
+keeps candidate-grid evaluation serial; supply a positive integer to use
+process-level workers.}
 
 \item{seed}{Random seed used for optional sample subsampling.}
 
-\item{object}{Objective used to choose \code{model_top_v}
-(\code{"entropy_elbow"} (default), \code{"diss"}, \code{"silhouette"}, or \code{"eigen"}).
-For \code{"entropy_elbow"}, the elbow is selected among interior grid points,
-so the smallest grid candidate cannot be selected directly.}
+\item{object}{Objective used to choose \code{model_top_v}:
+\code{"saturation"} (default), \code{"entropy_elbow"}, \code{"diss"}, \code{"silhouette"}, or
+\code{"eigen"}. \code{"saturation"} selects the smallest \code{v} whose fused-weight row
+entropy reaches a fraction \code{tau} of the no-truncation entropy (linearly
+interpolated between grid points), so the choice does not depend on the
+grid resolution. \code{"entropy_elbow"} keeps the previous small-gain elbow
+heuristic; its elbow is selected among interior grid points, so the
+smallest grid candidate cannot be selected directly.}
+
+\item{tau}{Saturation fraction in (0, 1) used by \code{object = "saturation"}.
+Default \code{0.9}.}
 }
 \description{
 Tune model-level top-v

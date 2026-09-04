@@ -159,7 +159,7 @@ the block names in \code{names(dat.list)}.}
 \item{yprob}{Deprecated. Use \code{ytry} directly instead.}
 
 \item{parallel_connections}{Logical; whether directed connections are fitted
-in parallel.}
+in fresh PSOCK worker processes.}
 
 \item{cores_connections}{Optional core budget for connection-level
 parallelism.}

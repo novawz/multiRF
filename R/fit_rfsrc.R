@@ -69,6 +69,7 @@ fit_forest <- function(X, Y = NULL,
   samptype <- match.arg(samptype)
   forest.wt <- match.arg(forest.wt, c("all", "inbag", "oob"))
   proximity <- match.arg(proximity, c("all", "inbag", "oob", "none"))
+  proximity_mode <- proximity
 
   ntree <- .native_integer_scalar(ntree, "ntree", 1L)
   nsplit <- .native_integer_scalar(nsplit, "nsplit", 0L)
@@ -275,6 +276,7 @@ fit_forest <- function(X, Y = NULL,
     )
   }
 
+  mrf$proximity.mode <- proximity_mode
   return(mrf)
 }
 
@@ -294,6 +296,16 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
                              yprob = 1, ytry = NULL, seed = 529L,
                              parallel_connections = FALSE,
                              cores_connections = NULL, ...){
+
+  # Materialize values before a nested worker closure is serialized to PSOCK.
+  # Otherwise a promise such as `fit_multi_forest(dat, ...)` can reach the
+  # worker as the unevaluated symbol `dat`, which does not exist there.
+  force(dat.list)
+  force(connect_list)
+  force(var.wt)
+  force(ytry)
+  force(seed)
+  dots <- list(...)
 
   connection_used <- if (is.null(connect_list)) {
     enumerate_connections(names(dat.list))
@@ -319,7 +331,7 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
     }
 
     if(length(dat_fit) == 1){
-      dots_fit <- list(...)
+      dots_fit <- dots
       type_fit <- if (is.null(dots_fit$type)) "unsupervised" else dots_fit$type
       dots_fit$type <- NULL
       fit_args <- c(
@@ -329,7 +341,15 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
       )
       mod <- do.call(fit_forest, fit_args)
     } else {
-      mod <- fit_forest(dat_fit[[2]], dat_fit[[1]], xvar.wt = varwt[[2]], yvar.wt = varwt[[1]], ytry = ytry, seed = seed, ...)
+      fit_args <- c(
+        list(
+          X = dat_fit[[2]], Y = dat_fit[[1]],
+          xvar.wt = varwt[[2]], yvar.wt = varwt[[1]],
+          ytry = ytry, seed = seed
+        ),
+        dots
+      )
+      mod <- do.call(fit_forest, fit_args)
     }
     mod
   }
@@ -341,10 +361,9 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
       fallback = 1L
     )
     n_par <- min(n_conn, n_par)
-    n_par <- .portable_mc_cores(n_par)
-    ## One parallel layer at a time: see fit_sub_mrf() — forked children
-    ## default to single-threaded forests unless multiRF.nthread is set.
-    mod_l <- parallel::mclapply(
+    ## One parallel layer at a time: PSOCK workers default to single-threaded
+    ## forests unless multiRF.nthread is set.
+    mod_l <- parallel_lapply_psock(
       connection_used,
       function(conn) {
         if (is.null(getOption("multiRF.nthread"))) {
@@ -353,7 +372,7 @@ fit_multi_forest <- function(dat.list, connect_list = NULL, var.wt = NULL,
         }
         fit_one(conn)
       },
-      mc.cores = n_par
+      cores = n_par
     )
   } else {
     mod_l <- lapply(connection_used, fit_one)

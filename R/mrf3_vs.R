@@ -5,9 +5,20 @@
 #' @param dat.list A named list of omics matrices used for feature selection
 #'   and optional refitting.
 #' @param method Feature-selection rule. `"filter"` adaptively tunes the
-#'   cutoff `tau * sd(IMD)` using OOB error; `"mixture"` fits a
-#'   point-mass/two-component model; and `"test"` (alias
-#'   `"transformation"`) selects by the Eq. 16 t-score IMD: each
+#'   cutoff `tau * sd(IMD)` using OOB error: for the shared signal the
+#'   cross-omics forests are refitted at each candidate cutoff and scored by
+#'   OOB normalized prediction error across predictor and response coordinates,
+#'   and the cutoff is the first stable plateau of that error; for the specific signal there is no
+#'   second block to predict, so by default the cutoff is the
+#'   `perm_quantile` quantile of a permutation null: the residual forest is
+#'   refitted `perm_B` times on column-wise permuted residuals (no
+#'   between-variable structure, same marginals) and the pooled IMD of those
+#'   refits defines the importance reachable without structure
+#'   (an OOB search is not used for the specific signal because the OOB
+#'   error of a residual block barely changes with the cutoff). The specific
+#'   branch requires the residual matrices kept by `mrf3_fit()`;
+#'   `"mixture"` fits a point-mass/two-component model; and `"test"` (alias
+#'   `"transformation"`) selects by a forest-level t-score: each
 #'   feature's forest IMD is standardized against the mean forest IMD of
 #'   all features in the block, using the feature's across-tree standard
 #'   error, and features in the upper tail of a Student-t reference with
@@ -35,6 +46,12 @@
 #'   the fitted object's tree count, falling back to 300.
 #' @param scale Logical; whether to standardize selected data before refitting.
 #' @param k Number of repeated forest fits at each candidate filtering cutoff.
+#' @param tau_grid Candidate multipliers of `sd(IMD)` evaluated by
+#'   `method = "filter"`. Default `seq(0.8, 3.1, by = 0.1)`.
+#' @param perm_B Number of permutation refits per residual block used by
+#'   `method = "filter"` for the specific signal.
+#' @param perm_quantile Quantile of the pooled permutation-null IMD used as
+#'   the specific-signal cutoff.
 #' @param tol Tolerable adjacent change in mean OOB normalized MSE used to
 #'   choose the filtering cutoff.
 #' @param iter Maximum EM iterations in mixture mode.
@@ -52,8 +69,7 @@
 #' @details
 #' For `method = "transformation"`, every connected forest supplies a
 #' per-tree IMD matrix (features x trees) per block. Feature `v` is
-#' standardized as the t-score IMD of Eq. 16,
-#' `t_v = (M_v - mu) / SE(M_v)`, where `M_v` is the feature's forest IMD
+#' standardized as `t_v = (M_v - mu) / SE(M_v)`, where `M_v` is the feature's forest IMD
 #' (its per-tree IMD averaged over the `B` trees), `mu` is the mean forest
 #' IMD over all features of the block, and `SE(M_v)` is the feature's
 #' across-tree standard error (`sd(per-tree IMD) / sqrt(B)`). Features
@@ -81,7 +97,10 @@ mrf3_vs <- function(mod,
                     ntree = NULL,
                     scale = FALSE,
                     k = 3,
+                    tau_grid = seq(0.8, 3.1, by = 0.1),
                     tol = 0.01,
+                    perm_B = 20L,
+                    perm_quantile = 0.95,
                     iter = 1000,
                     eps = 1e-05,
                     normalized = FALSE,
@@ -97,7 +116,7 @@ mrf3_vs <- function(mod,
 
   if (isTRUE(tscore)) {
     warning(
-      "`tscore` is deprecated; using `method = \"transformation\"` (Eq. 16 t-score IMD).",
+      "`tscore` is deprecated; using `method = \"transformation\"`.",
       call. = FALSE
     )
     method <- "test"
@@ -115,18 +134,10 @@ mrf3_vs <- function(mod,
   # `signal = "all"` is a usable union result, rather than a bare pair of
   # unrelated objects. Fit at most once, after the two selections are merged.
   if (identical(signal, "all")) {
-    if (identical(method, "filter")) {
-      warning(
-        "Adaptive OOB filtering is not defined for residual-specific IMD; ",
-        "the shared component will use adaptive OOB filtering and the ",
-        "specific component will use the fixed cutoff `se * sd(IMD)`.",
-        call. = FALSE
-      )
-      shared_method <- "filter"
-      specific_method <- "thres"
-    } else {
-      shared_method <- specific_method <- method_requested
-    }
+    # Both components use the requested rule. For `"filter"` the specific
+    # component falls back to the fixed cutoff only when the residual
+    # matrices needed for OOB refits are unavailable (see below).
+    shared_method <- specific_method <- method_requested
     source_dat <- dat.list
     if (is.null(source_dat) && inherits(mod, "mrf3_fit")) source_dat <- mod$data
     if (is.null(source_dat)) {
@@ -153,7 +164,10 @@ mrf3_vs <- function(mod,
         ntree = ntree,
         scale = scale,
         k = k,
+        tau_grid = tau_grid,
         tol = tol,
+        perm_B = perm_B,
+        perm_quantile = perm_quantile,
         iter = iter,
         eps = eps,
         normalized = normalized,
@@ -266,6 +280,8 @@ mrf3_vs <- function(mod,
       }
       wf_weights <- spec$imd
       wf_weights_ls <- NULL
+      spec_residual <- if (is.list(spec$weights)) spec$weights$residual else NULL
+      spec_residual_mod <- if (is.list(spec$weights)) spec$weights$residual_mod else NULL
       # Selecting on residual-specific IMD still refits the original
       # cross-omics forest structure; self-connections are used only to map the
       # per-block transformation records below.
@@ -291,6 +307,8 @@ mrf3_vs <- function(mod,
       wf_weights <- wf$imd
       wf_weights_ls <- wf$imd_init
       connect_list_vs <- wf$connection
+      spec_residual <- NULL
+      spec_residual_mod <- NULL
     }
 
     if (is.null(wf_weights)) {
@@ -313,7 +331,9 @@ mrf3_vs <- function(mod,
         refit_connection_vs
       } else {
         NULL
-      }
+      },
+      residual = spec_residual,
+      residual_mod = spec_residual_mod
     )
     class(mod) <- "mrf3"
   }
@@ -337,7 +357,7 @@ mrf3_vs <- function(mod,
   if (is.null(weights)) stop("`mod` does not contain IMD weights in `$imd`.")
 
   # Align once by feature name. The selection methods below operate on raw
-  # Eq. 8 forest IMD, whose domain is [0, 1].
+  # Forest IMD has domain [0, 1].
   weights <- lapply(dat_names, function(block) {
     if (is.null(weights[[block]])) {
       stop("Missing IMD weights for block `", block, "`.")
@@ -402,14 +422,35 @@ mrf3_vs <- function(mod,
 
   if (identical(method, "filter")) {
     if (identical(signal, "specific")) {
-      warning(
-        "Adaptive OOB filtering is defined for cross-modal forests; ",
-        "using the fixed cutoff `se * sd(IMD)` for specific IMD.",
-        call. = FALSE
-      )
-      method <- "thres"
-      method_requested <- "thres"
-      thres <- chooss_thres3(weights, se = se)
+      residual_ok <- is.list(mod$residual) &&
+        all(dat_names %in% names(mod$residual)) &&
+        all(vapply(dat_names, function(block) {
+          r <- mod$residual[[block]]
+          is.matrix(r) || is.data.frame(r)
+        }, logical(1)))
+      if (!residual_ok) {
+        warning(
+          "Adaptive OOB filtering of specific IMD needs the residual ",
+          "matrices kept by `mrf3_fit()` (`$specific$weights$residual`); ",
+          "using the fixed cutoff `se * sd(IMD)` instead.",
+          call. = FALSE
+        )
+        method <- "thres"
+        method_requested <- "thres"
+        thres <- chooss_thres3(weights, se = se)
+      } else {
+        thres <- choose_thres_permutation(
+          weights = weights,
+          residual = mod$residual,
+          residual_mod = mod$residual_mod,
+          ntree = ntree_use,
+          ytry = mod$ytry,
+          B = perm_B,
+          null_quantile = perm_quantile,
+          select = select,
+          ...
+        )
+      }
     } else {
       thres <- choose_thres2(
         weights = weights,
@@ -423,6 +464,7 @@ mrf3_vs <- function(mod,
         k = k,
         select = select,
         tol = tol,
+        tau_grid = tau_grid,
         ...
       )
     }
@@ -661,6 +703,7 @@ choose_thres2 <- function(weights, connection, new_dat, ytry, ntree, type,
     }
   }
   candidate_error <- rep(Inf, length(tau_grid))
+  candidate_se <- rep(NA_real_, length(tau_grid))
 
   for (i in seq_along(tau_grid)) {
     tau <- tau_grid[[i]]
@@ -706,7 +749,11 @@ choose_thres2 <- function(weights, connection, new_dat, ytry, ntree, type,
       repeat_error[[replicate_id]] <- .score_fun(refit)
     }
     if (any(is.finite(repeat_error))) {
-      candidate_error[[i]] <- mean(repeat_error[is.finite(repeat_error)])
+      finite_error <- repeat_error[is.finite(repeat_error)]
+      candidate_error[[i]] <- mean(finite_error)
+      if (length(finite_error) > 1L) {
+        candidate_se[[i]] <- stats::sd(finite_error) / sqrt(length(finite_error))
+      }
     }
   }
 
@@ -727,12 +774,13 @@ choose_thres2 <- function(weights, connection, new_dat, ytry, ntree, type,
         abs(candidate_error[right] - candidate_error[left]) <= tol
     ]
   }
+  if (!any(is.finite(candidate_error))) {
+    stop("No filtering cutoff produced a fit with a finite OOB error.")
+  }
   if (length(stable_start)) {
     chosen_index <- stable_start[[1L]]
-  } else if (any(is.finite(candidate_error))) {
-    chosen_index <- which.min(candidate_error)
   } else {
-    stop("No filtering cutoff produced a fit with a finite OOB error.")
+    chosen_index <- which.min(candidate_error)
   }
   tau <- tau_grid[[chosen_index]]
   message("Choose ", format(tau), " times sd")
@@ -744,10 +792,129 @@ choose_thres2 <- function(weights, connection, new_dat, ytry, ntree, type,
   attr(thresholds, "tau") <- tau
   attr(thresholds, "oob_trace") <- data.frame(
     tau = tau_grid,
-    mean_oob_nmse = candidate_error
+    mean_oob_nmse = candidate_error,
+    se_oob_nmse = candidate_se
   )
   attr(thresholds, "baseline_oob_nmse") <- baseline
   thresholds
+}
+
+# Permutation-null cutoff for residual-specific IMD. For each block the
+# residual matrix is column-wise permuted (every column's rows shuffled
+# independently, which removes all between-variable structure but keeps each
+# marginal distribution), the unsupervised residual forest is refitted with
+# the same settings, and its IMD values form a null distribution of
+# importance without structure. The pooled null over `B` permutations and
+# all variables gives the cutoff at `null_quantile`; variables whose observed
+# IMD exceeds it are kept. No error curve, grid or tolerance is involved, so
+# the rule is unaffected by the flatness of residual OOB error.
+#' @keywords internal
+choose_thres_permutation <- function(weights, residual, residual_mod = NULL,
+                                     ntree, ytry = NULL, B = 20L,
+                                     null_quantile = 0.95, select = "ALL",
+                                     ...) {
+  B <- as.integer(B)
+  if (length(B) != 1L || !is.finite(B) || B < 1L) stop("`B` must be a positive integer.")
+  if (!is.numeric(null_quantile) || length(null_quantile) != 1L ||
+      !is.finite(null_quantile) || null_quantile <= 0 || null_quantile > 1) {
+    stop("`null_quantile` must lie in (0, 1].")
+  }
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) {
+    old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  }
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+  select_all <- length(select) == 1L && identical(as.character(select), "ALL")
+  dots <- list(...)
+  base_seed <- if (!is.null(dots$seed)) as.integer(dots$seed)[1L] else 529L
+  blocks <- names(weights)
+  thres <- stats::setNames(rep(NA_real_, length(blocks)), blocks)
+  null_summary <- vector("list", length(blocks))
+  names(null_summary) <- blocks
+
+  for (block in blocks) {
+    w <- weights[[block]]
+    if (!select_all && !block %in% as.character(select)) {
+      thres[[block]] <- 0
+      next
+    }
+    R <- as.matrix(residual[[block]])
+    keep_cols <- intersect(names(w), colnames(R))
+    if (length(keep_cols) < 2L) {
+      stop("Residual block `", block, "` does not match its IMD names.")
+    }
+    R <- R[, keep_cols, drop = FALSE]
+    rmod <- if (is.list(residual_mod)) residual_mod[[block]] else NULL
+    settings <- list(
+      ntree = if (is.list(rmod) && length(rmod$ntree) == 1L && is.finite(rmod$ntree)) {
+        as.integer(rmod$ntree)
+      } else {
+        as.integer(ntree)
+      },
+      ytry = if (is.list(rmod) && !is.null(rmod$ytry)) rmod$ytry else ytry,
+      nodesize = if (is.list(rmod) && !is.null(rmod$nodesize)) rmod$nodesize else NULL,
+      max_depth = if (is.list(rmod) && !is.null(rmod$max_depth)) rmod$max_depth else NULL,
+      nsplit = if (is.list(rmod) && !is.null(rmod$nsplit)) rmod$nsplit else 10,
+      samptype = if (is.list(rmod) && !is.null(rmod$samptype)) rmod$samptype else "swor",
+      nthread = if (!is.null(dots$nthread)) dots$nthread else getOption("multiRF.nthread", 0L)
+    )
+    settings <- settings[!vapply(settings, is.null, logical(1))]
+    message("Permutation null for specific IMD of block `", block, "` (B = ", B, ")..")
+    null_imd <- matrix(NA_real_, nrow = B, ncol = ncol(R), dimnames = list(NULL, colnames(R)))
+    for (b in seq_len(B)) {
+      set.seed(base_seed + b)
+      R_perm <- apply(R, 2L, sample)
+      dimnames(R_perm) <- dimnames(R)
+      perm_fit <- do.call(fit_forest, c(
+        list(
+          X = as.data.frame(R_perm, check.names = FALSE),
+          Y = NULL,
+          type = "unsupervised",
+          forest.wt = "inbag",
+          proximity = "none",
+          seed = base_seed + b
+        ),
+        settings
+      ))
+      imd_b <- perm_fit$imd_weights$X
+      if (is.null(imd_b)) stop("Permutation refit for block `", block, "` returned no IMD.")
+      null_imd[b, ] <- unname(imd_b[colnames(R)])
+    }
+    pooled <- as.numeric(null_imd)
+    pooled <- pooled[is.finite(pooled)]
+    cutoff <- unname(stats::quantile(pooled, probs = null_quantile, names = FALSE))
+    thres[[block]] <- cutoff
+    q_ref <- stats::quantile(pooled, probs = c(0.9, 0.95, 0.99), names = FALSE)
+    null_summary[[block]] <- data.frame(
+      B = B,
+      n_variables = ncol(R),
+      null_quantile = null_quantile,
+      cutoff = cutoff,
+      null_mean = mean(pooled),
+      null_q90 = q_ref[1L],
+      null_q95 = q_ref[2L],
+      null_q99 = q_ref[3L],
+      null_max = max(pooled),
+      observed_mean = mean(w[keep_cols]),
+      n_selected = sum(w[keep_cols] > cutoff),
+      n_selected_q90 = sum(w[keep_cols] > q_ref[1L]),
+      n_selected_q99 = sum(w[keep_cols] > q_ref[3L]),
+      n_selected_max = sum(w[keep_cols] > max(pooled))
+    )
+    message("Block `", block, "`: cutoff ", format(signif(cutoff, 4)),
+            " keeps ", sum(w[keep_cols] > cutoff), " of ", ncol(R), " variables")
+  }
+  attr(thres, "rule") <- "permutation"
+  attr(thres, "B") <- B
+  attr(thres, "null_quantile") <- null_quantile
+  attr(thres, "null_summary") <- null_summary
+  thres
 }
 
 # Fixed threshold tau * sd(IMD). Kept under the historical helper name
@@ -1006,7 +1173,7 @@ chooss_thres3 <- function(weights, se) {
   post
 }
 
-# Eq. 16 transformation for one per-tree IMD matrix (features x trees).
+# Transformation for one per-tree IMD matrix (features x trees).
 .imd_transformation_one <- function(mat, alpha) {
   mat <- as.matrix(mat)
   if (ncol(mat) < 2L) stop("IMD transformation requires at least two trees.")

@@ -524,7 +524,8 @@ update_iter_imp <- function(mod, tree.id, calc = "Both", robust = FALSE, w = NUL
 #' Get forest importance
 #' @param mod A fitted forest model from the multiRF engine or the
 #' optional `randomForestSRC` fallback.
-#' @param parallel Logical; whether to parallelize across trees.
+#' @param parallel Logical; whether to parallelize across trees in fresh PSOCK
+#'   worker processes.
 #' @param robust Logical; whether to use robust matrix-based aggregation.
 #'   Requires `calc = "Both"`.
 #' @param calc Which importance side to compute: `"X"`, `"Y"`, or `"Both"`.
@@ -547,21 +548,13 @@ get_imp_forest <- function(mod, parallel = FALSE, robust = FALSE, calc = "Both",
     stop("`robust = TRUE` requires `calc = \"Both\"`.")
   }
 
+  # Materialize values captured by the per-tree closure before PSOCK
+  # serialization. This matters when callers supplied symbols lazily.
+  force(w)
+  force(ytry)
+  force(weighted)
+  force(seed)
   nt <- mod$ntree
-
-  if(parallel){
-    if (is.null(cores)) {
-      cores <- max(1L, parallel::detectCores() - 1L)
-    }
-    cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
-    if(Sys.info()["sysname"] == "Windows"){
-      cluster <- parallel::makeCluster(cores)
-      doParallel::registerDoParallel(cluster)
-      on.exit(parallel::stopCluster(cluster), add = TRUE)
-    } else {
-      doParallel::registerDoParallel(cores)
-    }
-  }
 
     if(calc == "Both") {
       cc <- "Both"
@@ -573,18 +566,25 @@ get_imp_forest <- function(mod, parallel = FALSE, robust = FALSE, calc = "Both",
     # Pre-process nativeArray ONCE, split by tree — avoids per-tree overhead
     tree_dfs <- .prep_tree_dfs(mod)
 
-    results <- plyr::llply(1:nt,
-                       .fun = function(t){
-                         update_iter_imp(mod,
-                                         tree.id = t,
-                                         calc = cc,
-                                         robust = robust,
-                                         ytry = ytry,
-                                         w = w,
-                                         weighted = weighted,
-                                         seed = seed,
-                                         tree_dfs  = tree_dfs)
-                       }, .parallel = parallel)
+    eval_tree <- function(t) {
+      update_iter_imp(
+        mod,
+        tree.id = t,
+        calc = cc,
+        robust = robust,
+        ytry = ytry,
+        w = w,
+        weighted = weighted,
+        seed = seed,
+        tree_dfs = tree_dfs
+      )
+    }
+    tree_ids <- seq_len(nt)
+    results <- if (isTRUE(parallel)) {
+      parallel_lapply_psock(tree_ids, eval_tree, cores = cores)
+    } else {
+      lapply(tree_ids, eval_tree)
+    }
 
     imp <- purrr::map(results, "imp_ls")
     net <- purrr::map(results, "net")

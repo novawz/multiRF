@@ -1,7 +1,7 @@
 Package: multiRF
 Type: Package
 Title: MRF-Based Multi-Omics Integration and Clustering
-Version: 0.2.3
+Version: 0.3.0
 Authors@R:
     c(
       person("Wei", "Zhang", email = "wzhang0739@gmail.com",
@@ -21,9 +21,7 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Imports:
     cluster,
-    doParallel,
     dplyr,
-    foreach,
     ggrepel,
     ggplot2,
     graphics,

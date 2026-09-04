@@ -20,7 +20,8 @@ tune_fused_top_v(
   parallel = TRUE,
   cores = NULL,
   seed = 529,
-  object = "entropy_elbow",
+  object = "saturation",
+  tau = 0.9,
   early_stop = FALSE,
   elbow_rel_tol = 0.25,
   elbow_abs_tol = 1e-04,
@@ -61,20 +62,31 @@ If exceeded, candidate spacing is expanded automatically. Default is \code{20}.}
 \item{reuse_tuned_k}{Logical; when \code{k} is \code{NULL}, tune \code{k} once on baseline and
 reuse it across all candidates for speed.}
 
-\item{parallel}{Logical; whether to evaluate candidate grid values in parallel
-(POSIX systems only). Default is \code{TRUE}.}
+\item{parallel}{Logical; whether to allow candidate-grid evaluation in fresh
+PSOCK worker processes. Parallel evaluation also requires an explicit
+\code{cores} value.}
 
 \item{cores}{Number of cores used when \code{parallel = TRUE}. Default \code{NULL}
-uses \code{max(1, parallel::detectCores() - 1)} cores.}
+keeps candidate-grid evaluation serial; supply a positive integer to use
+process-level workers.}
 
 \item{seed}{Random seed used for optional sample subsampling.}
 
-\item{object}{Objective used to choose \code{fused_top_v}
-(\code{"entropy_elbow"} (default), \code{"diss"}, \code{"silhouette"}, or \code{"eigen"}).
-For \code{"entropy_elbow"}, the elbow is selected among interior grid points,
-so the smallest grid candidate and the no-truncation baseline cannot be
+\item{object}{Objective used to choose \code{fused_top_v}:
+\code{"saturation"} (default), \code{"entropy_elbow"}, \code{"diss"}, \code{"silhouette"}, or
+\code{"eigen"}. For the two entropy objectives the entropy of every truncation
+level is obtained in closed form from the sorted fused weights (see
+\code{fused_entropy_curve()}), so no candidate matrices are rebuilt.
+\code{"saturation"} evaluates every integer \code{v} in \verb{[vmin, vmax]} and selects
+the smallest one whose entropy reaches \code{tau} times the no-truncation
+entropy. \code{"entropy_elbow"} keeps the previous small-gain elbow heuristic on
+the candidate grid; its elbow is selected among interior grid points, so
+the smallest grid candidate and the no-truncation baseline cannot be
 selected directly (no truncation is recovered separately via the
 \code{v >= 0.8 * n} rule in the workflow).}
+
+\item{tau}{Saturation fraction in (0, 1) used by \code{object = "saturation"}.
+Default \code{0.9}.}
 
 \item{early_stop}{Logical; when \code{TRUE} and \code{object = "entropy_elbow"},
 stop tuning once a stable small-gain elbow is reached. Default is \code{FALSE}

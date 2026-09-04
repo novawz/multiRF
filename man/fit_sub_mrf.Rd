@@ -69,7 +69,8 @@ Default \code{FALSE} because the extra computation is non-trivial.}
 
 \item{seed}{Base random seed.}
 
-\item{parallel}{Logical; if \code{TRUE}, use \code{\link[parallel:mclapply]{parallel::mclapply()}}.}
+\item{parallel}{Logical; if \code{TRUE}, fit replicates in fresh PSOCK worker
+processes.}
 
 \item{cores}{Number of cores when \code{parallel = TRUE}; \code{NULL} (default)
 uses \code{parallel::detectCores() - 1}.}

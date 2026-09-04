@@ -14,15 +14,23 @@
 #' If exceeded, candidate spacing is expanded automatically. Default is `20`.
 #' @param reuse_tuned_k Logical; when `k` is `NULL`, tune `k` once on baseline and
 #' reuse it across all candidates for speed.
-#' @param parallel Logical; whether to evaluate candidate grid values in parallel
-#' (POSIX systems only). Default is `TRUE`.
+#' @param parallel Logical; whether to allow candidate-grid evaluation in fresh
+#'   PSOCK worker processes. Parallel evaluation also requires an explicit
+#'   `cores` value.
 #' @param cores Number of cores used when `parallel = TRUE`. Default `NULL`
-#' uses `max(1, parallel::detectCores() - 1)` cores.
+#'   keeps candidate-grid evaluation serial; supply a positive integer to use
+#'   process-level workers.
 #' @param seed Random seed used for optional sample subsampling.
-#' @param object Objective used to choose `model_top_v`
-#' (`"entropy_elbow"` (default), `"diss"`, `"silhouette"`, or `"eigen"`).
-#' For `"entropy_elbow"`, the elbow is selected among interior grid points,
-#' so the smallest grid candidate cannot be selected directly.
+#' @param object Objective used to choose `model_top_v`:
+#' `"saturation"` (default), `"entropy_elbow"`, `"diss"`, `"silhouette"`, or
+#' `"eigen"`. `"saturation"` selects the smallest `v` whose fused-weight row
+#' entropy reaches a fraction `tau` of the no-truncation entropy (linearly
+#' interpolated between grid points), so the choice does not depend on the
+#' grid resolution. `"entropy_elbow"` keeps the previous small-gain elbow
+#' heuristic; its elbow is selected among interior grid points, so the
+#' smallest grid candidate cannot be selected directly.
+#' @param tau Saturation fraction in (0, 1) used by `object = "saturation"`.
+#' Default `0.9`.
 #' @rdname tune_model_top_v
 #' @export
 tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
@@ -33,12 +41,14 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
                              parallel = TRUE,
                              cores = NULL,
                              seed = 529,
-                             object = "entropy_elbow"){
+                             object = "saturation",
+                             tau = 0.9){
   object <- match.arg(
     as.character(object)[1L],
-    c("entropy_elbow", "diss", "silhouette", "eigen")
+    c("saturation", "entropy_elbow", "diss", "silhouette", "eigen")
   )
-  entropy_only <- identical(object, "entropy_elbow")
+  entropy_only <- object %in% c("saturation", "entropy_elbow")
+  tau <- .check_saturation_tau(tau)
 
   if (!is.numeric(tmin) || !is.numeric(by)) {
     stop("`tmin` and `by` must be numeric.")
@@ -164,7 +174,9 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
     )
   )
 
-  dfsumm <- select_tune_summary(df, object = object)
+  df$entropy_frac <- entropy_fraction(df$entropy, reference = init$entropy)
+
+  dfsumm <- select_tune_summary(df, object = object, tau = tau)
 
   list(
     tmax_tb = dfsumm,
@@ -191,17 +203,27 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
 #' If exceeded, candidate spacing is expanded automatically. Default is `20`.
 #' @param reuse_tuned_k Logical; when `k` is `NULL`, tune `k` once on baseline and
 #' reuse it across all candidates for speed.
-#' @param parallel Logical; whether to evaluate candidate grid values in parallel
-#' (POSIX systems only). Default is `TRUE`.
+#' @param parallel Logical; whether to allow candidate-grid evaluation in fresh
+#'   PSOCK worker processes. Parallel evaluation also requires an explicit
+#'   `cores` value.
 #' @param cores Number of cores used when `parallel = TRUE`. Default `NULL`
-#' uses `max(1, parallel::detectCores() - 1)` cores.
+#'   keeps candidate-grid evaluation serial; supply a positive integer to use
+#'   process-level workers.
 #' @param seed Random seed used for optional sample subsampling.
-#' @param object Objective used to choose `fused_top_v`
-#' (`"entropy_elbow"` (default), `"diss"`, `"silhouette"`, or `"eigen"`).
-#' For `"entropy_elbow"`, the elbow is selected among interior grid points,
-#' so the smallest grid candidate and the no-truncation baseline cannot be
+#' @param object Objective used to choose `fused_top_v`:
+#' `"saturation"` (default), `"entropy_elbow"`, `"diss"`, `"silhouette"`, or
+#' `"eigen"`. For the two entropy objectives the entropy of every truncation
+#' level is obtained in closed form from the sorted fused weights (see
+#' `fused_entropy_curve()`), so no candidate matrices are rebuilt.
+#' `"saturation"` evaluates every integer `v` in `[vmin, vmax]` and selects
+#' the smallest one whose entropy reaches `tau` times the no-truncation
+#' entropy. `"entropy_elbow"` keeps the previous small-gain elbow heuristic on
+#' the candidate grid; its elbow is selected among interior grid points, so
+#' the smallest grid candidate and the no-truncation baseline cannot be
 #' selected directly (no truncation is recovered separately via the
 #' `v >= 0.8 * n` rule in the workflow).
+#' @param tau Saturation fraction in (0, 1) used by `object = "saturation"`.
+#' Default `0.9`.
 #' @param early_stop Logical; when `TRUE` and `object = "entropy_elbow"`,
 #' stop tuning once a stable small-gain elbow is reached. Default is `FALSE`
 #' so elbow selection is based on the full evaluated grid.
@@ -224,7 +246,8 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
                              parallel = TRUE,
                              cores = NULL,
                              seed = 529,
-                             object = "entropy_elbow",
+                             object = "saturation",
+                             tau = 0.9,
                              early_stop = FALSE,
                              elbow_rel_tol = 0.25,
                              elbow_abs_tol = 1e-4,
@@ -234,9 +257,10 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
                              elbow_smooth_window = 3L){
   object <- match.arg(
     as.character(object)[1L],
-    c("entropy_elbow", "diss", "silhouette", "eigen")
+    c("saturation", "entropy_elbow", "diss", "silhouette", "eigen")
   )
-  entropy_only <- identical(object, "entropy_elbow")
+  entropy_only <- object %in% c("saturation", "entropy_elbow")
+  tau <- .check_saturation_tau(tau)
 
   tune_prep <- prepare_tune_inputs(
     dat.list = dat.list,
@@ -320,7 +344,31 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
     keep_ties = TRUE
   )
 
+  # For the entropy objectives the whole entropy-versus-v curve follows in
+  # closed form from the sorted fused weights, so candidates are looked up
+  # instead of rebuilding a truncated matrix for each one.
+  entropy_curve <- if (isTRUE(entropy_only)) {
+    fused_entropy_curve(W_all_raw, keep_ties = TRUE)
+  } else {
+    NULL
+  }
+
   eval_one <- function(v, k_use = k) {
+    if (isTRUE(entropy_only)) {
+      ent <- if (is.null(v)) {
+        entropy_curve$entropy_inf
+      } else {
+        entropy_curve$entropy[as.integer(v)]
+      }
+      k_out <- if (!is.null(k_use) && is.finite(k_use)) as.integer(k_use)[1] else NA_integer_
+      return(list(
+        obj = NA_real_,
+        sil = NA_real_,
+        diffe = NA_real_,
+        entropy = ent,
+        k = k_out
+      ))
+    }
     if (is.null(v)) {
       W_eval <- postprocess_fused_weight(
         W = W_all_raw,
@@ -337,16 +385,6 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
       )
     }
     ent <- calc_fused_weight_entropy(W_eval)
-    if (isTRUE(entropy_only)) {
-      k_out <- if (!is.null(k_use) && is.finite(k_use)) as.integer(k_use)[1] else NA_integer_
-      return(list(
-        obj = NA_real_,
-        sil = NA_real_,
-        diffe = NA_real_,
-        entropy = ent,
-        k = k_out
-      ))
-    }
     S <- W_eval %*% t(W_eval)
     diag(S) <- 0
     stat <- evaluate_similarity_for_tuning(S, k_use = k_use)
@@ -366,12 +404,17 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
     k <- init$k
   }
 
-  v_grid <- make_tune_grid(
-    lower = vmin,
-    upper = vmax,
-    by = by,
-    max_candidates = max_candidates
-  )
+  v_grid <- if (identical(object, "saturation")) {
+    # Closed-form lookups are free, so use the exact integer resolution.
+    seq.int(as.integer(ceiling(vmin)), as.integer(floor(vmax)))
+  } else {
+    make_tune_grid(
+      lower = vmin,
+      upper = vmax,
+      by = by,
+      max_candidates = max_candidates
+    )
+  }
   v_grid <- v_grid[v_grid > 0]
   v_grid <- v_grid[v_grid <= ncol(W_all_raw)]
   if (length(v_grid) == 0L) {
@@ -401,7 +444,7 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
       rows <- eval_grid(
         grid = v_grid,
         eval_fun = function(v) eval_one(v, k_use = k),
-        parallel = parallel,
+        parallel = isTRUE(parallel) && !isTRUE(entropy_only),
         cores = cores
       )
     }
@@ -444,6 +487,7 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
       is_no_trunc = TRUE
     )
   )
+  rownames(df) <- NULL
 
   if (isTRUE(early_stop_used) && nrow(df) > 1L && length(v_grid) > 0L) {
     n_eval <- nrow(df) - 1L
@@ -452,9 +496,12 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
     }
   }
 
+  df$entropy_frac <- entropy_fraction(df$entropy, reference = init$entropy)
+
   dfsumm <- select_tune_summary(
     df,
     object = object,
+    tau = tau,
     elbow_rel_tol = elbow_rel_tol,
     elbow_abs_tol = elbow_abs_tol,
     elbow_min_points = elbow_min_points,
@@ -850,6 +897,7 @@ bind_tune_rows <- function(rows, value_col) {
 }
 
 select_tune_summary <- function(df, object = "diss",
+                                tau = 0.9,
                                 elbow_rel_tol = 0.25,
                                 elbow_abs_tol = 1e-4,
                                 elbow_min_points = 4L,
@@ -859,7 +907,10 @@ select_tune_summary <- function(df, object = "diss",
   if (!is.data.frame(df) || nrow(df) == 0L) {
     stop("No tuning results available to summarize.")
   }
-  object <- match.arg(object, c("diss", "silhouette", "eigen", "entropy_elbow"))
+  object <- match.arg(
+    object,
+    c("diss", "silhouette", "eigen", "entropy_elbow", "saturation")
+  )
 
   if (object == "diss") {
     return(df %>% dplyr::group_by(k) %>% dplyr::slice_min(obj, with_ties = FALSE))
@@ -872,10 +923,13 @@ select_tune_summary <- function(df, object = "diss",
   }
   v_col <- if ("fused_top_v" %in% names(df)) "fused_top_v" else if ("model_top_v" %in% names(df)) "model_top_v" else NA_character_
   if (!is.character(v_col) || !nzchar(v_col)) {
-    stop("`object = 'entropy_elbow'` is only available when tuning fused_top_v or model_top_v.")
+    stop("`object = '", object, "'` is only available when tuning fused_top_v or model_top_v.")
   }
   if (!("entropy" %in% names(df))) {
-    stop("`object = 'entropy_elbow'` requires an `entropy` column in tuning results.")
+    stop("`object = '", object, "'` requires an `entropy` column in tuning results.")
+  }
+  if (identical(object, "saturation")) {
+    return(select_saturation_summary(df, v_col = v_col, tau = tau))
   }
 
   finite_rows <- is.finite(df[[v_col]]) & is.finite(df$entropy)
@@ -930,6 +984,168 @@ select_tune_summary <- function(df, object = "diss",
   x$elbow_selected <- FALSE
   x$elbow_selected[elbow_idx] <- TRUE
   x[elbow_idx, , drop = FALSE]
+}
+
+.check_saturation_tau <- function(tau) {
+  if (!is.numeric(tau) || length(tau) != 1L || !is.finite(tau) ||
+      tau <= 0 || tau >= 1) {
+    stop("`tau` must be a single numeric value in (0, 1).", call. = FALSE)
+  }
+  as.numeric(tau)
+}
+
+entropy_fraction <- function(entropy, reference, eps = 1e-10) {
+  reference <- as.numeric(reference)[1L]
+  if (!is.finite(reference) || reference <= eps) {
+    return(rep(NA_real_, length(entropy)))
+  }
+  as.numeric(entropy) / reference
+}
+
+# Saturation rule: the smallest v whose entropy reaches `tau` times the
+# no-truncation entropy. Between two grid points the crossing is located by
+# linear interpolation and rounded up, so the selected value does not depend
+# on the grid resolution beyond interpolation error.
+select_saturation_summary <- function(df, v_col, tau = 0.9, eps = 1e-10) {
+  tau <- .check_saturation_tau(tau)
+  v_all <- as.numeric(df[[v_col]])
+  no_trunc <- if ("is_no_trunc" %in% names(df)) df$is_no_trunc %in% TRUE else rep(FALSE, nrow(df))
+  no_trunc <- no_trunc | !is.finite(v_all)
+
+  finite_rows <- which(is.finite(v_all) & is.finite(df$entropy))
+  ref_idx <- if (any(no_trunc & is.finite(df$entropy))) {
+    which(no_trunc & is.finite(df$entropy))[1L]
+  } else if (length(finite_rows) > 0L) {
+    finite_rows[which.max(v_all[finite_rows])]
+  } else {
+    NA_integer_
+  }
+
+  finish <- function(row, v_selected, frac, rule, interpolated) {
+    out <- row
+    out[[v_col]] <- v_selected
+    out$entropy_frac <- frac
+    out$saturation_tau <- tau
+    out$saturation_target <- if (is.finite(ref_idx)) tau * df$entropy[ref_idx] else NA_real_
+    out$saturation_rule <- rule
+    out$saturation_interpolated <- interpolated
+    rownames(out) <- NULL
+    out
+  }
+
+  if (!is.finite(ref_idx)) {
+    stop("`object = 'saturation'` requires at least one finite entropy value.")
+  }
+  h_inf <- df$entropy[ref_idx]
+  if (!is.finite(h_inf) || h_inf <= eps) {
+    # Flat curve: truncation changes nothing, so keep every neighbour.
+    return(finish(df[ref_idx, , drop = FALSE], v_all[ref_idx], NA_real_,
+                  "flat_entropy", FALSE))
+  }
+
+  x <- df[finite_rows, , drop = FALSE]
+  vx <- v_all[finite_rows]
+  ord <- order(vx)
+  x <- x[ord, , drop = FALSE]
+  vx <- vx[ord]
+  frac <- x$entropy / h_inf
+  target <- tau * h_inf
+
+  hit <- which(x$entropy >= target - eps)
+  if (length(hit) == 0L) {
+    # Only the no-truncation baseline reaches the target.
+    return(finish(df[ref_idx, , drop = FALSE], v_all[ref_idx], 1,
+                  "not_reached", FALSE))
+  }
+  idx <- hit[1L]
+  if (idx == 1L) {
+    return(finish(x[idx, , drop = FALSE], vx[idx], frac[idx],
+                  "first_candidate", FALSE))
+  }
+  if (vx[idx] - vx[idx - 1L] <= 1) {
+    return(finish(x[idx, , drop = FALSE], vx[idx], frac[idx], "exact", FALSE))
+  }
+  h_lo <- x$entropy[idx - 1L]
+  h_hi <- x$entropy[idx]
+  v_lo <- vx[idx - 1L]
+  v_hi <- vx[idx]
+  v_star <- if (h_hi > h_lo) {
+    v_lo + (target - h_lo) / (h_hi - h_lo) * (v_hi - v_lo)
+  } else {
+    v_hi
+  }
+  v_star <- min(max(ceiling(v_star), v_lo + 1), v_hi)
+  selected_row <- x[idx, , drop = FALSE]
+  h_selected <- if (v_hi > v_lo) {
+    h_lo + (v_star - v_lo) / (v_hi - v_lo) * (h_hi - h_lo)
+  } else {
+    h_hi
+  }
+  selected_row$entropy <- h_selected
+  finish(selected_row, as.numeric(v_star), h_selected / h_inf,
+         "interpolated", TRUE)
+}
+
+#' Entropy of row-wise top-v truncated weights for every truncation level
+#'
+#' Computes, in closed form, the mean normalized row entropy that
+#' `calc_fused_weight_entropy(postprocess_fused_weight(W, top_v = v))` would
+#' return for every `v` from 1 to `ncol(W)`, plus the no-truncation value.
+#' Each row is sorted once; the entropy of its top-`v` renormalized weights is
+#' `log(S_v) - T_v / S_v` with `S_v` the cumulative weight and `T_v` the
+#' cumulative `w * log(w)`, so the whole curve costs one sort per row.
+#'
+#' @param W Square numeric weight matrix (rows are samples).
+#' @param keep_ties Logical; whether truncation keeps ties at the cutoff, as
+#'   `truncate_top_v_rows()` does by default.
+#' @param eps Weights at or below this value are treated as zero.
+#' @return A list with `v` (integer vector `1:ncol(W)`), `entropy` (mean
+#'   normalized row entropy at each `v`), and `entropy_inf` (no truncation).
+#' @keywords internal
+fused_entropy_curve <- function(W, keep_ties = TRUE, eps = 1e-12) {
+  W <- as.matrix(W)
+  if (!is.numeric(W) || length(dim(W)) != 2L) {
+    stop("`W` must be a numeric matrix.", call. = FALSE)
+  }
+  n <- nrow(W)
+  p <- ncol(W)
+  if (n == 0L || p <= 1L) {
+    return(list(v = seq_len(p), entropy = rep(0, p), entropy_inf = 0))
+  }
+  log_p <- log(p)
+  total <- numeric(p)
+
+  for (i in seq_len(n)) {
+    w <- W[i, ]
+    w[!is.finite(w)] <- 0
+    w <- w[w > eps]
+    m <- length(w)
+    if (m <= 1L) {
+      next
+    }
+    w <- sort(w, decreasing = TRUE)
+    s <- cumsum(w)
+    t <- cumsum(w * log(w))
+    h <- (log(s) - t / s) / log_p
+    h[1L] <- 0
+    if (isTRUE(keep_ties)) {
+      # Truncating at v keeps every entry >= w[v]; map v to the last index of
+      # its tie group so tied neighbours at the cutoff are retained.
+      last_in_group <- m + 1L - match(w, rev(w))
+      h <- h[last_in_group]
+    }
+    if (m < p) {
+      h <- c(h, rep(h[m], p - m))
+    }
+    total <- total + h
+  }
+
+  entropy <- unname(pmin(pmax(total / n, 0), 1))
+  list(
+    v = seq_len(p),
+    entropy = entropy,
+    entropy_inf = entropy[p]
+  )
 }
 
 make_tune_grid <- function(lower, upper, by, max_candidates = NULL) {
@@ -1108,32 +1324,40 @@ prepare_tune_inputs <- function(dat.list, mod, sample_n = NULL, sample_frac = NU
 }
 
 eval_grid <- function(grid, eval_fun, parallel = FALSE, cores = NULL) {
-  if (!isTRUE(parallel) || length(grid) <= 1L || .Platform$OS.type == "windows") {
+  eval_fun <- match.fun(eval_fun)
+  ## One parallel layer at a time: each candidate evaluation fits forests
+  ## whose C++ engine is already OpenMP-parallel, and the PSOCK workers
+  ## must serialize the full closure (model + data) — measured slower
+  ## than serial evaluation on realistic sizes. Outer process-level
+  ## parallelism therefore requires an explicit `cores`.
+  if (!isTRUE(parallel) || length(grid) <= 1L || is.null(cores)) {
     return(lapply(grid, eval_fun))
   }
-  if (is.null(cores)) {
-    cores <- max(1L, parallel::detectCores() - 1L)
-  }
-  cores <- sanitize_mc_cores(cores = cores, fallback = 1L)
-  if (cores <= 1L) {
-    return(lapply(grid, eval_fun))
-  }
-  rows <- parallel::mclapply(grid, eval_fun, mc.cores = cores)
-  # mclapply never throws for child failures; surface them here instead of
-  # letting `try-error` objects die later as obscure `$`-on-atomic errors.
-  failed <- vapply(rows, function(x) inherits(x, "try-error"), logical(1))
+  evaluated <- parallel_lapply_psock(
+    grid,
+    function(candidate) {
+      tryCatch(
+        list(value = eval_fun(candidate), error = NULL),
+        error = function(e) list(value = NULL, error = conditionMessage(e))
+      )
+    },
+    cores = cores
+  )
+  failed <- vapply(
+    evaluated,
+    function(result) !is.null(result$error),
+    logical(1)
+  )
   if (any(failed)) {
     first <- which(failed)[1L]
-    cond <- attr(rows[[first]], "condition")
-    msg <- if (!is.null(cond)) conditionMessage(cond) else as.character(rows[[first]])
     stop(
       "Parallel grid evaluation failed for candidate value(s) ",
       paste(unlist(grid[failed]), collapse = ", "),
-      ": ", msg,
+      ": ", evaluated[[first]]$error,
       call. = FALSE
     )
   }
-  rows
+  lapply(evaluated, `[[`, "value")
 }
 
 smooth_running_mean <- function(x, window = 3L) {

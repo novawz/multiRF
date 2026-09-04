@@ -85,13 +85,14 @@ Default \code{FALSE} because the extra computation is non-trivial.}
 
 \item{seed}{Base random seed.}
 
-\item{parallel}{Logical; if \code{TRUE}, use \code{\link[parallel:mclapply]{parallel::mclapply()}}.}
+\item{parallel}{Logical; if \code{TRUE}, fit replicates in fresh PSOCK worker
+processes.}
 
-\item{cores}{Number of cores when \code{parallel = TRUE}; \code{NULL} (default)
-uses \code{parallel::detectCores() - 1}.}
+\item{cores}{Number of cores used for within-connection parallelism.
+The default for this wrapper is \code{2L}.}
 
 \item{parallel_connections}{Logical; whether distinct directed connections
-may be fitted in parallel.}
+may be fitted in fresh PSOCK worker processes.}
 
 \item{cores_connections}{Optional total core budget for connection-level
 parallelism.}
