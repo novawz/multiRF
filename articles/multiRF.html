@@ -511,8 +511,9 @@ then:</p>
 <ol style="list-style-type: decimal">
 <li>removes self weights;</li>
 <li>applies model-level top-v truncation and row normalization;</li>
-<li>normalizes connection scores within each response block;</li>
-<li>averages the response-level matrices uniformly; and</li>
+<li>normalizes connection scores within each response-first block
+group;</li>
+<li>averages the block-level matrices uniformly; and</li>
 <li>optionally applies fused top-v truncation and row
 normalization.</li>
 </ol>
@@ -537,15 +538,25 @@ F_{m,ij}/\max\{1-F_{m,ii},\varepsilon\}, &amp; i \ne j,\\
 \qquad
 W_m = \mathcal{R}\!\left\{\mathcal{T}_{v_m}(A_m)\right\}.
 </annotation></semantics></math></p>
-<p>For response block
+<p>For block
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>,
-define
-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>ℳ</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><mo>=</mo><mo stretchy="false" form="prefix">{</mo><mi>m</mi><mo>:</mo><mrow><mi mathvariant="normal">response</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>m</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>k</mi><mo stretchy="false" form="postfix">}</mo></mrow><annotation encoding="application/x-tex">\mathcal{M}^{(k)}=\{m:\operatorname{response}(m)=k\}</annotation></semantics></math>.
-If
+the model group first uses connections where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+is the response and otherwise uses connections where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+is the predictor:</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>ℳ</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><mo stretchy="false" form="prefix">{</mo><mi>m</mi><mo>:</mo><mrow><mi mathvariant="normal">response</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>m</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>k</mi><mo stretchy="false" form="postfix">}</mo><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">if this set is non-empty</mtext><mo>,</mo></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mo stretchy="false" form="prefix">{</mo><mi>m</mi><mo>:</mo><mrow><mi mathvariant="normal">predictor</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>m</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>k</mi><mo stretchy="false" form="postfix">}</mo><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">otherwise</mtext><mi>.</mi></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">
+\mathcal{M}^{(k)}=
+\begin{cases}
+\{m:\operatorname{response}(m)=k\}, &amp; \text{if this set is non-empty},\\
+\{m:\operatorname{predictor}(m)=k\}, &amp; \text{otherwise}.
+\end{cases}
+</annotation></semantics></math></p>
+<p>If
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>q</mi><mi>m</mi></msub><annotation encoding="application/x-tex">q_m</annotation></semantics></math>
-is the connection score, the within-response weights and fused matrix
+is the connection score, the within-block weights and fused matrix
 are</p>
-<p><a id="fusion-within-response"></a></p>
+<p><a id="fusion-within-block"></a></p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mtable><mtr><mtd columnalign="right" style="text-align: right; padding-right: 0"><msub><mi>s</mi><mi>m</mi></msub></mtd><mtd columnalign="left" style="text-align: left; padding-left: 0"><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><mo stretchy="false" form="prefix">[</mo><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">{</mo><msub><mi>q</mi><mi>m</mi></msub><mo>,</mo><mi>c</mi><mo stretchy="false" form="postfix">}</mo><msup><mo stretchy="false" form="postfix">]</mo><mi>γ</mi></msup><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">weighted fusion</mtext><mo>,</mo></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mn>1</mn><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">uniform fusion</mtext><mo>,</mo></mtd></mtr></mtable></mrow></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right; padding-right: 0"><msub><mi>α</mi><mrow><mi>k</mi><mi>m</mi></mrow></msub></mtd><mtd columnalign="left" style="text-align: left; padding-left: 0"><mo>=</mo><mfrac><msub><mi>s</mi><mi>m</mi></msub><mrow><munder><mo>∑</mo><mrow><mi>r</mi><mo>∈</mo><msup><mi>ℳ</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup></mrow></munder><msub><mi>s</mi><mi>r</mi></msub></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><msup><mi>W</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><mo>=</mo><mi>ℛ</mi><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><munder><mo>∑</mo><mrow><mi>m</mi><mo>∈</mo><msup><mi>ℳ</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup></mrow></munder><msub><mi>α</mi><mrow><mi>k</mi><mi>m</mi></mrow></msub><msub><mi>W</mi><mi>m</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mtd></mtr></mtable><annotation encoding="application/x-tex">
 \begin{aligned}
 s_m &amp;=
@@ -564,31 +575,36 @@ W^{(k)}
 </annotation></semantics></math></p>
 <p>The default global fusion then averages the
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math>
-response-level matrices before the optional fused
+block-level matrices before the optional fused
 top-<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>v</mi><annotation encoding="application/x-tex">v</annotation></semantics></math>
 step:</p>
-<p><a id="fusion-across-response"></a></p>
+<p><a id="fusion-across-block"></a></p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover><mi>W</mi><mo accent="true">¯</mo></mover><mo>=</mo><mfrac><mn>1</mn><mi>K</mi></mfrac><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>1</mn></mrow><mi>K</mi></munderover><msup><mi>W</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>W</mi><msup><mi>ℳ</mi><mo>*</mo></msup></msub><mo>=</mo><mi>ℛ</mi><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">{</mo><msub><mi>𝒯</mi><msub><mi>v</mi><mi>f</mi></msub></msub><mo stretchy="false" form="prefix">(</mo><mover><mi>W</mi><mo accent="true">¯</mo></mover><mo stretchy="false" form="postfix">)</mo><mo stretchy="true" form="postfix">}</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
 \overline{W}=\frac{1}{K}\sum_{k=1}^{K}W^{(k)},
 \qquad
 W_{\mathcal{M}^*}
 =\mathcal{R}\!\left\{\mathcal{T}_{v_f}(\overline{W})\right\}.
 </annotation></semantics></math></p>
-<p>Thus, <a href="#fusion-model-weight">model-level preprocessing</a>
-feeds <a href="#fusion-within-response">within-response fusion</a>,
-followed by <a href="#fusion-across-response">across-response
+<p>If a requested block is absent from every fitted connection, its
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>W</mi><mrow><mo stretchy="false" form="prefix">(</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo></mrow></msup><annotation encoding="application/x-tex">W^{(k)}</annotation></semantics></math>
+is set to the average of the available block matrices. This preserves
+the selected connection set without dropping the block; it also leaves
+the overall average unchanged. Tuning and final reconstruction use the
+same block groups. Thus, <a href="#fusion-model-weight">model-level
+preprocessing</a> feeds <a href="#fusion-within-block">within-block
+fusion</a>, followed by <a href="#fusion-across-block">across-block
 fusion</a>. Weighted fusion uses the connection modularity by default,
 with
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">c=0</annotation></semantics></math>
 and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\gamma=1</annotation></semantics></math>;
-if all scores in a response block are invalid or non-positive, the
-default fallback is uniform weighting. A tuned or fixed top-v at least
-80% of the sample size is interpreted as no truncation.
+if all scores in a block group are invalid or non-positive, the default
+fallback is uniform weighting. A tuned or fixed top-v at least 80% of
+the sample size is interpreted as no truncation.
 <code>model_top_v = Inf</code> and <code>fused_top_v = Inf</code> also
 request no truncation explicitly; without fused truncation,
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>𝒯</mi><msub><mi>v</mi><mi>f</mi></msub></msub><annotation encoding="application/x-tex">\mathcal{T}_{v_f}</annotation></semantics></math>
-in the across-response formula is the identity.</p>
+in the across-block formula is the identity.</p>
 <p>When <code>model_top_v</code> or <code>fused_top_v</code> is left
 <code>NULL</code>, the workflow selects it from the mean normalized row
 entropy of the fused weight matrix, which rises monotonically with
@@ -628,12 +644,11 @@ clustering is the default similarity backend.</p>
 <span><span class="co">#&gt; 1  gene   0.2963977      0.7036023</span></span>
 <span><span class="co">#&gt; 2 methy   0.3110102      0.6889898</span></span>
 <span><span class="co">#&gt; 3 mirna   0.2784850      0.7215150</span></span></code></pre></div>
-<p>For block <code>k</code>, the <a href="#fusion-within-response">response-specific forest weight
-matrix</a> gives the shared reconstruction
-<code>Xhat^(k) = W^(k) X^(k)</code> and the residual
-<code>R^(k) = X^(k) - Xhat^(k)</code>. An unsupervised forest is then
-fitted to each residual matrix to obtain its block-specific weight
-matrix and similarity. The reported <code>shared_frac</code> is
+<p>For block <code>k</code>, the <a href="#fusion-within-block">response-first block weight matrix</a> gives
+the shared reconstruction <code>Xhat^(k) = W^(k) X^(k)</code> and the
+residual <code>R^(k) = X^(k) - Xhat^(k)</code>. An unsupervised forest
+is then fitted to each residual matrix to obtain its block-specific
+weight matrix and similarity. The reported <code>shared_frac</code> is
 <code>1 - ||R^(k)||_F^2 / ||X^(k)||_F^2</code>. It is a descriptive
 signal fraction, not a hypothesis-test p-value.</p>
 </div>
@@ -995,10 +1010,11 @@ appropriate filtering mode.</p>
 <p><strong><code><a href="../reference/mrf3_vs.html">mrf3_vs()</a></code> cannot find data.</strong> Supply
 <code>dat.list</code> directly or fit with
 <code>return_data = TRUE</code>.</p>
-<p><strong>A response block is absent from reconstruction.</strong>
-Per-response fusion requires at least one fitted response-side
-connection for every input block; the workflow now stops rather than
-substituting a global matrix.</p>
+<p><strong>A block has no response-side connection.</strong> The
+workflow uses connections where that block is the predictor. If the
+block is absent from every selected connection, it uses the average of
+the available block matrices. The source for each block is recorded in
+<code>fit$reconstruction$block_weight_source</code>.</p>
 <p><strong>Block names contain underscores.</strong> Current fits retain
 explicit response and predictor metadata, so underscores are supported.
 Avoid parsing model display names in downstream code; use
@@ -1040,7 +1056,7 @@ R. <em>R News</em>, 7(2), 25–31. <a href="https://journal.r-project.org/articl
 <span><span class="fu"><a href="https://rdrr.io/r/utils/sessionInfo.html" class="external-link">sessionInfo</a></span><span class="op">(</span><span class="op">)</span></span>
 <span><span class="co">#&gt; R version 4.6.1 (2026-06-24)</span></span>
 <span><span class="co">#&gt; Platform: x86_64-pc-linux-gnu</span></span>
-<span><span class="co">#&gt; Running under: Ubuntu 24.04.4 LTS</span></span>
+<span><span class="co">#&gt; Running under: Ubuntu 24.04.5 LTS</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; Matrix products: default</span></span>
 <span><span class="co">#&gt; BLAS:   /usr/lib/x86_64-linux-gnu/openblas-pthread/libblas.so.3 </span></span>
@@ -1075,7 +1091,7 @@ R. <em>R News</em>, 7(2), 25–31. <a href="https://journal.r-project.org/articl
 <span><span class="co">#&gt; [41] pkgconfig_2.0.3    desc_1.4.3         pkgdown_2.2.1      pillar_1.11.1     </span></span>
 <span><span class="co">#&gt; [45] bslib_0.12.0       gtable_0.3.6       glue_1.8.1         Rcpp_1.1.2        </span></span>
 <span><span class="co">#&gt; [49] systemfonts_1.3.2  xfun_0.60          tibble_3.3.1       tidyselect_1.2.1  </span></span>
-<span><span class="co">#&gt; [53] knitr_1.51         farver_2.1.2       htmltools_0.5.9    igraph_2.3.3      </span></span>
+<span><span class="co">#&gt; [53] knitr_1.52         farver_2.1.2       htmltools_0.5.9    igraph_2.3.3      </span></span>
 <span><span class="co">#&gt; [57] carData_3.0-6      rmarkdown_2.32     labeling_0.4.3     compiler_4.6.1    </span></span>
 <span><span class="co">#&gt; [61] S7_0.2.2</span></span></code></pre></div>
 </div>

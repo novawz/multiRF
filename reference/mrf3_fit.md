@@ -204,9 +204,9 @@ mrf3_fit(
 
 - global_fusion:
 
-  Global fusion across response blocks. `"average"` implements Eq. 8;
-  `"pmin"` is an optional intersection extension and disables fused
-  top-v tuning.
+  Global fusion across block-specific matrices. `"average"` implements
+  Eq. 8; `"pmin"` is an optional intersection extension and disables
+  fused top-v tuning.
 
 - score_power:
 

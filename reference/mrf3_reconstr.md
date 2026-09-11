@@ -89,9 +89,9 @@ get_reconstr_matrix(
 
 - global_fusion:
 
-  Fusion across per-response matrices. `"average"` implements the
-  uniform Eq. 8 average; `"pmin"` is an optional element-wise
-  intersection extension.
+  Fusion across block-specific matrices. `"average"` implements a
+  uniform average; `"pmin"` is an optional element-wise intersection
+  extension.
 
 - connection_score:
 
@@ -100,9 +100,11 @@ get_reconstr_matrix(
 
 - response_blocks:
 
-  Optional character vector containing every data block that must have a
-  response-side forest. The workflow supplies all input block names so
-  an entirely omitted block cannot be silently ignored.
+  Optional character vector containing the data blocks represented in
+  the fused matrix. For each block, reconstruction first uses forests
+  where it is the response, then forests where it is the predictor. A
+  block absent from every fitted connection uses the average of the
+  available block-specific matrices.
 
 - score_power:
 

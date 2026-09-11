@@ -123,8 +123,8 @@ forest weight matrix before fusion.</p></dd>
 
 
 <dt id="arg-global-fusion">global_fusion<a class="anchor" aria-label="anchor" href="#arg-global-fusion"></a></dt>
-<dd><p>Fusion across per-response matrices. <code>"average"</code>
-implements the uniform Eq. 8 average; <code>"pmin"</code> is an optional element-wise
+<dd><p>Fusion across block-specific matrices. <code>"average"</code>
+implements a uniform average; <code>"pmin"</code> is an optional element-wise
 intersection extension.</p></dd>
 
 
@@ -133,9 +133,11 @@ intersection extension.</p></dd>
 
 
 <dt id="arg-response-blocks">response_blocks<a class="anchor" aria-label="anchor" href="#arg-response-blocks"></a></dt>
-<dd><p>Optional character vector containing every data block
-that must have a response-side forest. The workflow supplies all input
-block names so an entirely omitted block cannot be silently ignored.</p></dd>
+<dd><p>Optional character vector containing the data blocks
+represented in the fused matrix. For each block, reconstruction first uses
+forests where it is the response, then forests where it is the predictor.
+A block absent from every fitted connection uses the average of the
+available block-specific matrices.</p></dd>
 
 
 <dt id="arg-score-power">score_power<a class="anchor" aria-label="anchor" href="#arg-score-power"></a></dt>

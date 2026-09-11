@@ -76,14 +76,11 @@
 
 <dt id="arg-per-response-recon">per_response_recon<a class="anchor" aria-label="anchor" href="#arg-per-response-recon"></a></dt>
 <dd><p>Logical; when <code>TRUE</code> (default), the shared
-reconstruction for each block <code>k</code> uses only the forest weight matrices
-from connections where block <code>k</code> is the <em>response</em>.
-Specifically, <code>W^(k) = sum_m alpha_m W_m</code> (modularity-weighted) over
-models <code>m</code> whose response is block <code>k</code>, and then
-<code>X_hat^(k) = W^(k) X^(k)</code>.
-This ensures that each block's residual captures genuinely block-specific
-variation rather than reconstruction artefacts from connections where
-the block served as predictor.
+reconstruction for each block <code>k</code> uses its block-specific forest
+weights. Forests where <code>k</code> is the response are preferred. If none are
+available, forests where <code>k</code> is the predictor are used; a block absent
+from every connection receives the global average. The selected matrix is
+then used as <code>X_hat^(k) = W^(k) X^(k)</code>.
 When <code>FALSE</code>, reverts to the legacy behaviour that uses the global
 fused reconstruction (<code>recon$fused_mat</code>) or <code>W_{all} %*% X</code>.</p></dd>
 
@@ -148,12 +145,15 @@ bioRxiv clustering definition uses <code>"all"</code>.</p></dd>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
     <p>A list with <code>shared</code> and <code>specific</code> components:</p><ul><li><p><code>shared$W_all</code>: shared fused weights (global, for shared clustering).</p></li>
-<li><p><code>shared$W_per_response</code>: named list of per-response fused weight matrices
+<li><p><code>shared$W_by_block</code>: named list of block-specific fused weight matrices
 (only present when <code>per_response_recon = TRUE</code>).</p></li>
+<li><p><code>shared$W_per_response</code>: backward-compatible alias of <code>W_by_block</code>.</p></li>
+<li><p><code>shared$block_weight_source</code>: whether each block used response-side,
+predictor-side, or global-average weights.</p></li>
 <li><p><code>specific$residual</code>: residual omics matrices
 <code>R = X - X_pred</code>.</p></li>
 <li><p><code>specific$predicted</code>: predicted omics matrices
-<code>X_pred</code> from per-response (or global) reconstruction.</p></li>
+<code>X_pred</code> from block-specific (or global) reconstruction.</p></li>
 <li><p><code>specific$residual_mod</code>: unsupervised RF models fitted on residual matrices.</p></li>
 <li><p><code>specific$W</code>: specific residual weights from residual RF models
 after adjusted/truncate/row-sum-normalize.</p></li>

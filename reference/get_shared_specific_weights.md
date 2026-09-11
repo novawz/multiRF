@@ -41,14 +41,13 @@ get_shared_specific_weights(
 - per_response_recon:
 
   Logical; when `TRUE` (default), the shared reconstruction for each
-  block `k` uses only the forest weight matrices from connections where
-  block `k` is the *response*. Specifically, `W^(k) = sum_m alpha_m W_m`
-  (modularity-weighted) over models `m` whose response is block `k`, and
-  then `X_hat^(k) = W^(k) X^(k)`. This ensures that each block's
-  residual captures genuinely block-specific variation rather than
-  reconstruction artefacts from connections where the block served as
-  predictor. When `FALSE`, reverts to the legacy behaviour that uses the
-  global fused reconstruction (`recon$fused_mat`) or `W_{all} %*% X`.
+  block `k` uses its block-specific forest weights. Forests where `k` is
+  the response are preferred. If none are available, forests where `k`
+  is the predictor are used; a block absent from every connection
+  receives the global average. The selected matrix is then used as
+  `X_hat^(k) = W^(k) X^(k)`. When `FALSE`, reverts to the legacy
+  behaviour that uses the global fused reconstruction
+  (`recon$fused_mat`) or `W_{all} %*% X`.
 
 - specific_top_v:
 
@@ -112,13 +111,18 @@ A list with `shared` and `specific` components:
 
 - `shared$W_all`: shared fused weights (global, for shared clustering).
 
-- `shared$W_per_response`: named list of per-response fused weight
+- `shared$W_by_block`: named list of block-specific fused weight
   matrices (only present when `per_response_recon = TRUE`).
+
+- `shared$W_per_response`: backward-compatible alias of `W_by_block`.
+
+- `shared$block_weight_source`: whether each block used response-side,
+  predictor-side, or global-average weights.
 
 - `specific$residual`: residual omics matrices `R = X - X_pred`.
 
 - `specific$predicted`: predicted omics matrices `X_pred` from
-  per-response (or global) reconstruction.
+  block-specific (or global) reconstruction.
 
 - `specific$residual_mod`: unsupervised RF models fitted on residual
   matrices.

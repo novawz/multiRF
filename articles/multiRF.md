@@ -302,8 +302,8 @@ forest weight matrix. The default similarity path then:
 
 1.  removes self weights;
 2.  applies model-level top-v truncation and row normalization;
-3.  normalizes connection scores within each response block;
-4.  averages the response-level matrices uniformly; and
+3.  normalizes connection scores within each response-first block group;
+4.  averages the block-level matrices uniformly; and
 5.  optionally applies fused top-v truncation and row normalization.
 
 The corresponding operations are written explicitly below. Let $`F_m`$
@@ -322,9 +322,20 @@ F_{m,ij}/\max\{1-F_{m,ii},\varepsilon\}, & i \ne j,\\
 W_m = \mathcal{R}\!\left\{\mathcal{T}_{v_m}(A_m)\right\}.
 ```
 
-For response block $`k`$, define
-$`\mathcal{M}^{(k)}=\{m:\operatorname{response}(m)=k\}`$. If $`q_m`$ is
-the connection score, the within-response weights and fused matrix are
+For block $`k`$, the model group first uses connections where $`k`$ is
+the response and otherwise uses connections where $`k`$ is the
+predictor:
+
+``` math
+\mathcal{M}^{(k)}=
+\begin{cases}
+\{m:\operatorname{response}(m)=k\}, & \text{if this set is non-empty},\\
+\{m:\operatorname{predictor}(m)=k\}, & \text{otherwise}.
+\end{cases}
+```
+
+If $`q_m`$ is the connection score, the within-block weights and fused
+matrix are
 
 ``` math
 \begin{aligned}
@@ -343,8 +354,8 @@ W^{(k)}
 \end{aligned}
 ```
 
-The default global fusion then averages the $`K`$ response-level
-matrices before the optional fused top-$`v`$ step:
+The default global fusion then averages the $`K`$ block-level matrices
+before the optional fused top-$`v`$ step:
 
 ``` math
 \overline{W}=\frac{1}{K}\sum_{k=1}^{K}W^{(k)},
@@ -353,15 +364,20 @@ W_{\mathcal{M}^*}
 =\mathcal{R}\!\left\{\mathcal{T}_{v_f}(\overline{W})\right\}.
 ```
 
-Thus, [model-level preprocessing](#fusion-model-weight) feeds
-[within-response fusion](#fusion-within-response), followed by
-[across-response fusion](#fusion-across-response). Weighted fusion uses
-the connection modularity by default, with $`c=0`$ and $`\gamma=1`$; if
-all scores in a response block are invalid or non-positive, the default
-fallback is uniform weighting. A tuned or fixed top-v at least 80% of
-the sample size is interpreted as no truncation. `model_top_v = Inf` and
+If a requested block is absent from every fitted connection, its
+$`W^{(k)}`$ is set to the average of the available block matrices. This
+preserves the selected connection set without dropping the block; it
+also leaves the overall average unchanged. Tuning and final
+reconstruction use the same block groups. Thus, [model-level
+preprocessing](#fusion-model-weight) feeds [within-block
+fusion](#fusion-within-block), followed by [across-block
+fusion](#fusion-across-block). Weighted fusion uses the connection
+modularity by default, with $`c=0`$ and $`\gamma=1`$; if all scores in a
+block group are invalid or non-positive, the default fallback is uniform
+weighting. A tuned or fixed top-v at least 80% of the sample size is
+interpreted as no truncation. `model_top_v = Inf` and
 `fused_top_v = Inf` also request no truncation explicitly; without fused
-truncation, $`\mathcal{T}_{v_f}`$ in the across-response formula is the
+truncation, $`\mathcal{T}_{v_f}`$ in the across-block formula is the
 identity.
 
 When `model_top_v` or `fused_top_v` is left `NULL`, the workflow selects
@@ -402,8 +418,8 @@ fit$shared$frac[, c("data", "shared_frac", "specific_ratio")]
 #> 3 mirna   0.2784850      0.7215150
 ```
 
-For block `k`, the [response-specific forest weight
-matrix](#fusion-within-response) gives the shared reconstruction
+For block `k`, the [response-first block weight
+matrix](#fusion-within-block) gives the shared reconstruction
 `Xhat^(k) = W^(k) X^(k)` and the residual `R^(k) = X^(k) - Xhat^(k)`. An
 unsupervised forest is then fitted to each residual matrix to obtain its
 block-specific weight matrix and similarity. The reported `shared_frac`
@@ -729,9 +745,11 @@ mode.
 cannot find data.** Supply `dat.list` directly or fit with
 `return_data = TRUE`.
 
-**A response block is absent from reconstruction.** Per-response fusion
-requires at least one fitted response-side connection for every input
-block; the workflow now stops rather than substituting a global matrix.
+**A block has no response-side connection.** The workflow uses
+connections where that block is the predictor. If the block is absent
+from every selected connection, it uses the average of the available
+block matrices. The source for each block is recorded in
+`fit$reconstruction$block_weight_source`.
 
 **Block names contain underscores.** Current fits retain explicit
 response and predictor metadata, so underscores are supported. Avoid
@@ -772,7 +790,7 @@ packageVersion("multiRF")
 sessionInfo()
 #> R version 4.6.1 (2026-06-24)
 #> Platform: x86_64-pc-linux-gnu
-#> Running under: Ubuntu 24.04.4 LTS
+#> Running under: Ubuntu 24.04.5 LTS
 #> 
 #> Matrix products: default
 #> BLAS:   /usr/lib/x86_64-linux-gnu/openblas-pthread/libblas.so.3 
@@ -807,7 +825,7 @@ sessionInfo()
 #> [41] pkgconfig_2.0.3    desc_1.4.3         pkgdown_2.2.1      pillar_1.11.1     
 #> [45] bslib_0.12.0       gtable_0.3.6       glue_1.8.1         Rcpp_1.1.2        
 #> [49] systemfonts_1.3.2  xfun_0.60          tibble_3.3.1       tidyselect_1.2.1  
-#> [53] knitr_1.51         farver_2.1.2       htmltools_0.5.9    igraph_2.3.3      
+#> [53] knitr_1.52         farver_2.1.2       htmltools_0.5.9    igraph_2.3.3      
 #> [57] carData_3.0-6      rmarkdown_2.32     labeling_0.4.3     compiler_4.6.1    
 #> [61] S7_0.2.2
 ```
