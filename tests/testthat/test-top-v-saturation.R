@@ -143,6 +143,104 @@ test_that("tune_fused_top_v uses the closed-form curve at integer resolution", {
   expect_true(!is.null(elbow$vtop_tb$elbow_rule))
 })
 
+test_that("top-v tuning uses the same predictor fallback as reconstruction", {
+  ids <- paste0("S", 1:12)
+  set.seed(17)
+  W <- matrix(runif(12 * 12), 12, 12, dimnames = list(ids, ids))
+  diag(W) <- 0
+  model <- list(
+    forest.wt = W,
+    xvar = data.frame(x = rnorm(12), row.names = ids),
+    yvar = data.frame(y = rnorm(12), row.names = ids),
+    connection = list(response = "A", predictor = "B")
+  )
+  models <- list(A_B = model)
+  dat <- list(
+    A = matrix(rnorm(24), 12, 2, dimnames = list(ids, c("a1", "a2"))),
+    B = matrix(rnorm(24), 12, 2, dimnames = list(ids, c("b1", "b2")))
+  )
+  mod <- list(
+    mod = models,
+    connection = list(c("A", "B")),
+    connection_score = NULL,
+    recon_fusion = "uniform",
+    response_blocks = names(dat)
+  )
+
+  model_tune <- tune_model_top_v(
+    dat, mod, tmin = 2, by = 2, max_candidates = 10,
+    parallel = FALSE, object = "saturation"
+  )
+  model_entropy <- vapply(model_tune$object$model_top_v, function(v) {
+    recon <- get_reconstr_matrix(
+      models, model_top_v = v, recon_fusion = "uniform",
+      response_blocks = names(dat)
+    )
+    multiRF:::calc_fused_weight_entropy(recon$W$W_all)
+  }, numeric(1))
+  expect_equal(model_tune$object$entropy, model_entropy, tolerance = 1e-12)
+
+  fused_tune <- tune_fused_top_v(
+    dat, mod, vmin = 2, model_top_v = 12,
+    parallel = FALSE, object = "saturation"
+  )
+  fused_entropy <- vapply(fused_tune$object$fused_top_v, function(v) {
+    recon <- get_reconstr_matrix(
+      models, model_top_v = 12, recon_fusion = "uniform",
+      response_blocks = names(dat),
+      fused_top_v = if (is.finite(v)) v else NULL
+    )
+    multiRF:::calc_fused_weight_entropy(recon$W$W_all)
+  }, numeric(1))
+  expect_equal(fused_tune$object$entropy, fused_entropy, tolerance = 1e-12)
+  expect_identical(mod$connection, list(c("A", "B")))
+})
+
+test_that("model top-v tuning honors pmin global fusion", {
+  ids <- paste0("S", 1:10)
+  set.seed(23)
+  mk <- function(response, predictor) {
+    W <- matrix(runif(100), 10, 10, dimnames = list(ids, ids))
+    diag(W) <- 0
+    list(
+      forest.wt = W,
+      xvar = data.frame(x = rnorm(10), row.names = ids),
+      yvar = data.frame(y = rnorm(10), row.names = ids),
+      connection = list(response = response, predictor = predictor)
+    )
+  }
+  models <- list(A_B = mk("A", "B"), B_A = mk("B", "A"))
+  dat <- list(
+    A = matrix(rnorm(20), 10, 2, dimnames = list(ids, c("a1", "a2"))),
+    B = matrix(rnorm(20), 10, 2, dimnames = list(ids, c("b1", "b2")))
+  )
+  mod <- list(
+    mod = models,
+    connection = list(c("A", "B"), c("B", "A")),
+    recon_fusion = "uniform",
+    global_fusion = "pmin",
+    response_blocks = names(dat)
+  )
+
+  tuned <- tune_model_top_v(
+    dat, mod, tmin = 2, by = 2, parallel = FALSE, object = "saturation"
+  )
+  expected <- vapply(tuned$object$model_top_v, function(v) {
+    recon <- get_reconstr_matrix(
+      models, model_top_v = v, recon_fusion = "uniform",
+      global_fusion = "pmin", response_blocks = names(dat)
+    )
+    multiRF:::calc_fused_weight_entropy(recon$W$W_all)
+  }, numeric(1))
+  expect_equal(tuned$object$entropy, expected, tolerance = 1e-12)
+  expect_error(
+    tune_fused_top_v(
+      dat, mod, vmin = 2, model_top_v = 10, parallel = FALSE
+    ),
+    "not used"
+  )
+})
+
 test_that("workflow exposes the top-v method and tau in config", {
   expect_equal(
     eval(formals(mrf3_fit)$top_v_method)[1L],

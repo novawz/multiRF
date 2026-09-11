@@ -136,7 +136,7 @@ selected or fixed value at least \code{0.8 * n} is treated as no truncation.}
 \item{recon_fusion}{Reconstruction fusion mode passed to \code{get_reconstr_matrix()}:
 \code{"weighted"} (default) or \code{"uniform"}.}
 
-\item{global_fusion}{Global fusion across response blocks. \code{"average"}
+\item{global_fusion}{Global fusion across block-specific matrices. \code{"average"}
 implements Eq. 8; \code{"pmin"} is an optional intersection extension and disables
 fused top-v tuning.}
 

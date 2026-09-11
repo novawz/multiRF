@@ -103,8 +103,13 @@ tune_model_top_v <- function(dat.list, mod, tmin = 10, by = 1, k = NULL,
       top_v = tv,
       connection_score = tune_ctx$connection_score,
       model_list = rfit,
-      response_blocks = names(dat.list),
+      response_blocks = if (is.null(tune_ctx$response_blocks)) {
+        names(dat.list)
+      } else {
+        tune_ctx$response_blocks
+      },
       recon_fusion = tune_ctx$recon_fusion,
+      global_fusion = tune_ctx$global_fusion,
       score_power = tune_ctx$score_power,
       score_floor = tune_ctx$score_floor,
       fallback_uniform = tune_ctx$fallback_uniform,
@@ -325,6 +330,9 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
   model_top_v <- as.integer(model_top_v)
 
   tune_ctx <- resolve_tune_mod_inputs(mod)
+  if (identical(tune_ctx$global_fusion, "pmin")) {
+    stop("`tune_fused_top_v()` is not used with `global_fusion = 'pmin'`.")
+  }
   rfit <- tune_ctx$rfit
   model_names <- names(rfit)
   model_cache <- build_model_weight_cache_list(
@@ -336,8 +344,13 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
     top_v = model_top_v,
     connection_score = tune_ctx$connection_score,
     model_list = rfit,
-    response_blocks = names(dat.list),
+    response_blocks = if (is.null(tune_ctx$response_blocks)) {
+      names(dat.list)
+    } else {
+      tune_ctx$response_blocks
+    },
     recon_fusion = tune_ctx$recon_fusion,
+    global_fusion = tune_ctx$global_fusion,
     score_power = tune_ctx$score_power,
     score_floor = tune_ctx$score_floor,
     fallback_uniform = tune_ctx$fallback_uniform,
@@ -518,6 +531,7 @@ tune_fused_top_v <- function(dat.list, mod, vmin = 10, by = 1, vmax = NULL,
 
 resolve_tune_mod_inputs <- function(mod) {
   recon_fusion <- "weighted"
+  global_fusion <- "average"
   score_power <- 1
   score_floor <- 0
   fallback_uniform <- TRUE
@@ -535,6 +549,7 @@ resolve_tune_mod_inputs <- function(mod) {
 
   if (is.list(mod)) {
     if (!is.null(mod$recon_fusion)) recon_fusion <- mod$recon_fusion
+    if (!is.null(mod$global_fusion)) global_fusion <- mod$global_fusion
     if (!is.null(mod$score_power)) score_power <- mod$score_power
     if (!is.null(mod$score_floor)) score_floor <- mod$score_floor
     if (!is.null(mod$fallback_uniform)) fallback_uniform <- mod$fallback_uniform
@@ -560,6 +575,7 @@ resolve_tune_mod_inputs <- function(mod) {
     rfit = rfit,
     connection_score = connection_score,
     recon_fusion = match.arg(as.character(recon_fusion)[1L], c("weighted", "uniform")),
+    global_fusion = match.arg(as.character(global_fusion)[1L], c("average", "pmin")),
     score_power = as.numeric(score_power)[1L],
     score_floor = as.numeric(score_floor)[1L],
     fallback_uniform = isTRUE(fallback_uniform),
@@ -567,21 +583,22 @@ resolve_tune_mod_inputs <- function(mod) {
   )
 }
 
-# Build the Eq. 6-8 matrix used by response-stratified reconstruction. Scores
-# are normalized within response blocks, and the response-level matrices are
-# then averaged uniformly. A single global normalization over all directed
-# connections would overweight response blocks having more models or larger
-# raw modularity values.
+# Build the same response-first block fusion used by final reconstruction.
+# Each block prefers response-side forests and falls back to predictor-side
+# forests; a completely disconnected requested block receives the average of
+# the available block matrices. The block matrices are then averaged uniformly.
 build_response_fused_weight_from_cache <- function(cache_list, top_v,
                                                 connection_score = NULL,
                                                 model_list = NULL,
                                                 response_blocks = NULL,
                                                 recon_fusion = c("weighted", "uniform"),
+                                                global_fusion = c("average", "pmin"),
                                                 score_power = 1,
                                                 score_floor = 0,
                                                 fallback_uniform = TRUE,
                                                 keep_ties = TRUE) {
   recon_fusion <- match.arg(recon_fusion)
+  global_fusion <- match.arg(global_fusion)
   model_names <- names(cache_list)
   if (is.null(model_list)) model_list <- cache_list
   if (is.null(names(model_list))) names(model_list) <- model_names
@@ -598,34 +615,23 @@ build_response_fused_weight_from_cache <- function(cache_list, top_v,
   }
   names(scores) <- model_names
 
-  pairs <- lapply(seq_along(model_names), function(i) {
-    parse_model_pair(model_names[[i]], model = model_list[[model_names[[i]]]])
-  })
-  responses <- vapply(pairs, function(pair) pair[[1L]], character(1))
-  if (is.null(response_blocks)) response_blocks <- unique(responses)
-  missing_response <- setdiff(response_blocks, responses)
-  if (length(missing_response)) {
-    stop(
-      "Cannot construct Eq. 6-8 fusion: no fitted connection has response block(s): ",
-      paste(missing_response, collapse = ", "), "."
+  matrices <- lapply(model_names, function(model_name) {
+    materialize_weight_from_cache(
+      cache_list[[model_name]], v = top_v, keep_ties = keep_ties
     )
-  }
-
-  W_by_response <- lapply(response_blocks, function(response) {
-    response_models <- model_names[responses == response]
-    alpha <- normalize_fusion_weights(
-      scores[response_models], fallback_uniform = fallback_uniform
-    )
-    names(alpha) <- response_models
-    matrices <- lapply(response_models, function(model_name) {
-      materialize_weight_from_cache(
-        cache_list[[model_name]], v = top_v, keep_ties = keep_ties
-      )
-    })
-    names(matrices) <- response_models
-    fuse_matrix_list(matrices, alpha)
   })
-  Reduce("+", W_by_response) / length(W_by_response)
+  names(matrices) <- model_names
+  block_fusion <- fuse_weight_matrices_by_block(
+    W_models = matrices,
+    model_score = scores,
+    model_list = model_list,
+    response_blocks = response_blocks,
+    fallback_uniform = fallback_uniform
+  )
+  fuse_across_block_weights(
+    block_fusion$W_by_block,
+    global_fusion = global_fusion
+  )
 }
 
 build_model_weight_cache_list <- function(rfit, vmax = NULL) {

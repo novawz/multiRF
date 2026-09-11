@@ -6,8 +6,7 @@
   top-v, with closed-form fused entropy and the earlier methods retained.
 - Replaced fork-based parallel paths with PSOCK workers and safer serial
   defaults for tuning grids.
-- Reconstructed missing ordinary proximity from tree membership and improved
-  related validation, tests, and documentation.
+- Added reconstruction fallbacks for missing proximity and response directions.
 
 # multiRF 0.2.3
 

@@ -279,12 +279,13 @@ extract_mrf3_plot_matrix <- function(x,
     }
 
     if (identical(src, "reconstruction_weight_block")) {
-      by_block <- x$reconstruction$W$W_per_response
+      by_block <- x$reconstruction$W$W_by_block
+      if (is.null(by_block)) by_block <- x$reconstruction$W$W_per_response
       if (!is.list(by_block) || length(by_block) == 0L) {
-        stop("`reconstruction$W$W_per_response` is unavailable.")
+        stop("Block-specific reconstruction weights are unavailable.")
       }
       block <- resolve_choice(omics, names(by_block), what = "omics")
-      return(as_numeric_matrix(by_block[[block]], paste0("reconstruction$W$W_per_response:", block)))
+      return(as_numeric_matrix(by_block[[block]], paste0("reconstruction$W$W_by_block:", block)))
     }
 
     if (identical(src, "reconstruction_fused_block")) {

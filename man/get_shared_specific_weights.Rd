@@ -31,14 +31,11 @@ get_shared_specific_weights(
 \item{recon}{Reconstruction output from \code{get_reconstr_matrix()}.}
 
 \item{per_response_recon}{Logical; when \code{TRUE} (default), the shared
-reconstruction for each block \code{k} uses only the forest weight matrices
-from connections where block \code{k} is the \emph{response}.
-Specifically, \verb{W^(k) = sum_m alpha_m W_m} (modularity-weighted) over
-models \code{m} whose response is block \code{k}, and then
-\verb{X_hat^(k) = W^(k) X^(k)}.
-This ensures that each block's residual captures genuinely block-specific
-variation rather than reconstruction artefacts from connections where
-the block served as predictor.
+reconstruction for each block \code{k} uses its block-specific forest
+weights. Forests where \code{k} is the response are preferred. If none are
+available, forests where \code{k} is the predictor are used; a block absent
+from every connection receives the global average. The selected matrix is
+then used as \verb{X_hat^(k) = W^(k) X^(k)}.
 When \code{FALSE}, reverts to the legacy behaviour that uses the global
 fused reconstruction (\code{recon$fused_mat}) or \code{W_{all} \%*\% X}.}
 
@@ -83,12 +80,15 @@ bioRxiv clustering definition uses \code{"all"}.}
 A list with \code{shared} and \code{specific} components:
 \itemize{
 \item \code{shared$W_all}: shared fused weights (global, for shared clustering).
-\item \code{shared$W_per_response}: named list of per-response fused weight matrices
+\item \code{shared$W_by_block}: named list of block-specific fused weight matrices
 (only present when \code{per_response_recon = TRUE}).
+\item \code{shared$W_per_response}: backward-compatible alias of \code{W_by_block}.
+\item \code{shared$block_weight_source}: whether each block used response-side,
+predictor-side, or global-average weights.
 \item \code{specific$residual}: residual omics matrices
 \code{R = X - X_pred}.
 \item \code{specific$predicted}: predicted omics matrices
-\code{X_pred} from per-response (or global) reconstruction.
+\code{X_pred} from block-specific (or global) reconstruction.
 \item \code{specific$residual_mod}: unsupervised RF models fitted on residual matrices.
 \item \code{specific$W}: specific residual weights from residual RF models
 after adjusted/truncate/row-sum-normalize.

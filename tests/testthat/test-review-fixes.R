@@ -66,6 +66,39 @@ review_fit_robust <- local({
   }
 })
 
+test_that("a manual one-way connection is preserved through the full workflow", {
+  manual <- list(c("A", "B"))
+  fit <- review_quiet(suppressWarnings(mrf3_fit(
+    review_dat()$dat,
+    ntree = 3,
+    connect_list = manual,
+    top_v = 10,
+    filter_mode = "none",
+    clustering_args = list(shared_k = 2, specific_k = 2),
+    shared_specific_args = list(
+      specific_ntree = 3,
+      specific_nthread = 1,
+      specific_proximity = "none"
+    ),
+    nthread = 1,
+    filter_verbose = FALSE,
+    verbose = FALSE,
+    seed = 529
+  )))
+
+  expect_identical(fit$connection, manual)
+  expect_identical(
+    fit$reconstruction$block_weight_source,
+    c(A = "response", B = "predictor")
+  )
+  expect_identical(names(fit$reconstruction$W$W_by_block), c("A", "B"))
+  expect_identical(
+    fit$shared$weights$block_weight_source,
+    fit$reconstruction$block_weight_source
+  )
+  expect_identical(summary(fit)$metadata$block_names, c("A", "B"))
+})
+
 # ---- edge-ratio invariant in build_tree_network_cpp -------------------------
 
 test_that("build_tree_network_cpp edge equals parent/child nodesize ratio", {

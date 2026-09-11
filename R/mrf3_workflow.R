@@ -132,7 +132,7 @@
 #' selected or fixed value at least `0.8 * n` is treated as no truncation.
 #' @param recon_fusion Reconstruction fusion mode passed to `get_reconstr_matrix()`:
 #' `"weighted"` (default) or `"uniform"`.
-#' @param global_fusion Global fusion across response blocks. `"average"`
+#' @param global_fusion Global fusion across block-specific matrices. `"average"`
 #' implements Eq. 8; `"pmin"` is an optional intersection extension and disables
 #' fused top-v tuning.
 #' @param score_power Exponent applied to connection scores for weighted reconstruction.
@@ -453,6 +453,7 @@ mrf3_fit <- function(dat.list,
     connection_input = connect_for_downstream,
     connection_score = stage_connection$score,
     recon_fusion = recon_fusion,
+    global_fusion = global_fusion,
     score_power = score_power,
     score_floor = score_floor,
     fallback_uniform = fallback_uniform,

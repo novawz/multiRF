@@ -62,8 +62,12 @@ working with an already curated feature set, as in the example above.
 
 The default similarity workflow retains all directed forests. It removes
 their diagonal weights, row-normalizes after model top-v truncation, normalizes
-modularity scores within each response block, and uniformly averages the
-per-response matrices. A top-v value at least 80% of the sample size
+modularity scores within each response-first block group, and uniformly
+averages the block matrices. If a selected connection set leaves a block
+without a response-side forest, its predictor-side forests are used instead;
+a completely disconnected block uses the available block average. The same
+groups are used for top-v tuning and final reconstruction. A top-v value at
+least 80% of the sample size
 is treated as no truncation. Shared and omics-specific similarities use
 `S = W W^T` with a zero diagonal and spectral clustering by default.
 

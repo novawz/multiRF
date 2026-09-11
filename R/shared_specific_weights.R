@@ -29,14 +29,11 @@
 #' @param dat.list A named list of omics matrices (samples in rows, features in columns).
 #' @param recon Reconstruction output from `get_reconstr_matrix()`.
 #' @param per_response_recon Logical; when \code{TRUE} (default), the shared
-#' reconstruction for each block \code{k} uses only the forest weight matrices
-#' from connections where block \code{k} is the \emph{response}.
-#' Specifically, `W^(k) = sum_m alpha_m W_m` (modularity-weighted) over
-#' models \code{m} whose response is block \code{k}, and then
-#' `X_hat^(k) = W^(k) X^(k)`.
-#' This ensures that each block's residual captures genuinely block-specific
-#' variation rather than reconstruction artefacts from connections where
-#' the block served as predictor.
+#' reconstruction for each block \code{k} uses its block-specific forest
+#' weights. Forests where \code{k} is the response are preferred. If none are
+#' available, forests where \code{k} is the predictor are used; a block absent
+#' from every connection receives the global average. The selected matrix is
+#' then used as `X_hat^(k) = W^(k) X^(k)`.
 #' When \code{FALSE}, reverts to the legacy behaviour that uses the global
 #' fused reconstruction (\code{recon$fused_mat}) or \code{W_{all} \%*\% X}.
 #' @param specific_top_v Optional integer. If set, each row of fused specific
@@ -69,12 +66,15 @@
 #'
 #' @return A list with `shared` and `specific` components:
 #' - `shared$W_all`: shared fused weights (global, for shared clustering).
-#' - `shared$W_per_response`: named list of per-response fused weight matrices
+#' - `shared$W_by_block`: named list of block-specific fused weight matrices
 #'   (only present when `per_response_recon = TRUE`).
+#' - `shared$W_per_response`: backward-compatible alias of `W_by_block`.
+#' - `shared$block_weight_source`: whether each block used response-side,
+#'   predictor-side, or global-average weights.
 #' - `specific$residual`: residual omics matrices
 #'   `R = X - X_pred`.
 #' - `specific$predicted`: predicted omics matrices
-#'   `X_pred` from per-response (or global) reconstruction.
+#'   `X_pred` from block-specific (or global) reconstruction.
 #' - `specific$residual_mod`: unsupervised RF models fitted on residual matrices.
 #' - `specific$W`: specific residual weights from residual RF models
 #'   after adjusted/truncate/row-sum-normalize.
@@ -153,12 +153,15 @@ get_shared_specific_weights <- function(dat.list,
   residual_mod <- vector("list", length(dat_names))
   names(specific_W) <- names(specific_imd) <- names(specific_imd_per_tree) <- names(residual_mod) <- dat_names
 
-  # --- Per-response weight matrices W^(k) -----------------------------------
-  # Pre-computed in get_reconstr_matrix() and stored in recon$W$W_per_response.
-  # Each W^(k) = sum_{i != k} alpha_{ki} W_{ki}, normalised within the
-  # response-k subset and row-normalised, so X_hat = W^(k) X^(k) is a proper
-  # linear smoother using only forests trained to predict block k.
-  W_per_response <- if (per_response_recon) recon$W$W_per_response else NULL
+  # --- Response-first block weight matrices W^(k) ---------------------------
+  # Pre-computed in get_reconstr_matrix() and stored under the historical
+  # recon$W$W_per_response name. Response-side forests are preferred, with
+  # predictor-side and global-average fallbacks recorded in metadata.
+  W_per_response <- if (per_response_recon) {
+    if (!is.null(recon$W$W_by_block)) recon$W$W_by_block else recon$W$W_per_response
+  } else {
+    NULL
+  }
 
   for (d in dat_names) {
     X <- as.matrix(dat.list[[d]])
@@ -177,7 +180,7 @@ get_shared_specific_weights <- function(dat.list,
         W_d <- W_d[rownames(X), rownames(X), drop = FALSE]
       }
       if (nrow(W_d) != nrow(X) || ncol(W_d) != nrow(X)) {
-        stop("Dimension mismatch for per-response W of block `", d,
+        stop("Dimension mismatch for block-specific W of block `", d,
              "`: expected n x n with n = ", nrow(X), ".")
       }
       X_hat <- W_d %*% X
@@ -363,11 +366,17 @@ get_shared_specific_weights <- function(dat.list,
   }
 
   shared_out <- list(
+    # Preserve the historical label; `block_weight_source` gives the precise
+    # response/predictor/global provenance for each block.
     source = if (per_response_recon) "per_response" else "W_all",
     W_all = recon$W$W_all
   )
   if (!is.null(W_per_response)) {
+    shared_out$W_by_block <- W_per_response
     shared_out$W_per_response <- W_per_response
+  }
+  if (!is.null(recon$block_weight_source)) {
+    shared_out$block_weight_source <- recon$block_weight_source
   }
 
   list(

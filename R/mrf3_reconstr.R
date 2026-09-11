@@ -15,13 +15,15 @@
 #' forest weight matrix before fusion.
 #' @param recon_fusion Reconstruction fusion mode.
 #' `"weighted"` (default) uses `connection_score`; `"uniform"` uses equal weights.
-#' @param global_fusion Fusion across per-response matrices. `"average"`
-#' implements the uniform Eq. 8 average; `"pmin"` is an optional element-wise
+#' @param global_fusion Fusion across block-specific matrices. `"average"`
+#' implements a uniform average; `"pmin"` is an optional element-wise
 #' intersection extension.
 #' @param connection_score Optional directional score matrix from `find_connection(return_score = TRUE)`.
-#' @param response_blocks Optional character vector containing every data block
-#'   that must have a response-side forest. The workflow supplies all input
-#'   block names so an entirely omitted block cannot be silently ignored.
+#' @param response_blocks Optional character vector containing the data blocks
+#'   represented in the fused matrix. For each block, reconstruction first uses
+#'   forests where it is the response, then forests where it is the predictor.
+#'   A block absent from every fitted connection uses the average of the
+#'   available block-specific matrices.
 #' @param score_power Exponent applied to raw connection scores before normalization.
 #' @param score_floor Non-negative floor applied to raw connection scores before normalization.
 #' @param fallback_uniform Logical; whether to fallback to uniform averaging when weighted scores are unavailable.
@@ -194,6 +196,7 @@ mrf3_reconstr <- function(recon = NULL,
     recon_fusion_mode = recon$fusion_mode,
     model_score = recon$model_score,
     model_fusion_weights = recon$model_fusion_weights,
+    block_weight_source = recon$block_weight_source,
     dat_used = dat_used_actual,
     method = "Reconstr"
   )
@@ -340,7 +343,7 @@ get_reconstr_matrix <- function(rfit,
   dat_names <- unique(vapply(mat_records, `[[`, FUN.VALUE = character(1), "dat_name"))
   if (is.null(response_blocks)) {
     score_blocks <- if (is.matrix(connection_score)) rownames(connection_score) else NULL
-    response_blocks <- if (length(score_blocks)) score_blocks else dat_names
+    response_blocks <- unique(c(score_blocks, dat_names))
   }
   response_blocks <- as.character(response_blocks)
   if (!length(response_blocks) || anyNA(response_blocks) ||
@@ -363,62 +366,36 @@ get_reconstr_matrix <- function(rfit,
   }
 
   ## ══════════════════════════════════════════════════════════════
-  ## Step 2: Per-response W^(k) — only connections where k is response
-  ## W^(k) = sum_{i != k} alpha_{ki} * W_{ki},  normalised within
-  ## the response-k subset.  Used for shared-specific decomposition.
+  ## Step 2: Block-specific W^(k). Prefer connections where k is the response;
+  ## if none exist, use connections where k is the predictor. A block absent
+  ## from every fitted connection uses the average available block matrix.
   ## ══════════════════════════════════════════════════════════════
-  W_per_response <- vector("list", length(response_blocks))
-  names(W_per_response) <- response_blocks
-  per_response_alpha <- vector("list", length(response_blocks))
-  names(per_response_alpha) <- response_blocks
-
-  for (d in response_blocks) {
-    resp_idx <- vapply(model_names, function(m) {
-      pair <- parse_model_pair(m, model = rfit[[m]])
-      identical(pair[1], d)
-    }, logical(1))
-    resp_models <- model_names[resp_idx]
-
-    if (length(resp_models) == 0L) {
-      stop(
-        "No fitted connection has block `", d, "` as response. ",
-        "Per-response reconstruction cannot substitute predictor-side/global weights."
-      )
-    } else {
-      resp_scores <- pmax(model_score[resp_models], 0)
-      resp_alpha <- normalize_fusion_weights(resp_scores, fallback_uniform = fallback_uniform)
-      names(resp_alpha) <- resp_models
-      per_response_alpha[[d]] <- resp_alpha
-
-      W_k <- fuse_matrix_list(W_models[resp_models], resp_alpha)
-      rs <- rowSums(W_k); rs[rs <= 0 | !is.finite(rs)] <- 1
-      W_per_response[[d]] <- W_k / rs
-    }
-  }
+  block_fusion <- fuse_weight_matrices_by_block(
+    W_models = W_models,
+    model_score = model_score,
+    model_list = rfit,
+    response_blocks = response_blocks,
+    fallback_uniform = fallback_uniform
+  )
+  # Keep the historical field name for compatibility. The accompanying
+  # `block_weight_source` records whether each entry came from the response
+  # side, predictor side, or the global-average fallback.
+  W_per_response <- block_fusion$W_by_block
+  per_response_alpha <- block_fusion$alpha_by_block
 
   ## ══════════════════════════════════════════════════════════════
-  ## Step 3: Global W_M* — built FROM per-response W^(k) matrices
+  ## Step 3: Global W_M* — built from block-specific W^(k) matrices
   ## Two modes:
   ##   "average" : W_M* = (1/K) * sum_k W^(k)  + optional fused_top_v
   ##   "pmin"    : W_M*(i,j) = min_k W^(k)(i,j) + row-normalise
   ##               (cross-modal intersection; fused_top_v not needed)
   ## ══════════════════════════════════════════════════════════════
-  K <- length(W_per_response)
-  if (global_fusion == "pmin") {
-    ## Element-wise minimum across all per-response matrices
-    ## Samples are "shared-similar" only if ALL modalities agree
-    W_all <- W_per_response[[1]]
-    if (K > 1L) {
-      for (ki in seq_len(K)[-1]) {
-        W_all <- pmin(W_all, W_per_response[[ki]])
-      }
-    }
-    ## Row-normalise to maintain linear smoother property
-    rs <- rowSums(W_all); rs[rs <= 0 | !is.finite(rs)] <- 1
-    W_all <- W_all / rs
-  } else {
-    ## "average": uniform average of per-response matrices
-    W_all <- Reduce("+", W_per_response) / K
+  W_all <- fuse_across_block_weights(
+    W_per_response,
+    global_fusion = global_fusion
+  )
+  if (global_fusion == "average") {
+    ## "average": uniform average of block-specific matrices
     ## Apply optional fused_top_v and row-normalisation
     W_all <- postprocess_fused_weight(
       W = W_all,
@@ -428,19 +405,17 @@ get_reconstr_matrix <- function(rfit,
     )
   }
 
-  # Effective coefficients in Eq. 8: every response matrix has weight 1/K;
-  # within a response, directed models retain their Eq. 7 coefficients.
-  model_fusion_weights <- setNames(rep(0, length(model_names)), model_names)
-  for (response in names(per_response_alpha)) {
-    alpha <- per_response_alpha[[response]]
-    model_fusion_weights[names(alpha)] <- alpha / K
-  }
+  # Effective coefficients before optional fused truncation. A forest can
+  # contribute once through its response block and again through a predictor
+  # fallback, so coefficients must be accumulated rather than overwritten.
+  model_fusion_weights <- block_fusion$model_fusion_weights
 
   list(
     fused_mat = full_fused_mat,
     W = list(
       W_all = W_all,
       W_models = W_models,
+      W_by_block = W_per_response,
       W_per_response = W_per_response
     ),
     sample_names = rownames(rfit[[1]]$xvar),
@@ -452,7 +427,9 @@ get_reconstr_matrix <- function(rfit,
     global_fusion = global_fusion,
     model_score = model_score,
     model_fusion_weights = model_fusion_weights,
+    per_block_alpha = per_response_alpha,
     per_response_alpha = per_response_alpha,
+    block_weight_source = block_fusion$source,
     block_model_weights = block_model_weights
   )
 }
@@ -553,6 +530,162 @@ parse_model_pair <- function(model_name, model = NULL) {
     return(split[1])
   }
   split[1:2]
+}
+
+# Resolve one forest-weight group for every requested data block. Response-side
+# forests retain priority so complete directed designs reproduce the original
+# response-stratified fusion. Predictor-side forests are used only when a block
+# has no response-side forest. Blocks absent from every connection are filled
+# later from the average of the available block matrices.
+resolve_block_weight_groups <- function(model_names, model_list = NULL,
+                                        response_blocks = NULL) {
+  if (!length(model_names)) {
+    stop("At least one fitted model is required for block fusion.")
+  }
+
+  model_at <- function(i) {
+    if (is.null(model_list)) return(NULL)
+    named <- !is.null(names(model_list)) && model_names[[i]] %in% names(model_list)
+    if (named) return(model_list[[model_names[[i]]]])
+    if (length(model_list) >= i) return(model_list[[i]])
+    NULL
+  }
+  pairs <- lapply(seq_along(model_names), function(i) {
+    parse_model_pair(model_names[[i]], model = model_at(i))
+  })
+  responses <- vapply(pairs, function(pair) pair[[1L]], character(1))
+  predictors <- vapply(pairs, function(pair) {
+    if (length(pair) >= 2L) pair[[2L]] else NA_character_
+  }, character(1))
+
+  if (is.null(response_blocks)) {
+    response_blocks <- unique(c(responses, predictors[!is.na(predictors)]))
+  }
+  response_blocks <- as.character(response_blocks)
+  if (!length(response_blocks) || anyNA(response_blocks) ||
+      any(!nzchar(response_blocks)) || anyDuplicated(response_blocks)) {
+    stop("`response_blocks` must contain unique, non-missing block names.")
+  }
+
+  groups <- setNames(vector("list", length(response_blocks)), response_blocks)
+  source <- setNames(rep("global_average", length(response_blocks)), response_blocks)
+  for (block in response_blocks) {
+    response_models <- model_names[responses == block]
+    if (length(response_models)) {
+      groups[[block]] <- response_models
+      source[[block]] <- "response"
+      next
+    }
+    predictor_models <- model_names[!is.na(predictors) & predictors == block]
+    if (length(predictor_models)) {
+      groups[[block]] <- predictor_models
+      source[[block]] <- "predictor"
+    } else {
+      groups[[block]] <- character(0)
+    }
+  }
+
+  list(groups = groups, source = source)
+}
+
+# Fuse preprocessed forest-weight matrices using the same response-first,
+# predictor-fallback rule in both tuning and final reconstruction.
+fuse_weight_matrices_by_block <- function(W_models, model_score,
+                                          model_list = NULL,
+                                          response_blocks = NULL,
+                                          fallback_uniform = TRUE) {
+  if (!is.list(W_models) || !length(W_models) || is.null(names(W_models)) ||
+      any(!nzchar(names(W_models)))) {
+    stop("`W_models` must be a non-empty named list of weight matrices.")
+  }
+  model_names <- names(W_models)
+  score <- setNames(rep(NA_real_, length(model_names)), model_names)
+  if (!is.null(model_score)) {
+    if (!is.null(names(model_score))) {
+      matched <- intersect(model_names, names(model_score))
+      score[matched] <- as.numeric(model_score[matched])
+    } else if (length(model_score) == length(model_names)) {
+      score[] <- as.numeric(model_score)
+    } else {
+      stop("Unnamed `model_score` must have one value per fitted model.")
+    }
+  }
+
+  resolved <- resolve_block_weight_groups(
+    model_names = model_names,
+    model_list = model_list,
+    response_blocks = response_blocks
+  )
+  blocks <- names(resolved$groups)
+  W_by_block <- setNames(vector("list", length(blocks)), blocks)
+  alpha_full <- setNames(vector("list", length(blocks)), blocks)
+
+  direct_blocks <- blocks[resolved$source != "global_average"]
+  for (block in direct_blocks) {
+    block_models <- resolved$groups[[block]]
+    alpha <- normalize_fusion_weights(
+      score[block_models], fallback_uniform = fallback_uniform
+    )
+    names(alpha) <- block_models
+    W_by_block[[block]] <- row_normalize_weights(
+      fuse_matrix_list(W_models[block_models], alpha)
+    )
+    coeff <- setNames(rep(0, length(model_names)), model_names)
+    coeff[block_models] <- alpha
+    alpha_full[[block]] <- coeff
+  }
+
+  global_blocks <- blocks[resolved$source == "global_average"]
+  if (length(global_blocks)) {
+    if (length(direct_blocks)) {
+      fallback_W <- Reduce("+", W_by_block[direct_blocks]) / length(direct_blocks)
+      fallback_alpha <- Reduce("+", alpha_full[direct_blocks]) / length(direct_blocks)
+    } else {
+      fallback_alpha <- normalize_fusion_weights(
+        score[model_names], fallback_uniform = fallback_uniform
+      )
+      names(fallback_alpha) <- model_names
+      fallback_W <- fuse_matrix_list(W_models, fallback_alpha)
+    }
+    fallback_W <- row_normalize_weights(fallback_W)
+    for (block in global_blocks) {
+      W_by_block[[block]] <- fallback_W
+      alpha_full[[block]] <- fallback_alpha
+    }
+  }
+
+  alpha_by_block <- lapply(alpha_full, function(alpha) alpha[alpha > 0])
+  alpha_matrix <- do.call(rbind, lapply(alpha_full, function(alpha) {
+    unname(alpha[model_names])
+  }))
+  colnames(alpha_matrix) <- model_names
+  rownames(alpha_matrix) <- blocks
+
+  list(
+    W_by_block = W_by_block,
+    alpha_by_block = alpha_by_block,
+    source = resolved$source,
+    model_fusion_weights = setNames(colMeans(alpha_matrix), model_names)
+  )
+}
+
+fuse_across_block_weights <- function(W_by_block,
+                                      global_fusion = c("average", "pmin")) {
+  global_fusion <- match.arg(global_fusion)
+  if (!is.list(W_by_block) || !length(W_by_block)) {
+    stop("`W_by_block` must be a non-empty list of weight matrices.")
+  }
+  if (identical(global_fusion, "average")) {
+    return(Reduce("+", W_by_block) / length(W_by_block))
+  }
+
+  W_all <- W_by_block[[1L]]
+  if (length(W_by_block) > 1L) {
+    for (i in seq_along(W_by_block)[-1L]) {
+      W_all <- pmin(W_all, W_by_block[[i]])
+    }
+  }
+  row_normalize_weights(W_all)
 }
 
 match_model_scores <- function(model_names, connection_score = NULL,
@@ -701,6 +834,7 @@ resolve_top_v_values <- function(dat_input,
                                  connection_input,
                                  connection_score,
                                  recon_fusion = c("weighted", "uniform"),
+                                 global_fusion = c("average", "pmin"),
                                  score_power = 1,
                                  score_floor = 0,
                                  fallback_uniform = TRUE,
@@ -717,6 +851,7 @@ resolve_top_v_values <- function(dat_input,
                                  verbose = TRUE) {
   top_v_method <- match.arg(top_v_method)
   recon_fusion <- match.arg(recon_fusion)
+  global_fusion <- match.arg(global_fusion)
   tuning <- list(
     model_top_v = NULL,
     fused_top_v = NULL
@@ -726,6 +861,7 @@ resolve_top_v_values <- function(dat_input,
     connection = connection_input,
     connection_score = connection_score,
     recon_fusion = recon_fusion,
+    global_fusion = global_fusion,
     score_power = score_power,
     score_floor = score_floor,
     fallback_uniform = fallback_uniform,
@@ -825,6 +961,7 @@ resolve_top_v_values <- function(dat_input,
         model_list = rfit,
         response_blocks = names(dat_input),
         recon_fusion = recon_fusion,
+        global_fusion = global_fusion,
         score_power = score_power,
         score_floor = score_floor,
         fallback_uniform = fallback_uniform,

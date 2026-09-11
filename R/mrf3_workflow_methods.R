@@ -33,11 +33,16 @@ summary.mrf3_fit <- function(object, ...) {
   if (is.list(object$connection) && length(object$connection) > 0L) {
     block_names <- unique(unlist(object$connection, use.names = FALSE))
   }
-  if (length(block_names) == 0L && !is.null(recon$fused_mat)) {
-    block_names <- names(recon$fused_mat)
+  if (!is.null(recon$W$W_by_block)) {
+    block_names <- unique(c(block_names, names(recon$W$W_by_block)))
+  } else if (!is.null(recon$W$W_per_response)) {
+    block_names <- unique(c(block_names, names(recon$W$W_per_response)))
   }
-  if (length(block_names) == 0L && !is.null(object$specific$weights$W)) {
-    block_names <- names(object$specific$weights$W)
+  if (!is.null(recon$fused_mat)) {
+    block_names <- unique(c(block_names, names(recon$fused_mat)))
+  }
+  if (!is.null(object$specific$weights$W)) {
+    block_names <- unique(c(block_names, names(object$specific$weights$W)))
   }
   if (length(block_names) == 0L && length(model_names) > 0L) {
     ## Legacy fallback: split model names on "_" (unreliable for block

@@ -69,15 +69,17 @@ forest weight matrix before fusion.}
 \item{recon_fusion}{Reconstruction fusion mode.
 \code{"weighted"} (default) uses \code{connection_score}; \code{"uniform"} uses equal weights.}
 
-\item{global_fusion}{Fusion across per-response matrices. \code{"average"}
-implements the uniform Eq. 8 average; \code{"pmin"} is an optional element-wise
+\item{global_fusion}{Fusion across block-specific matrices. \code{"average"}
+implements a uniform average; \code{"pmin"} is an optional element-wise
 intersection extension.}
 
 \item{connection_score}{Optional directional score matrix from \code{find_connection(return_score = TRUE)}.}
 
-\item{response_blocks}{Optional character vector containing every data block
-that must have a response-side forest. The workflow supplies all input
-block names so an entirely omitted block cannot be silently ignored.}
+\item{response_blocks}{Optional character vector containing the data blocks
+represented in the fused matrix. For each block, reconstruction first uses
+forests where it is the response, then forests where it is the predictor.
+A block absent from every fitted connection uses the average of the
+available block-specific matrices.}
 
 \item{score_power}{Exponent applied to raw connection scores before normalization.}
 

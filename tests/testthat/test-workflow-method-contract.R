@@ -32,22 +32,53 @@ test_that("top-v grid reaches the no-truncation region", {
   expect_gte(multiRF:::infer_fused_tune_vmax(7), ceiling(.8 * 7))
 })
 
-test_that("missing response weights fail instead of leaking global signal", {
+test_that("block fusion prefers response weights and falls back to predictor weights", {
   ids <- paste0("S", 1:4)
-  W <- diag(4)
-  dimnames(W) <- list(ids, ids)
-  model <- list(
-    forest.wt = W,
-    xvar = data.frame(x = 1:4, row.names = ids),
-    yvar = data.frame(y = 4:1, row.names = ids),
-    connection = list(response = "A", predictor = "B")
+  mk <- function(response, predictor, shift) {
+    W <- matrix(c(
+      .2, .4, .3, .1,
+      .3, .2, .4, .1,
+      .1, .4, .2, .3,
+      .4, .1, .3, .2
+    ), 4, byrow = TRUE)
+    W <- W[, ((seq_len(4) + shift - 1L) %% 4L) + 1L, drop = FALSE]
+    dimnames(W) <- list(ids, ids)
+    list(
+      forest.wt = W,
+      xvar = data.frame(x = 1:4, row.names = ids),
+      yvar = data.frame(y = 4:1, row.names = ids),
+      connection = list(response = response, predictor = predictor)
+    )
+  }
+  models <- list(
+    A_C = mk("A", "C", 0L),
+    B_C = mk("B", "C", 1L),
+    B_A = mk("B", "A", 2L)
   )
-  expect_error(
-    get_reconstr_matrix(
-      rfit = list(A_B = model), model_top_v = 4
-    ),
-    "No fitted connection has block `B` as response"
+  out <- get_reconstr_matrix(
+    rfit = models,
+    model_top_v = 4,
+    response_blocks = c("A", "B", "C"),
+    recon_fusion = "uniform"
   )
+
+  WA <- out$W$W_models$A_C
+  WB <- out$W$W_models$B_C
+  WBA <- out$W$W_models$B_A
+  expect_equal(out$W$W_by_block$A, WA)
+  expect_equal(out$W$W_by_block$B, (WB + WBA) / 2)
+  expect_equal(out$W$W_by_block$C, (WA + WB) / 2)
+  expect_identical(
+    out$block_weight_source,
+    c(A = "response", B = "response", C = "predictor")
+  )
+  expect_equal(
+    out$model_fusion_weights,
+    c(A_C = 1 / 2, B_C = 1 / 3, B_A = 1 / 6),
+    tolerance = 1e-12
+  )
+  expect_equal(sum(out$model_fusion_weights), 1, tolerance = 1e-12)
+  expect_identical(names(out$W$W_models), names(models))
 })
 
 test_that("specific labels are exposed and cluster IMD receives shared labels", {
@@ -89,7 +120,7 @@ test_that("small-n clustering caps candidate k", {
   )
 })
 
-test_that("an entirely absent response block is never dropped from Eq. 8", {
+test_that("a disconnected block uses the available block average", {
   ids <- paste0("S", 1:4)
   W <- matrix(c(
     .2, .4, .3, .1,
@@ -104,14 +135,19 @@ test_that("an entirely absent response block is never dropped from Eq. 8", {
     connection = list(response = "A", predictor = "B")
   )
   model_b <- model
+  model_b$forest.wt <- W[, c(2:4, 1), drop = FALSE]
   model_b$connection <- list(response = "B", predictor = "A")
-  expect_error(
-    get_reconstr_matrix(
-      rfit = list(A_B = model, B_A = model_b), model_top_v = 4,
-      response_blocks = c("A", "B", "C")
-    ),
-    "block `C` as response"
+  out <- get_reconstr_matrix(
+    rfit = list(A_B = model, B_A = model_b), model_top_v = 4,
+    response_blocks = c("A", "B", "C"), recon_fusion = "uniform"
   )
+  expected <- (out$W$W_by_block$A + out$W$W_by_block$B) / 2
+  expect_equal(out$W$W_by_block$C, expected)
+  expect_equal(out$W$W_all, expected)
+  expect_identical(names(out$W$W_by_block), c("A", "B", "C"))
+  expect_identical(out$block_weight_source[["C"]], "global_average")
+  expect_equal(out$per_block_alpha$C, c(A_B = .5, B_A = .5))
+  expect_equal(out$model_fusion_weights, c(A_B = .5, B_A = .5))
 })
 
 test_that("tuning cache reproduces final Eq. 6-8 reconstruction", {
@@ -148,7 +184,7 @@ test_that("tuning cache reproduces final Eq. 6-8 reconstruction", {
     top_v = 2,
     connection_score = scores,
     model_list = models,
-    response_blocks = c("A", "B"),
+    response_blocks = c("A", "B", "C"),
     recon_fusion = "weighted",
     score_power = 2,
     score_floor = .25
@@ -157,13 +193,14 @@ test_that("tuning cache reproduces final Eq. 6-8 reconstruction", {
     rfit = models,
     model_top_v = 2,
     connection_score = scores,
-    response_blocks = c("A", "B"),
+    response_blocks = c("A", "B", "C"),
     recon_fusion = "weighted",
     score_power = 2,
     score_floor = .25
   )
 
   expect_equal(tuned_W, final$W$W_all, tolerance = 1e-12)
+  expect_identical(final$block_weight_source[["C"]], "predictor")
   expect_equal(unname(rowSums(tuned_W)), rep(1, 4), tolerance = 1e-12)
   expect_equal(
     unname(rowSums(multiRF:::materialize_weight_from_cache(cache[[1]], 2))),
